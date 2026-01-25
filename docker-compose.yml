@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: atlas
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: atlas
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  atlas-indexer:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: indexer
+    environment:
+      DATABASE_URL: postgres://atlas:atlas@postgres/atlas
+      RPC_URL: ${RPC_URL}
+      START_BLOCK: ${START_BLOCK:-0}
+      BATCH_SIZE: ${BATCH_SIZE:-100}
+      REINDEX: ${REINDEX:-false}
+      IPFS_GATEWAY: ${IPFS_GATEWAY:-https://ipfs.io/ipfs/}
+      RUST_LOG: atlas_indexer=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  atlas-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: api
+    environment:
+      DATABASE_URL: postgres://atlas:atlas@postgres/atlas
+      RPC_URL: ${RPC_URL}
+      API_HOST: 0.0.0.0
+      API_PORT: 3000
+      RUST_LOG: atlas_api=info,tower_http=debug
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

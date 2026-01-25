@@ -1,0 +1,40 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Layout } from './components';
+import {
+  BlocksPage,
+  BlockDetailPage,
+  BlockTransactionsPage,
+  TransactionsPage,
+  TransactionDetailPage,
+  AddressPage,
+  NFTsPage,
+  NFTContractPage,
+  NFTTokenPage,
+  TokensPage,
+  TokenDetailPage,
+  NotFoundPage,
+} from './pages';
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Layout />}>
+          <Route index element={<Navigate to="/blocks" replace />} />
+          <Route path="blocks" element={<BlocksPage />} />
+          <Route path="blocks/:number" element={<BlockDetailPage />} />
+          <Route path="blocks/:number/transactions" element={<BlockTransactionsPage />} />
+          <Route path="transactions" element={<TransactionsPage />} />
+          <Route path="tx/:hash" element={<TransactionDetailPage />} />
+          <Route path="address/:address" element={<AddressPage />} />
+          <Route path="nfts" element={<NFTsPage />} />
+          <Route path="nfts/:contract" element={<NFTContractPage />} />
+          <Route path="nfts/:contract/:tokenId" element={<NFTTokenPage />} />
+          <Route path="tokens" element={<TokensPage />} />
+          <Route path="tokens/:address" element={<TokenDetailPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
+}

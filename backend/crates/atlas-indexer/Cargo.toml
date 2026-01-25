@@ -1,0 +1,25 @@
+[package]
+name = "atlas-indexer"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "atlas-indexer"
+path = "src/main.rs"
+
+[dependencies]
+atlas-common = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+alloy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+bigdecimal = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }

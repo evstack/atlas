@@ -1,0 +1,14 @@
+[package]
+name = "atlas-common"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sqlx = { workspace = true }
+alloy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+bigdecimal = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
