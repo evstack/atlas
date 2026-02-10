@@ -1,7 +1,7 @@
 use alloy::network::Ethereum;
 use alloy::primitives::{Address, U256};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
-use alloy::rpc::types::{Block, BlockId, BlockNumberOrTag, BlockTransactionsKind, Log, TransactionReceipt};
+use alloy::rpc::types::{Block, Log, TransactionReceipt};
 use alloy::transports::http::{Client, Http};
 use anyhow::Result;
 use bigdecimal::BigDecimal;
@@ -15,6 +15,13 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::config::Config;
+
+/// Work item for a worker - a range of blocks to fetch
+#[derive(Debug, Clone)]
+struct WorkItem {
+    start_block: u64,
+    count: usize,
+}
 
 /// ERC-20/721 Transfer event signature: Transfer(address,address,uint256)
 const TRANSFER_TOPIC: &str =
@@ -65,43 +72,47 @@ impl Indexer {
         tracing::info!("Starting indexing from block {}", start_block);
 
         let num_workers = self.config.fetch_workers as usize;
-        tracing::info!("Starting {} fetch workers", num_workers);
+        let rpc_batch_size = self.config.rpc_batch_size as usize;
+        tracing::info!("Starting {} fetch workers with {} blocks per RPC batch", num_workers, rpc_batch_size);
 
         // Channels for work distribution and results
-        // work_tx: send block numbers to fetch
+        // work_tx: send WorkItems (block ranges) to fetch
         // result_tx: workers send fetched blocks back
-        let (work_tx, work_rx) = async_channel::bounded::<u64>(num_workers * 2);
-        let (result_tx, mut result_rx) = mpsc::channel::<FetchResult>(num_workers * 2);
+        let (work_tx, work_rx) = async_channel::bounded::<WorkItem>(num_workers * 2);
+        let (result_tx, mut result_rx) = mpsc::channel::<FetchResult>(num_workers * rpc_batch_size * 2);
+
+        // Create HTTP client for batch requests
+        let http_client = reqwest::Client::new();
+        let rpc_url = self.config.rpc_url.clone();
 
         // Spawn long-lived workers
         for worker_id in 0..num_workers {
             let work_rx = work_rx.clone();
             let result_tx = result_tx.clone();
-            let provider = Arc::clone(&provider);
             let limiter = Arc::clone(&rate_limiter);
+            let client = http_client.clone();
+            let url = rpc_url.clone();
 
             tokio::spawn(async move {
                 tracing::debug!("Worker {} started", worker_id);
                 loop {
                     // Wait for work (blocks here until work arrives)
                     match work_rx.recv().await {
-                        Ok(block_num) => {
-                            let result = match Self::fetch_block_data(&provider, block_num, &limiter).await {
-                                Ok(fetched) => FetchResult::Success(fetched),
-                                Err(e) => {
-                                    tracing::error!(
-                                        "Worker {} failed to fetch block {}: {}",
-                                        worker_id, block_num, e
-                                    );
-                                    FetchResult::Error {
-                                        block_num,
-                                        error: e.to_string(),
-                                    }
+                        Ok(work_item) => {
+                            // Fetch batch of blocks using JSON-RPC batching
+                            let results = Self::fetch_blocks_batch(
+                                &client,
+                                &url,
+                                work_item.start_block,
+                                work_item.count,
+                                &limiter,
+                            ).await;
+
+                            // Send all results back
+                            for result in results {
+                                if result_tx.send(result).await.is_err() {
+                                    return; // Channel closed
                                 }
-                            };
-                            if result_tx.send(result).await.is_err() {
-                                // Channel closed, exit worker
-                                break;
                             }
                         }
                         Err(_) => {
@@ -139,13 +150,21 @@ impl Indexer {
 
             // Spawn a task to send work (avoids deadlock with bounded channels)
             let work_tx_clone = work_tx.clone();
+            let blocks_per_batch = rpc_batch_size;
             let send_task = tokio::spawn(async move {
-                for block_num in current_block..=end_block {
-                    if work_tx_clone.send(block_num).await.is_err() {
+                let mut block = current_block;
+                while block <= end_block {
+                    let count = ((end_block - block + 1) as usize).min(blocks_per_batch);
+                    let work_item = WorkItem {
+                        start_block: block,
+                        count,
+                    };
+                    if work_tx_clone.send(work_item).await.is_err() {
                         break;
                     }
+                    block += count as u64;
                 }
-                tracing::debug!("Sent {} blocks to workers", batch_size);
+                tracing::debug!("Sent {} blocks to workers in batches of {}", batch_size, blocks_per_batch);
             });
 
             // Collect results with reorder buffer
@@ -207,37 +226,157 @@ impl Indexer {
         }
     }
 
-    /// Fetch block data from RPC (runs in worker)
-    async fn fetch_block_data(provider: &HttpProvider, block_num: u64, rate_limiter: &SharedRateLimiter) -> Result<FetchedBlock> {
-        tracing::debug!("Fetching block {}", block_num);
+    /// Fetch multiple blocks using JSON-RPC batch request
+    async fn fetch_blocks_batch(
+        client: &reqwest::Client,
+        rpc_url: &str,
+        start_block: u64,
+        count: usize,
+        rate_limiter: &SharedRateLimiter,
+    ) -> Vec<FetchResult> {
+        tracing::debug!("Fetching batch: blocks {} to {}", start_block, start_block + count as u64 - 1);
 
-        // Wait for rate limiter permit before RPC call
-        rate_limiter.until_ready().await;
+        // Wait for rate limiter - we're making 2*count RPC calls in one HTTP request
+        for _ in 0..(count * 2) {
+            rate_limiter.until_ready().await;
+        }
 
-        // Fetch block with transactions
-        let block = provider
-            .get_block_by_number(BlockNumberOrTag::Number(block_num), BlockTransactionsKind::Full)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Block {} not found", block_num))?;
+        // Build batch request
+        let mut batch_request = Vec::with_capacity(count * 2);
+        for i in 0..count {
+            let block_num = start_block + i as u64;
+            let block_hex = format!("0x{:x}", block_num);
 
-        tracing::debug!("Got block {}, fetching receipts", block_num);
+            // eth_getBlockByNumber with full transactions
+            batch_request.push(serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "eth_getBlockByNumber",
+                "params": [block_hex, true],
+                "id": i * 2
+            }));
 
-        // Wait for rate limiter permit before second RPC call
-        rate_limiter.until_ready().await;
+            // eth_getBlockReceipts
+            batch_request.push(serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "eth_getBlockReceipts",
+                "params": [block_hex],
+                "id": i * 2 + 1
+            }));
+        }
 
-        // Fetch receipts
-        let receipts = provider
-            .get_block_receipts(BlockId::Number(BlockNumberOrTag::Number(block_num)))
-            .await?
-            .unwrap_or_default();
+        // Send batch request
+        let response = match client
+            .post(rpc_url)
+            .json(&batch_request)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                // Return errors for all blocks in batch
+                return (0..count)
+                    .map(|i| FetchResult::Error {
+                        block_num: start_block + i as u64,
+                        error: format!("HTTP request failed: {}", e),
+                    })
+                    .collect();
+            }
+        };
 
-        tracing::debug!("Block {} complete ({} receipts)", block_num, receipts.len());
+        // Parse response
+        let batch_response: Vec<serde_json::Value> = match response.json().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                return (0..count)
+                    .map(|i| FetchResult::Error {
+                        block_num: start_block + i as u64,
+                        error: format!("Failed to parse response: {}", e),
+                    })
+                    .collect();
+            }
+        };
 
-        Ok(FetchedBlock {
-            number: block_num,
-            block,
-            receipts,
-        })
+        // Process responses - they should be in order by ID
+        let mut results = Vec::with_capacity(count);
+        let mut response_map: BTreeMap<u64, &serde_json::Value> = BTreeMap::new();
+
+        for resp in &batch_response {
+            if let Some(id) = resp.get("id").and_then(|v| v.as_u64()) {
+                response_map.insert(id, resp);
+            }
+        }
+
+        for i in 0..count {
+            let block_num = start_block + i as u64;
+            let block_id = (i * 2) as u64;
+            let receipts_id = (i * 2 + 1) as u64;
+
+            // Get block response
+            let block_result = match response_map.get(&block_id) {
+                Some(resp) => {
+                    if let Some(error) = resp.get("error") {
+                        Err(format!("RPC error: {}", error))
+                    } else if let Some(result) = resp.get("result") {
+                        if result.is_null() {
+                            Err(format!("Block {} not found", block_num))
+                        } else {
+                            serde_json::from_value::<Block>(result.clone())
+                                .map_err(|e| format!("Failed to parse block: {}", e))
+                        }
+                    } else {
+                        Err("No result in response".to_string())
+                    }
+                }
+                None => Err(format!("Missing response for block {}", block_num)),
+            };
+
+            // Get receipts response
+            let receipts_result = match response_map.get(&receipts_id) {
+                Some(resp) => {
+                    if let Some(error) = resp.get("error") {
+                        Err(format!("RPC error: {}", error))
+                    } else if let Some(result) = resp.get("result") {
+                        if result.is_null() {
+                            Ok(Vec::new())
+                        } else {
+                            serde_json::from_value::<Vec<TransactionReceipt>>(result.clone())
+                                .map_err(|e| format!("Failed to parse receipts: {}", e))
+                        }
+                    } else {
+                        Ok(Vec::new())
+                    }
+                }
+                None => Ok(Vec::new()),
+            };
+
+            // Combine results
+            match (block_result, receipts_result) {
+                (Ok(block), Ok(receipts)) => {
+                    tracing::debug!("Block {} complete ({} receipts)", block_num, receipts.len());
+                    results.push(FetchResult::Success(FetchedBlock {
+                        number: block_num,
+                        block,
+                        receipts,
+                    }));
+                }
+                (Err(e), _) => {
+                    tracing::warn!("Failed to fetch block {}: {}", block_num, e);
+                    results.push(FetchResult::Error {
+                        block_num,
+                        error: e,
+                    });
+                }
+                (_, Err(e)) => {
+                    tracing::warn!("Failed to fetch receipts for block {}: {}", block_num, e);
+                    results.push(FetchResult::Error {
+                        block_num,
+                        error: e,
+                    });
+                }
+            }
+        }
+
+        results
     }
 
     /// Process a fetched block (runs sequentially in main loop)

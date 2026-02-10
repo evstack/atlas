@@ -14,6 +14,7 @@ pub struct Config {
     pub metadata_fetch_workers: u32,
     pub metadata_retry_attempts: u32,
     pub fetch_workers: u32,
+    pub rpc_batch_size: u32,
 }
 
 impl Config {
@@ -57,6 +58,10 @@ impl Config {
                 .unwrap_or_else(|_| "10".to_string())
                 .parse()
                 .context("Invalid FETCH_WORKERS")?,
+            rpc_batch_size: env::var("RPC_BATCH_SIZE")
+                .unwrap_or_else(|_| "20".to_string())
+                .parse()
+                .context("Invalid RPC_BATCH_SIZE")?,
         })
     }
 }
