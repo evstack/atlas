@@ -45,7 +45,8 @@ impl Indexer {
 
         let mut current_block = start_block;
         let rate_limit_delay = Duration::from_millis(1000 / self.config.rpc_requests_per_second as u64);
-        let mut last_logged_block: u64 = 0;
+        let mut last_logged_block: u64 = start_block;
+        let mut last_log_time = std::time::Instant::now();
 
         loop {
             // Get chain head
@@ -69,12 +70,18 @@ impl Indexer {
 
             // Log progress every 1000 blocks
             if end_block / 1000 > last_logged_block / 1000 {
+                let elapsed = last_log_time.elapsed();
+                let blocks_processed = end_block - last_logged_block;
+                let blocks_per_sec = blocks_processed as f64 / elapsed.as_secs_f64();
                 let progress = (end_block as f64 / head as f64) * 100.0;
+
                 tracing::info!(
-                    "Indexed up to block {} / {} ({:.2}%)",
-                    end_block, head, progress
+                    "Indexed up to block {} / {} ({:.2}%) | {} blocks in {:.2}s ({:.1} blocks/sec)",
+                    end_block, head, progress, blocks_processed, elapsed.as_secs_f64(), blocks_per_sec
                 );
+
                 last_logged_block = end_block;
+                last_log_time = std::time::Instant::now();
             }
         }
     }
