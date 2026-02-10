@@ -27,7 +27,9 @@ services:
       BATCH_SIZE: ${BATCH_SIZE:-100}
       REINDEX: ${REINDEX:-false}
       IPFS_GATEWAY: ${IPFS_GATEWAY:-https://ipfs.io/ipfs/}
-      RUST_LOG: atlas_indexer=info
+      FETCH_WORKERS: ${FETCH_WORKERS:-10}
+      RPC_REQUESTS_PER_SECOND: ${RPC_REQUESTS_PER_SECOND:-100}
+      RUST_LOG: atlas_indexer=debug
     depends_on:
       postgres:
         condition: service_healthy

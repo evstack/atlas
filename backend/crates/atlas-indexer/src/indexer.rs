@@ -1,24 +1,40 @@
 use alloy::network::Ethereum;
 use alloy::primitives::{Address, U256};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
-use alloy::rpc::types::{BlockId, BlockNumberOrTag, BlockTransactionsKind, Log};
+use alloy::rpc::types::{Block, BlockId, BlockNumberOrTag, BlockTransactionsKind, Log, TransactionReceipt};
 use alloy::transports::http::{Client, Http};
 use anyhow::Result;
 use bigdecimal::BigDecimal;
+use governor::{Quota, RateLimiter};
 use sqlx::PgPool;
+use std::collections::BTreeMap;
+use std::num::NonZeroU32;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 use crate::config::Config;
 
 /// ERC-20/721 Transfer event signature: Transfer(address,address,uint256)
-/// Same signature for both, differentiated by topic count:
-/// - ERC-721: 4 topics (topic0 + from + to + tokenId)
-/// - ERC-20: 3 topics (topic0 + from + to) with value in data
 const TRANSFER_TOPIC: &str =
     "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 type HttpProvider = RootProvider<Http<Client>, Ethereum>;
+type SharedRateLimiter = Arc<RateLimiter<governor::state::NotKeyed, governor::state::InMemoryState, governor::clock::DefaultClock>>;
+
+/// Result of fetching a block from RPC
+enum FetchResult {
+    Success(FetchedBlock),
+    Error { block_num: u64, error: String },
+}
+
+/// Data fetched from RPC for a single block
+struct FetchedBlock {
+    number: u64,
+    block: Block,
+    receipts: Vec<TransactionReceipt>,
+}
 
 pub struct Indexer {
     pool: PgPool,
@@ -31,7 +47,12 @@ impl Indexer {
     }
 
     pub async fn run(&self) -> Result<()> {
-        let provider = ProviderBuilder::new().on_http(self.config.rpc_url.parse()?);
+        let provider = Arc::new(ProviderBuilder::new().on_http(self.config.rpc_url.parse()?));
+
+        // Create rate limiter for RPC requests
+        let rps = NonZeroU32::new(self.config.rpc_requests_per_second).unwrap_or(NonZeroU32::new(100).unwrap());
+        let rate_limiter: SharedRateLimiter = Arc::new(RateLimiter::direct(Quota::per_second(rps)));
+        tracing::info!("Rate limiting RPC requests to {} req/sec", rps);
 
         // Handle reindex flag
         if self.config.reindex {
@@ -43,14 +64,67 @@ impl Indexer {
         let start_block = self.get_start_block().await?;
         tracing::info!("Starting indexing from block {}", start_block);
 
+        let num_workers = self.config.fetch_workers as usize;
+        tracing::info!("Starting {} fetch workers", num_workers);
+
+        // Channels for work distribution and results
+        // work_tx: send block numbers to fetch
+        // result_tx: workers send fetched blocks back
+        let (work_tx, work_rx) = async_channel::bounded::<u64>(num_workers * 2);
+        let (result_tx, mut result_rx) = mpsc::channel::<FetchResult>(num_workers * 2);
+
+        // Spawn long-lived workers
+        for worker_id in 0..num_workers {
+            let work_rx = work_rx.clone();
+            let result_tx = result_tx.clone();
+            let provider = Arc::clone(&provider);
+            let limiter = Arc::clone(&rate_limiter);
+
+            tokio::spawn(async move {
+                tracing::debug!("Worker {} started", worker_id);
+                loop {
+                    // Wait for work (blocks here until work arrives)
+                    match work_rx.recv().await {
+                        Ok(block_num) => {
+                            let result = match Self::fetch_block_data(&provider, block_num, &limiter).await {
+                                Ok(fetched) => FetchResult::Success(fetched),
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Worker {} failed to fetch block {}: {}",
+                                        worker_id, block_num, e
+                                    );
+                                    FetchResult::Error {
+                                        block_num,
+                                        error: e.to_string(),
+                                    }
+                                }
+                            };
+                            if result_tx.send(result).await.is_err() {
+                                // Channel closed, exit worker
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            // Channel closed, exit worker
+                            break;
+                        }
+                    }
+                }
+                tracing::debug!("Worker {} shutting down", worker_id);
+            });
+        }
+
+        // Drop our copy of result_tx so channel closes when all workers done
+        drop(result_tx);
+
+        // Main indexing loop
         let mut current_block = start_block;
-        let rate_limit_delay = Duration::from_millis(1000 / self.config.rpc_requests_per_second as u64);
-        let mut last_logged_block: u64 = start_block;
         let mut last_log_time = std::time::Instant::now();
 
         loop {
             // Get chain head
             let head = provider.get_block_number().await?;
+            tracing::debug!("Chain head: {}, current: {}", head, current_block);
 
             if current_block > head {
                 // At head, wait for new blocks
@@ -58,66 +132,118 @@ impl Indexer {
                 continue;
             }
 
-            // Index blocks in batches
+            // Calculate batch end
             let end_block = (current_block + self.config.batch_size - 1).min(head);
+            let batch_size = (end_block - current_block + 1) as usize;
+            tracing::debug!("Fetching batch: {} to {} ({} blocks)", current_block, end_block, batch_size);
 
-            for block_num in current_block..=end_block {
-                self.index_block(&provider, block_num).await?;
-                tokio::time::sleep(rate_limit_delay).await;
+            // Spawn a task to send work (avoids deadlock with bounded channels)
+            let work_tx_clone = work_tx.clone();
+            let send_task = tokio::spawn(async move {
+                for block_num in current_block..=end_block {
+                    if work_tx_clone.send(block_num).await.is_err() {
+                        break;
+                    }
+                }
+                tracing::debug!("Sent {} blocks to workers", batch_size);
+            });
+
+            // Collect results with reorder buffer
+            let mut buffer: BTreeMap<u64, FetchedBlock> = BTreeMap::new();
+            let mut next_to_process = current_block;
+            let mut blocks_received = 0;
+            let mut failed_blocks: Vec<u64> = Vec::new();
+
+            // Receive all blocks for this batch
+            while blocks_received < batch_size {
+                match result_rx.recv().await {
+                    Some(FetchResult::Success(fetched)) => {
+                        buffer.insert(fetched.number, fetched);
+                        blocks_received += 1;
+
+                        // Process all consecutive blocks we have in order
+                        while let Some(data) = buffer.remove(&next_to_process) {
+                            self.process_block(&provider, data).await?;
+                            next_to_process += 1;
+                        }
+                    }
+                    Some(FetchResult::Error { block_num, error }) => {
+                        tracing::warn!("Block {} failed to fetch: {}", block_num, error);
+                        failed_blocks.push(block_num);
+                        blocks_received += 1;
+                        // Skip this block for now, continue with others
+                        if next_to_process == block_num {
+                            next_to_process += 1;
+                        }
+                    }
+                    None => {
+                        // All workers died unexpectedly
+                        return Err(anyhow::anyhow!("All fetch workers terminated"));
+                    }
+                }
+            }
+
+            // Wait for send task to complete
+            let _ = send_task.await;
+
+            // Log if we had failures
+            if !failed_blocks.is_empty() {
+                tracing::error!("Failed to fetch {} blocks: {:?}", failed_blocks.len(), failed_blocks);
             }
 
             current_block = end_block + 1;
 
-            // Log progress every 1000 blocks
-            if end_block / 1000 > last_logged_block / 1000 {
-                let elapsed = last_log_time.elapsed();
-                let blocks_processed = end_block - last_logged_block;
-                let blocks_per_sec = blocks_processed as f64 / elapsed.as_secs_f64();
-                let progress = (end_block as f64 / head as f64) * 100.0;
+            // Log progress after every batch
+            let elapsed = last_log_time.elapsed();
+            let blocks_per_sec = batch_size as f64 / elapsed.as_secs_f64();
+            let progress = (end_block as f64 / head as f64) * 100.0;
 
-                tracing::info!(
-                    "Indexed up to block {} / {} ({:.2}%) | {} blocks in {:.2}s ({:.1} blocks/sec)",
-                    end_block, head, progress, blocks_processed, elapsed.as_secs_f64(), blocks_per_sec
-                );
+            tracing::info!(
+                "Batch complete: {} to {} ({} blocks in {:.2}s = {:.1} blocks/sec) | Progress: {:.2}%",
+                end_block - batch_size as u64 + 1, end_block, batch_size, elapsed.as_secs_f64(), blocks_per_sec, progress
+            );
 
-                last_logged_block = end_block;
-                last_log_time = std::time::Instant::now();
-            }
+            last_log_time = std::time::Instant::now();
         }
     }
 
-    async fn get_start_block(&self) -> Result<u64> {
-        // Check for last indexed block
-        let result: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM indexer_state WHERE key = 'last_indexed_block'"
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+    /// Fetch block data from RPC (runs in worker)
+    async fn fetch_block_data(provider: &HttpProvider, block_num: u64, rate_limiter: &SharedRateLimiter) -> Result<FetchedBlock> {
+        tracing::debug!("Fetching block {}", block_num);
 
-        if let Some((value,)) = result {
-            let last_block: u64 = value.parse()?;
-            Ok(last_block + 1)
-        } else {
-            Ok(self.config.start_block)
-        }
-    }
+        // Wait for rate limiter permit before RPC call
+        rate_limiter.until_ready().await;
 
-    async fn truncate_tables(&self) -> Result<()> {
-        sqlx::query(
-            "TRUNCATE blocks, transactions, addresses, nft_contracts, nft_tokens, nft_transfers,
-             erc20_contracts, erc20_transfers, erc20_balances, event_logs, proxy_contracts, indexer_state CASCADE"
-        )
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn index_block(&self, provider: &HttpProvider, block_num: u64) -> Result<()> {
         // Fetch block with transactions
         let block = provider
             .get_block_by_number(BlockNumberOrTag::Number(block_num), BlockTransactionsKind::Full)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Block {} not found", block_num))?;
+
+        tracing::debug!("Got block {}, fetching receipts", block_num);
+
+        // Wait for rate limiter permit before second RPC call
+        rate_limiter.until_ready().await;
+
+        // Fetch receipts
+        let receipts = provider
+            .get_block_receipts(BlockId::Number(BlockNumberOrTag::Number(block_num)))
+            .await?
+            .unwrap_or_default();
+
+        tracing::debug!("Block {} complete ({} receipts)", block_num, receipts.len());
+
+        Ok(FetchedBlock {
+            number: block_num,
+            block,
+            receipts,
+        })
+    }
+
+    /// Process a fetched block (runs sequentially in main loop)
+    async fn process_block(&self, provider: &HttpProvider, fetched: FetchedBlock) -> Result<()> {
+        let block = fetched.block;
+        let block_num = fetched.number;
 
         let mut tx = self.pool.begin().await?;
 
@@ -148,21 +274,18 @@ impl Indexer {
             }
         }
 
-        // Fetch receipts and process logs
-        let receipts = provider.get_block_receipts(BlockId::Number(BlockNumberOrTag::Number(block_num))).await?;
-        if let Some(receipts) = receipts {
-            for receipt in receipts {
-                for log in receipt.inner.logs() {
-                    // Store all event logs
-                    self.insert_event_log(&mut tx, log, block_num).await?;
+        // Process receipts and logs
+        for receipt in fetched.receipts {
+            for log in receipt.inner.logs() {
+                // Store all event logs
+                self.insert_event_log(&mut tx, log, block_num).await?;
 
-                    // Process Transfer events
-                    if self.is_transfer_event(log) {
-                        if self.is_erc721_transfer(log) {
-                            self.process_nft_transfer(&mut tx, log, block_num, block.header.timestamp).await?;
-                        } else if self.is_erc20_transfer(log) {
-                            self.process_erc20_transfer(&mut tx, provider, log, block_num, block.header.timestamp).await?;
-                        }
+                // Process Transfer events
+                if self.is_transfer_event(log) {
+                    if self.is_erc721_transfer(log) {
+                        self.process_nft_transfer(&mut tx, log, block_num, block.header.timestamp).await?;
+                    } else if self.is_erc20_transfer(log) {
+                        self.process_erc20_transfer(&mut tx, provider, log, block_num, block.header.timestamp).await?;
                     }
                 }
             }
@@ -179,6 +302,32 @@ impl Indexer {
         .await?;
 
         tx.commit().await?;
+        Ok(())
+    }
+
+    async fn get_start_block(&self) -> Result<u64> {
+        // Check for last indexed block
+        let result: Option<(String,)> = sqlx::query_as(
+            "SELECT value FROM indexer_state WHERE key = 'last_indexed_block'"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some((value,)) = result {
+            let last_block: u64 = value.parse()?;
+            Ok(last_block + 1)
+        } else {
+            Ok(self.config.start_block)
+        }
+    }
+
+    async fn truncate_tables(&self) -> Result<()> {
+        sqlx::query(
+            "TRUNCATE blocks, transactions, addresses, nft_contracts, nft_tokens, nft_transfers,
+             erc20_contracts, erc20_transfers, erc20_balances, event_logs, proxy_contracts, indexer_state CASCADE"
+        )
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

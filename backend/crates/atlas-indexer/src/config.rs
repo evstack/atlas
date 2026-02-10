@@ -13,6 +13,7 @@ pub struct Config {
     pub ipfs_gateway: String,
     pub metadata_fetch_workers: u32,
     pub metadata_retry_attempts: u32,
+    pub fetch_workers: u32,
 }
 
 impl Config {
@@ -52,6 +53,10 @@ impl Config {
                 .unwrap_or_else(|_| "3".to_string())
                 .parse()
                 .context("Invalid METADATA_RETRY_ATTEMPTS")?,
+            fetch_workers: env::var("FETCH_WORKERS")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .context("Invalid FETCH_WORKERS")?,
         })
     }
 }

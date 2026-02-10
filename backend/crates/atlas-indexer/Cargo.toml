@@ -23,3 +23,5 @@ dotenvy = { workspace = true }
 bigdecimal = { workspace = true }
 hex = { workspace = true }
 chrono = { workspace = true }
+async-channel = "2.3"
+governor = "0.6"
