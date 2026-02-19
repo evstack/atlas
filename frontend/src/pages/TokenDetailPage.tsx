@@ -60,7 +60,7 @@ export default function TokenDetailPage() {
           <p className="text-gray-400 text-sm mb-1">Total Supply</p>
           <p className="text-xl font-semibold text-white font-mono">
             {token?.total_supply
-              ? formatTokenAmount(token.total_supply, token.decimals)
+              ? `${formatTokenAmount(token.total_supply, token.decimals)} ${token.symbol || ''}`
               : '---'}
           </p>
         </div>

@@ -21,5 +21,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 dotenvy = { workspace = true }
 bigdecimal = { workspace = true }
+num-bigint = "0.4"
 hex = { workspace = true }
 chrono = { workspace = true }
+async-channel = "2.3"
+governor = "0.6"

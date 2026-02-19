@@ -49,5 +49,8 @@ bigdecimal = { version = "0.4", features = ["serde"] }
 hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 
+# Pin home to avoid Rust 1.88 requirement
+home = "=0.5.9"
+
 # Internal crates
 atlas-common = { path = "crates/atlas-common" }

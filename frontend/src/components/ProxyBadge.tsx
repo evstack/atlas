@@ -8,7 +8,8 @@ interface ProxyBadgeProps {
   className?: string;
 }
 
-function getProxyTypeLabel(proxyType: string): string {
+function getProxyTypeLabel(proxyType?: string): string {
+  if (!proxyType) return 'Proxy';
   switch (proxyType.toLowerCase()) {
     case 'eip1967':
       return 'EIP-1967';

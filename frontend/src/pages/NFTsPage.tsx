@@ -1,12 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useNftContracts } from '../hooks';
-import { Pagination } from '../components';
+import { Pagination, Loading } from '../components';
 import { formatNumber, truncateHash } from '../utils';
 
 export default function NFTsPage() {
   const [page, setPage] = useState(1);
-  const { contracts, pagination } = useNftContracts({ page, limit: 20 });
+  const { contracts, pagination, loading } = useNftContracts({ page, limit: 20 });
+  const [hasLoaded, setHasLoaded] = useState(false);
+  useEffect(() => {
+    if (!loading) setHasLoaded(true);
+  }, [loading]);
 
   return (
     <div>
@@ -20,7 +24,9 @@ export default function NFTsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 min-h-[200px]">
-          {contracts.map((contract) => (
+          {loading && !hasLoaded ? (
+            <div className="col-span-full py-10 flex justify-center"><Loading size="sm" /></div>
+          ) : contracts.map((contract) => (
             <Link
               key={contract.address}
               to={`/nfts/${contract.address}`}

@@ -1,11 +1,11 @@
 -- Atlas v2 Features Migration
--- ERC-20 Token Support, Event Logs, Address Labels, Proxy Detection
+-- ERC-20 Token Support, Event Signatures, Address Labels, Proxy Detection
 
 -- =====================
 -- ERC-20 Token Support
 -- =====================
 
--- ERC-20 Contracts
+-- ERC-20 Contracts (not partitioned - relatively small)
 CREATE TABLE IF NOT EXISTS erc20_contracts (
     address VARCHAR(42) PRIMARY KEY,
     name VARCHAR(255),
@@ -17,26 +17,31 @@ CREATE TABLE IF NOT EXISTS erc20_contracts (
 
 CREATE INDEX IF NOT EXISTS idx_erc20_contracts_symbol ON erc20_contracts(symbol);
 
--- ERC-20 Transfers
+-- ERC-20 Transfers (Partitioned by block number)
 CREATE TABLE IF NOT EXISTS erc20_transfers (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGSERIAL,
     tx_hash VARCHAR(66) NOT NULL,
     log_index INTEGER NOT NULL,
-    contract_address VARCHAR(42) NOT NULL REFERENCES erc20_contracts(address) ON DELETE CASCADE,
+    contract_address VARCHAR(42) NOT NULL,
     from_address VARCHAR(42) NOT NULL,
     to_address VARCHAR(42) NOT NULL,
     value NUMERIC(78, 0) NOT NULL,
     block_number BIGINT NOT NULL,
     timestamp BIGINT NOT NULL,
-    UNIQUE(tx_hash, log_index)
-);
+    PRIMARY KEY (id, block_number),
+    UNIQUE (tx_hash, log_index, block_number)
+) PARTITION BY RANGE (block_number);
+
+-- Create initial partition
+CREATE TABLE IF NOT EXISTS erc20_transfers_p0 PARTITION OF erc20_transfers
+    FOR VALUES FROM (0) TO (10000000);
 
 CREATE INDEX IF NOT EXISTS idx_erc20_transfers_contract ON erc20_transfers(contract_address);
 CREATE INDEX IF NOT EXISTS idx_erc20_transfers_from ON erc20_transfers(from_address);
 CREATE INDEX IF NOT EXISTS idx_erc20_transfers_to ON erc20_transfers(to_address);
 CREATE INDEX IF NOT EXISTS idx_erc20_transfers_block ON erc20_transfers(block_number);
 
--- ERC-20 Balances (incrementally updated)
+-- ERC-20 Balances (not partitioned - updated incrementally)
 CREATE TABLE IF NOT EXISTS erc20_balances (
     address VARCHAR(42) NOT NULL,
     contract_address VARCHAR(42) NOT NULL REFERENCES erc20_contracts(address) ON DELETE CASCADE,
@@ -49,28 +54,8 @@ CREATE INDEX IF NOT EXISTS idx_erc20_balances_contract ON erc20_balances(contrac
 CREATE INDEX IF NOT EXISTS idx_erc20_balances_holder ON erc20_balances(address);
 
 -- =====================
--- Event Logs
+-- Event Signatures
 -- =====================
-
-CREATE TABLE IF NOT EXISTS event_logs (
-    id BIGSERIAL PRIMARY KEY,
-    tx_hash VARCHAR(66) NOT NULL,
-    log_index INTEGER NOT NULL,
-    address VARCHAR(42) NOT NULL,
-    topic0 VARCHAR(66) NOT NULL,
-    topic1 VARCHAR(66),
-    topic2 VARCHAR(66),
-    topic3 VARCHAR(66),
-    data BYTEA NOT NULL,
-    block_number BIGINT NOT NULL,
-    decoded JSONB,
-    UNIQUE(tx_hash, log_index)
-);
-
-CREATE INDEX IF NOT EXISTS idx_event_logs_address ON event_logs(address);
-CREATE INDEX IF NOT EXISTS idx_event_logs_topic0 ON event_logs(topic0);
-CREATE INDEX IF NOT EXISTS idx_event_logs_block ON event_logs(block_number);
-CREATE INDEX IF NOT EXISTS idx_event_logs_tx ON event_logs(tx_hash);
 
 -- Known event signatures for decoding
 CREATE TABLE IF NOT EXISTS event_signatures (
@@ -109,7 +94,6 @@ CREATE INDEX IF NOT EXISTS idx_address_labels_name ON address_labels(name);
 -- Proxy Contract Detection
 -- =====================
 
--- Proxy contract relationships
 CREATE TABLE IF NOT EXISTS proxy_contracts (
     proxy_address VARCHAR(42) PRIMARY KEY,
     implementation_address VARCHAR(42) NOT NULL,

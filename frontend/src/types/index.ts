@@ -29,9 +29,14 @@ export interface Transaction {
 // Address types
 export interface Address {
   address: string;
-  is_contract: boolean;
   first_seen_block: number;
   tx_count: number;
+  // New fields from updated API
+  address_type?: 'eoa' | 'contract' | 'nft' | 'erc20';
+  name?: string | null;
+  symbol?: string | null;
+  total_supply?: string | null;
+  decimals?: number; // for erc20
 }
 
 // NFT types
@@ -91,7 +96,7 @@ export interface PaginatedResponse<T> {
 }
 
 export interface SearchResult {
-  type: 'block' | 'transaction' | 'address' | 'nft';
+  type: 'block' | 'transaction' | 'address' | 'nft' | 'nft_collection';
 }
 
 export interface BlockSearchResult extends SearchResult {
@@ -139,7 +144,20 @@ export interface NftSearchResult extends SearchResult {
   image_url: string | null;
 }
 
-export type AnySearchResult = BlockSearchResult | TransactionSearchResult | AddressSearchResult | NftSearchResult;
+export interface NftCollectionSearchResult extends SearchResult {
+  type: 'nft_collection';
+  address: string;
+  name: string | null;
+  symbol: string | null;
+  image_url?: string | null;
+}
+
+export type AnySearchResult =
+  | BlockSearchResult
+  | TransactionSearchResult
+  | AddressSearchResult
+  | NftSearchResult
+  | NftCollectionSearchResult;
 
 export interface SearchResponse {
   results: AnySearchResult[];
@@ -186,6 +204,38 @@ export interface AddressTokenBalance {
   balance: string;
 }
 
+// Address-level combined transfers (ERC-20 + NFT)
+export interface AddressTransfer {
+  tx_hash: string;
+  log_index: number;
+  contract_address: string;
+  from_address: string;
+  to_address: string;
+  value: string; // ERC-20 amount (raw) or NFT token ID
+  block_number: number;
+  timestamp: number;
+  transfer_type: 'erc20' | 'nft';
+  token_name: string | null;
+  token_symbol: string | null;
+}
+
+// Transaction-level transfer types (from dedicated endpoints)
+export interface TxErc20Transfer {
+  tx_hash: string;
+  contract_address: string;
+  from_address: string;
+  to_address: string;
+  value: string;
+}
+
+export interface TxNftTransfer {
+  tx_hash: string;
+  contract_address: string;
+  token_id: string;
+  from_address: string;
+  to_address: string;
+}
+
 // Event Log types
 export interface EventLog {
   id: number;
@@ -214,15 +264,6 @@ export interface DecodedParam {
   indexed: boolean;
 }
 
-// Address Label types
-export interface AddressLabel {
-  address: string;
-  name: string;
-  tags: string[];
-  description: string | null;
-  website: string | null;
-  logo_url: string | null;
-}
 
 // Proxy Contract types
 export interface ProxyInfo {

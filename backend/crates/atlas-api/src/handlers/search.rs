@@ -5,7 +5,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use atlas_common::{Block, Transaction, Address, NftToken};
+use atlas_common::{Block, Transaction, Address, NftContract, Erc20Contract};
 use crate::AppState;
 use crate::error::ApiResult;
 
@@ -23,8 +23,10 @@ pub enum SearchResult {
     Transaction(Transaction),
     #[serde(rename = "address")]
     Address(Address),
-    #[serde(rename = "nft")]
-    Nft(NftToken),
+    #[serde(rename = "nft_collection")]
+    NftCollection(NftContract),
+    #[serde(rename = "erc20_token")]
+    Erc20Token(Erc20Contract),
 }
 
 #[derive(Serialize)]
@@ -40,47 +42,65 @@ pub async fn search(
     let query = params.q.trim();
     let mut results = Vec::new();
 
-    // Detect query type
     if query.is_empty() {
         return Ok(Json(SearchResponse { results, query: query.to_string() }));
     }
 
-    // Check if it's a hex string (address or hash)
-    if query.starts_with("0x") || query.chars().all(|c| c.is_ascii_hexdigit()) {
-        let hex_query = if query.starts_with("0x") { query.to_string() } else { format!("0x{}", query) };
+    // Detect query type and run appropriate searches in parallel
+    let is_hex = query.starts_with("0x") || query.chars().all(|c| c.is_ascii_hexdigit());
+    let block_num = query.parse::<i64>().ok();
 
-        // 42 chars = address (0x + 40 hex)
-        if hex_query.len() == 42 {
-            if let Some(addr) = search_address(&state, &hex_query).await? {
-                results.push(SearchResult::Address(addr));
+    if is_hex {
+        let hex_query = if query.starts_with("0x") {
+            query.to_lowercase()
+        } else {
+            format!("0x{}", query.to_lowercase())
+        };
+
+        match hex_query.len() {
+            // 42 chars = address (0x + 40 hex)
+            42 => {
+                if let Some(addr) = search_address(&state, &hex_query).await? {
+                    results.push(SearchResult::Address(addr));
+                }
             }
+            // 66 chars = tx hash or block hash (0x + 64 hex)
+            66 => {
+                // Run tx and block search in parallel
+                let (tx_result, block_result) = tokio::join!(
+                    search_transaction(&state, &hex_query),
+                    search_block_by_hash(&state, &hex_query)
+                );
+
+                if let Some(tx) = tx_result? {
+                    results.push(SearchResult::Transaction(tx));
+                }
+                if let Some(block) = block_result? {
+                    results.push(SearchResult::Block(block));
+                }
+            }
+            _ => {}
         }
-
-        // 66 chars = tx hash or block hash (0x + 64 hex)
-        if hex_query.len() == 66 {
-            // Try transaction first
-            if let Some(tx) = search_transaction(&state, &hex_query).await? {
-                results.push(SearchResult::Transaction(tx));
-            }
-            // Try block by hash
-            if let Some(block) = search_block_by_hash(&state, &hex_query).await? {
-                results.push(SearchResult::Block(block));
-            }
-        }
-    }
-
-    // Check if it's a block number
-    if let Ok(block_num) = query.parse::<i64>() {
-        if let Some(block) = search_block_by_number(&state, block_num).await? {
+    } else if let Some(num) = block_num {
+        // Block number search
+        if let Some(block) = search_block_by_number(&state, num).await? {
             results.push(SearchResult::Block(block));
         }
     }
 
-    // Search NFT names (full-text search)
-    if results.is_empty() {
-        let nfts = search_nft_by_name(&state, query).await?;
-        for nft in nfts {
-            results.push(SearchResult::Nft(nft));
+    // Text search for tokens/collections if no hex/number results and query is meaningful
+    if results.is_empty() && query.len() >= 2 {
+        // Run NFT and ERC-20 searches in parallel
+        let (nft_results, erc20_results) = tokio::join!(
+            search_nft_collections(&state, query),
+            search_erc20_tokens(&state, query)
+        );
+
+        for nft in nft_results? {
+            results.push(SearchResult::NftCollection(nft));
+        }
+        for token in erc20_results? {
+            results.push(SearchResult::Erc20Token(token));
         }
     }
 
@@ -88,10 +108,11 @@ pub async fn search(
 }
 
 async fn search_address(state: &AppState, address: &str) -> Result<Option<Address>, atlas_common::AtlasError> {
+    // Address is already lowercased by caller
     sqlx::query_as(
         "SELECT address, is_contract, first_seen_block, tx_count
          FROM addresses
-         WHERE LOWER(address) = LOWER($1)"
+         WHERE address = $1"
     )
     .bind(address)
     .fetch_optional(&state.pool)
@@ -100,10 +121,12 @@ async fn search_address(state: &AppState, address: &str) -> Result<Option<Addres
 }
 
 async fn search_transaction(state: &AppState, hash: &str) -> Result<Option<Transaction>, atlas_common::AtlasError> {
+    // Use tx_hash_lookup table for O(1) lookup, then fetch full tx with partition key
     sqlx::query_as(
-        "SELECT hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used, input_data, status, contract_created, timestamp
-         FROM transactions
-         WHERE LOWER(hash) = LOWER($1)"
+        "SELECT t.hash, t.block_number, t.block_index, t.from_address, t.to_address, t.value, t.gas_price, t.gas_used, t.input_data, t.status, t.contract_created, t.timestamp
+         FROM tx_hash_lookup l
+         JOIN transactions t ON t.hash = l.hash AND t.block_number = l.block_number
+         WHERE l.hash = $1"
     )
     .bind(hash)
     .fetch_optional(&state.pool)
@@ -112,10 +135,11 @@ async fn search_transaction(state: &AppState, hash: &str) -> Result<Option<Trans
 }
 
 async fn search_block_by_hash(state: &AppState, hash: &str) -> Result<Option<Block>, atlas_common::AtlasError> {
+    // Hash is already lowercased by caller
     sqlx::query_as(
         "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
          FROM blocks
-         WHERE LOWER(hash) = LOWER($1)"
+         WHERE hash = $1"
     )
     .bind(hash)
     .fetch_optional(&state.pool)
@@ -135,13 +159,28 @@ async fn search_block_by_number(state: &AppState, number: i64) -> Result<Option<
     .map_err(Into::into)
 }
 
-async fn search_nft_by_name(state: &AppState, query: &str) -> Result<Vec<NftToken>, atlas_common::AtlasError> {
-    // Use ILIKE for simple search, could be replaced with full-text search
+async fn search_nft_collections(state: &AppState, query: &str) -> Result<Vec<NftContract>, atlas_common::AtlasError> {
     let pattern = format!("%{}%", query);
     sqlx::query_as(
-        "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
-         FROM nft_tokens
-         WHERE name ILIKE $1
+        "SELECT address, name, symbol, total_supply, first_seen_block
+         FROM nft_contracts
+         WHERE name ILIKE $1 OR symbol ILIKE $1
+         ORDER BY total_supply DESC NULLS LAST
+         LIMIT 10"
+    )
+    .bind(&pattern)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(Into::into)
+}
+
+async fn search_erc20_tokens(state: &AppState, query: &str) -> Result<Vec<Erc20Contract>, atlas_common::AtlasError> {
+    let pattern = format!("%{}%", query);
+    sqlx::query_as(
+        "SELECT address, name, symbol, decimals, total_supply, first_seen_block
+         FROM erc20_contracts
+         WHERE name ILIKE $1 OR symbol ILIKE $1
+         ORDER BY first_seen_block DESC
          LIMIT 10"
     )
     .bind(&pattern)

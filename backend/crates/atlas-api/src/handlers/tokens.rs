@@ -55,7 +55,7 @@ pub async fn get_token(
 ) -> ApiResult<Json<TokenDetailResponse>> {
     let address = normalize_address(&address);
 
-    let contract: Erc20Contract = sqlx::query_as(
+    let mut contract: Erc20Contract = sqlx::query_as(
         "SELECT address, name, symbol, decimals, total_supply, first_seen_block
          FROM erc20_contracts
          WHERE LOWER(address) = LOWER($1)",
@@ -66,19 +66,30 @@ pub async fn get_token(
     .ok_or_else(|| AtlasError::NotFound(format!("Token {} not found", address)))?;
 
     let holder_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_balances
-         WHERE LOWER(contract_address) = LOWER($1) AND balance > 0",
+        "SELECT COUNT(*) FROM erc20_balances WHERE contract_address = $1 AND balance > 0",
     )
     .bind(&address)
     .fetch_one(&state.pool)
     .await?;
 
     let transfer_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_transfers WHERE LOWER(contract_address) = LOWER($1)",
+        "SELECT COUNT(*) FROM erc20_transfers WHERE contract_address = $1",
     )
     .bind(&address)
     .fetch_one(&state.pool)
     .await?;
+
+    // Compute total_supply from balances if not set
+    if contract.total_supply.is_none() {
+        let computed_supply: Option<(bigdecimal::BigDecimal,)> = sqlx::query_as(
+            "SELECT COALESCE(SUM(balance), 0) FROM erc20_balances WHERE contract_address = $1 AND balance > 0",
+        )
+        .bind(&address)
+        .fetch_optional(&state.pool)
+        .await?;
+
+        contract.total_supply = computed_supply.map(|(s,)| s);
+    }
 
     Ok(Json(TokenDetailResponse {
         contract,
@@ -97,7 +108,7 @@ pub async fn get_token_holders(
 
     // Verify token exists
     let _: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_contracts WHERE LOWER(address) = LOWER($1)",
+        "SELECT COUNT(*) FROM erc20_contracts WHERE address = $1",
     )
     .bind(&address)
     .fetch_one(&state.pool)
@@ -105,20 +116,37 @@ pub async fn get_token_holders(
     .map_err(|_| AtlasError::NotFound(format!("Token {} not found", address)))?;
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_balances
-         WHERE LOWER(contract_address) = LOWER($1) AND balance > 0",
+        "SELECT COUNT(*) FROM erc20_balances WHERE contract_address = $1 AND balance > 0",
     )
     .bind(&address)
     .fetch_one(&state.pool)
     .await?;
 
     // Get total supply for percentage calculation
-    let total_supply: Option<(bigdecimal::BigDecimal,)> = sqlx::query_as(
-        "SELECT total_supply FROM erc20_contracts WHERE LOWER(address) = LOWER($1)",
-    )
-    .bind(&address)
-    .fetch_optional(&state.pool)
-    .await?;
+    // First try to get it from the contract, if NULL compute from sum of balances
+    let total_supply: Option<bigdecimal::BigDecimal> = {
+        let stored: Option<(Option<bigdecimal::BigDecimal>,)> = sqlx::query_as(
+            "SELECT total_supply FROM erc20_contracts WHERE LOWER(address) = LOWER($1)",
+        )
+        .bind(&address)
+        .fetch_optional(&state.pool)
+        .await?;
+
+        match stored {
+            Some((Some(ts),)) => Some(ts),
+            _ => {
+                // Compute from sum of balances
+                let computed: Option<(bigdecimal::BigDecimal,)> = sqlx::query_as(
+                    "SELECT COALESCE(SUM(balance), 0) FROM erc20_balances
+                     WHERE LOWER(contract_address) = LOWER($1) AND balance > 0",
+                )
+                .bind(&address)
+                .fetch_optional(&state.pool)
+                .await?;
+                computed.map(|(s,)| s)
+            }
+        }
+    };
 
     let balances: Vec<Erc20Balance> = sqlx::query_as(
         "SELECT address, contract_address, balance, last_updated_block
@@ -137,18 +165,16 @@ pub async fn get_token_holders(
     let holders: Vec<Erc20Holder> = balances
         .into_iter()
         .map(|b| {
-            let percentage = total_supply
-                .as_ref()
-                .and_then(|(ts,)| {
-                    use bigdecimal::ToPrimitive;
-                    let balance_f = b.balance.to_f64()?;
-                    let supply_f = ts.to_f64()?;
-                    if supply_f > 0.0 {
-                        Some((balance_f / supply_f) * 100.0)
-                    } else {
-                        None
-                    }
-                });
+            let percentage = total_supply.as_ref().and_then(|ts| {
+                use bigdecimal::ToPrimitive;
+                let balance_f = b.balance.to_f64()?;
+                let supply_f = ts.to_f64()?;
+                if supply_f > 0.0 {
+                    Some((balance_f / supply_f) * 100.0)
+                } else {
+                    None
+                }
+            });
             Erc20Holder {
                 address: b.address,
                 balance: b.balance,
@@ -174,7 +200,7 @@ pub async fn get_token_transfers(
     let address = normalize_address(&address);
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_transfers WHERE LOWER(contract_address) = LOWER($1)",
+        "SELECT COUNT(*) FROM erc20_transfers WHERE contract_address = $1",
     )
     .bind(&address)
     .fetch_one(&state.pool)
@@ -183,7 +209,7 @@ pub async fn get_token_transfers(
     let transfers: Vec<Erc20Transfer> = sqlx::query_as(
         "SELECT id, tx_hash, log_index, contract_address, from_address, to_address, value, block_number, timestamp
          FROM erc20_transfers
-         WHERE LOWER(contract_address) = LOWER($1)
+         WHERE contract_address = $1
          ORDER BY block_number DESC, log_index DESC
          LIMIT $2 OFFSET $3",
     )
@@ -221,8 +247,8 @@ pub async fn get_address_tokens(
         "SELECT b.address, b.contract_address, b.balance, b.last_updated_block,
                 c.name, c.symbol, c.decimals
          FROM erc20_balances b
-         JOIN erc20_contracts c ON LOWER(b.contract_address) = LOWER(c.address)
-         WHERE LOWER(b.address) = LOWER($1) AND b.balance > 0
+         JOIN erc20_contracts c ON b.contract_address = c.address
+         WHERE b.address = $1 AND b.balance > 0
          ORDER BY b.balance DESC
          LIMIT $2 OFFSET $3",
     )

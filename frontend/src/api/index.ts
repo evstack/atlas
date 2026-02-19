@@ -4,7 +4,5 @@ export * from './addresses';
 export * from './nfts';
 export * from './tokens';
 export * from './logs';
-export * from './labels';
-export * from './proxies';
 export * from './search';
 export { default as client } from './client';

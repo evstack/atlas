@@ -27,6 +27,9 @@ services:
       BATCH_SIZE: ${BATCH_SIZE:-100}
       REINDEX: ${REINDEX:-false}
       IPFS_GATEWAY: ${IPFS_GATEWAY:-https://ipfs.io/ipfs/}
+      FETCH_WORKERS: ${FETCH_WORKERS:-10}
+      RPC_REQUESTS_PER_SECOND: ${RPC_REQUESTS_PER_SECOND:-100}
+      RPC_BATCH_SIZE: ${RPC_BATCH_SIZE:-20}
       RUST_LOG: atlas_indexer=info
     depends_on:
       postgres:
@@ -43,7 +46,7 @@ services:
       RPC_URL: ${RPC_URL}
       API_HOST: 0.0.0.0
       API_PORT: 3000
-      RUST_LOG: atlas_api=info,tower_http=debug
+      RUST_LOG: atlas_api=info,tower_http=info
     ports:
       - "3000:3000"
     depends_on:

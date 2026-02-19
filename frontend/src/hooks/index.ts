@@ -1,8 +1,10 @@
 export * from './useBlocks';
 export * from './useTransactions';
 export * from './useAddress';
+export * from './useAddresses';
 export * from './useNFTs';
 export * from './useTokens';
 export * from './useLogs';
-export * from './useLabels';
-export * from './useProxies';
+export * from './useTransfers';
+export { default as useEthBalance } from './useEthBalance';
+export { default as useEthPrice } from './useEthPrice';

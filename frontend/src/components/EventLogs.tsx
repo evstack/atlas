@@ -4,7 +4,7 @@ import { truncateHash, formatNumber } from '../utils';
 import type { EventLog, DecodedEventLog, DecodedParam } from '../types';
 
 interface EventLogsProps {
-  logs: EventLog[] | DecodedEventLog[];
+  logs?: EventLog[] | DecodedEventLog[];
   pagination?: { page: number; limit: number; total: number; total_pages: number } | null;
   onPageChange?: (page: number) => void;
   showTxHash?: boolean;
@@ -44,7 +44,7 @@ function LogCard({ log, showTxHash, showAddress }: { log: EventLog | DecodedEven
   const decoded = isDecodedLog(log) ? log : null;
 
   return (
-    <div className="border border-dark-600 p-4 hover:border-dark-500 transition-colors">
+    <div className="border border-dark-600 p-4 rounded-lg hover:border-dark-500 transition-colors">
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-4">
@@ -178,6 +178,7 @@ export default function EventLogs({
   showAddress = true,
   loading = false,
 }: EventLogsProps) {
+  const items = logs ?? [];
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -186,7 +187,7 @@ export default function EventLogs({
     );
   }
 
-  if (logs.length === 0) {
+  if (items.length === 0) {
     return (
       <p className="text-gray-400 text-center py-8">No event logs found</p>
     );
@@ -195,7 +196,7 @@ export default function EventLogs({
   return (
     <div>
       <div className="space-y-4">
-        {logs.map((log) => (
+        {items.map((log) => (
           <LogCard
             key={`${log.tx_hash}-${log.log_index}`}
             log={log}
