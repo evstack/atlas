@@ -123,7 +123,7 @@ pub async fn list_addresses(
         SELECT * FROM all_addresses
     "#;
 
-    // Build WHERE conditions
+    // Build WHERE conditions (validated; numeric/boolean to avoid injection)
     let mut conditions: Vec<String> = Vec::new();
 
     if let Some(is_contract) = filters.is_contract {
@@ -139,7 +139,12 @@ pub async fn list_addresses(
     }
 
     if let Some(ref address_type) = filters.address_type {
-        conditions.push(format!("address_type = '{}'", address_type));
+        // Whitelist allowed values to prevent injection
+        let at = match address_type.to_lowercase().as_str() {
+            "eoa" | "contract" | "erc20" | "nft" => Some(address_type.to_lowercase()),
+            _ => None,
+        };
+        if let Some(at) = at { conditions.push(format!("address_type = '{}'", at)); }
     }
 
     let where_clause = if conditions.is_empty() {
@@ -311,7 +316,7 @@ pub async fn get_address_transactions(
     let address = normalize_address(&address);
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM transactions WHERE LOWER(from_address) = LOWER($1) OR LOWER(to_address) = LOWER($1)"
+        "SELECT COUNT(*) FROM transactions WHERE from_address = $1 OR to_address = $1"
     )
     .bind(&address)
     .fetch_one(&state.pool)
@@ -320,7 +325,7 @@ pub async fn get_address_transactions(
     let transactions: Vec<Transaction> = sqlx::query_as(
         "SELECT hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used, input_data, status, contract_created, timestamp
          FROM transactions
-         WHERE LOWER(from_address) = LOWER($1) OR LOWER(to_address) = LOWER($1)
+         WHERE from_address = $1 OR to_address = $1
          ORDER BY block_number DESC, block_index DESC
          LIMIT $2 OFFSET $3"
     )
@@ -341,7 +346,7 @@ pub async fn get_address_nfts(
     let address = normalize_address(&address);
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM nft_tokens WHERE LOWER(owner) = LOWER($1)"
+        "SELECT COUNT(*) FROM nft_tokens WHERE owner = $1"
     )
     .bind(&address)
     .fetch_one(&state.pool)
@@ -350,7 +355,7 @@ pub async fn get_address_nfts(
     let tokens: Vec<NftToken> = sqlx::query_as(
         "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
          FROM nft_tokens
-         WHERE LOWER(owner) = LOWER($1)
+         WHERE owner = $1
          ORDER BY last_transfer_block DESC
          LIMIT $2 OFFSET $3"
     )
@@ -411,7 +416,7 @@ pub async fn get_address_transfers(
         Some("erc20") => {
             let count = r#"
                 SELECT COUNT(*) FROM erc20_transfers
-                WHERE LOWER(from_address) = LOWER($1) OR LOWER(to_address) = LOWER($1)
+                WHERE from_address = $1 OR to_address = $1
             "#;
             let data = r#"
                 SELECT
@@ -427,8 +432,8 @@ pub async fn get_address_transfers(
                     c.name as token_name,
                     c.symbol as token_symbol
                 FROM erc20_transfers t
-                LEFT JOIN erc20_contracts c ON LOWER(t.contract_address) = LOWER(c.address)
-                WHERE LOWER(t.from_address) = LOWER($1) OR LOWER(t.to_address) = LOWER($1)
+                LEFT JOIN erc20_contracts c ON t.contract_address = c.address
+                WHERE t.from_address = $1 OR t.to_address = $1
                 ORDER BY t.block_number DESC, t.log_index DESC
                 LIMIT $2 OFFSET $3
             "#;
@@ -437,7 +442,7 @@ pub async fn get_address_transfers(
         Some("nft") => {
             let count = r#"
                 SELECT COUNT(*) FROM nft_transfers
-                WHERE LOWER(from_address) = LOWER($1) OR LOWER(to_address) = LOWER($1)
+                WHERE from_address = $1 OR to_address = $1
             "#;
             let data = r#"
                 SELECT
@@ -453,8 +458,8 @@ pub async fn get_address_transfers(
                     c.name as token_name,
                     c.symbol as token_symbol
                 FROM nft_transfers t
-                LEFT JOIN nft_contracts c ON LOWER(t.contract_address) = LOWER(c.address)
-                WHERE LOWER(t.from_address) = LOWER($1) OR LOWER(t.to_address) = LOWER($1)
+                LEFT JOIN nft_contracts c ON t.contract_address = c.address
+                WHERE t.from_address = $1 OR t.to_address = $1
                 ORDER BY t.block_number DESC, t.log_index DESC
                 LIMIT $2 OFFSET $3
             "#;
@@ -464,11 +469,9 @@ pub async fn get_address_transfers(
             // Both types - use UNION ALL
             let count = r#"
                 SELECT (
-                    SELECT COUNT(*) FROM erc20_transfers
-                    WHERE LOWER(from_address) = LOWER($1) OR LOWER(to_address) = LOWER($1)
+                    SELECT COUNT(*) FROM erc20_transfers WHERE from_address = $1 OR to_address = $1
                 ) + (
-                    SELECT COUNT(*) FROM nft_transfers
-                    WHERE LOWER(from_address) = LOWER($1) OR LOWER(to_address) = LOWER($1)
+                    SELECT COUNT(*) FROM nft_transfers WHERE from_address = $1 OR to_address = $1
                 )
             "#;
             let data = r#"
@@ -486,8 +489,8 @@ pub async fn get_address_transfers(
                         c.name as token_name,
                         c.symbol as token_symbol
                     FROM erc20_transfers t
-                    LEFT JOIN erc20_contracts c ON LOWER(t.contract_address) = LOWER(c.address)
-                    WHERE LOWER(t.from_address) = LOWER($1) OR LOWER(t.to_address) = LOWER($1)
+                    LEFT JOIN erc20_contracts c ON t.contract_address = c.address
+                    WHERE t.from_address = $1 OR t.to_address = $1
 
                     UNION ALL
 
@@ -504,8 +507,8 @@ pub async fn get_address_transfers(
                         c.name as token_name,
                         c.symbol as token_symbol
                     FROM nft_transfers t
-                    LEFT JOIN nft_contracts c ON LOWER(t.contract_address) = LOWER(c.address)
-                    WHERE LOWER(t.from_address) = LOWER($1) OR LOWER(t.to_address) = LOWER($1)
+                    LEFT JOIN nft_contracts c ON t.contract_address = c.address
+                    WHERE t.from_address = $1 OR t.to_address = $1
                 ) combined
                 ORDER BY block_number DESC, log_index DESC
                 LIMIT $2 OFFSET $3

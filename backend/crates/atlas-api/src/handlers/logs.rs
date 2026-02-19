@@ -51,8 +51,7 @@ pub async fn get_address_logs(
         let topic0 = normalize_hash(topic0);
 
         let total: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM event_logs
-             WHERE LOWER(address) = LOWER($1) AND LOWER(topic0) = LOWER($2)",
+            "SELECT COUNT(*) FROM event_logs WHERE address = $1 AND topic0 = $2",
         )
         .bind(&address)
         .bind(&topic0)
@@ -62,7 +61,7 @@ pub async fn get_address_logs(
         let logs: Vec<EventLog> = sqlx::query_as(
             "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
              FROM event_logs
-             WHERE LOWER(address) = LOWER($1) AND LOWER(topic0) = LOWER($2)
+             WHERE address = $1 AND topic0 = $2
              ORDER BY block_number DESC, log_index DESC
              LIMIT $3 OFFSET $4",
         )
@@ -76,7 +75,7 @@ pub async fn get_address_logs(
         (total.0, logs)
     } else {
         let total: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM event_logs WHERE LOWER(address) = LOWER($1)",
+            "SELECT COUNT(*) FROM event_logs WHERE address = $1",
         )
         .bind(&address)
         .fetch_one(&state.pool)
@@ -85,7 +84,7 @@ pub async fn get_address_logs(
         let logs: Vec<EventLog> = sqlx::query_as(
             "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
              FROM event_logs
-             WHERE LOWER(address) = LOWER($1)
+             WHERE address = $1
              ORDER BY block_number DESC, log_index DESC
              LIMIT $2 OFFSET $3",
         )
@@ -118,7 +117,7 @@ pub async fn get_logs_by_topic(
     let topic0 = normalize_hash(topic0);
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM event_logs WHERE LOWER(topic0) = LOWER($1)",
+        "SELECT COUNT(*) FROM event_logs WHERE topic0 = $1",
     )
     .bind(&topic0)
     .fetch_one(&state.pool)
@@ -127,7 +126,7 @@ pub async fn get_logs_by_topic(
     let logs: Vec<EventLog> = sqlx::query_as(
         "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
          FROM event_logs
-         WHERE LOWER(topic0) = LOWER($1)
+         WHERE topic0 = $1
          ORDER BY block_number DESC, log_index DESC
          LIMIT $2 OFFSET $3",
     )

@@ -66,15 +66,14 @@ pub async fn get_token(
     .ok_or_else(|| AtlasError::NotFound(format!("Token {} not found", address)))?;
 
     let holder_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_balances
-         WHERE LOWER(contract_address) = LOWER($1) AND balance > 0",
+        "SELECT COUNT(*) FROM erc20_balances WHERE contract_address = $1 AND balance > 0",
     )
     .bind(&address)
     .fetch_one(&state.pool)
     .await?;
 
     let transfer_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_transfers WHERE LOWER(contract_address) = LOWER($1)",
+        "SELECT COUNT(*) FROM erc20_transfers WHERE contract_address = $1",
     )
     .bind(&address)
     .fetch_one(&state.pool)
@@ -83,8 +82,7 @@ pub async fn get_token(
     // Compute total_supply from balances if not set
     if contract.total_supply.is_none() {
         let computed_supply: Option<(bigdecimal::BigDecimal,)> = sqlx::query_as(
-            "SELECT COALESCE(SUM(balance), 0) FROM erc20_balances
-             WHERE LOWER(contract_address) = LOWER($1) AND balance > 0",
+            "SELECT COALESCE(SUM(balance), 0) FROM erc20_balances WHERE contract_address = $1 AND balance > 0",
         )
         .bind(&address)
         .fetch_optional(&state.pool)
@@ -110,7 +108,7 @@ pub async fn get_token_holders(
 
     // Verify token exists
     let _: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_contracts WHERE LOWER(address) = LOWER($1)",
+        "SELECT COUNT(*) FROM erc20_contracts WHERE address = $1",
     )
     .bind(&address)
     .fetch_one(&state.pool)
@@ -118,8 +116,7 @@ pub async fn get_token_holders(
     .map_err(|_| AtlasError::NotFound(format!("Token {} not found", address)))?;
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_balances
-         WHERE LOWER(contract_address) = LOWER($1) AND balance > 0",
+        "SELECT COUNT(*) FROM erc20_balances WHERE contract_address = $1 AND balance > 0",
     )
     .bind(&address)
     .fetch_one(&state.pool)
@@ -203,7 +200,7 @@ pub async fn get_token_transfers(
     let address = normalize_address(&address);
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_transfers WHERE LOWER(contract_address) = LOWER($1)",
+        "SELECT COUNT(*) FROM erc20_transfers WHERE contract_address = $1",
     )
     .bind(&address)
     .fetch_one(&state.pool)
@@ -212,7 +209,7 @@ pub async fn get_token_transfers(
     let transfers: Vec<Erc20Transfer> = sqlx::query_as(
         "SELECT id, tx_hash, log_index, contract_address, from_address, to_address, value, block_number, timestamp
          FROM erc20_transfers
-         WHERE LOWER(contract_address) = LOWER($1)
+         WHERE contract_address = $1
          ORDER BY block_number DESC, log_index DESC
          LIMIT $2 OFFSET $3",
     )
@@ -250,8 +247,8 @@ pub async fn get_address_tokens(
         "SELECT b.address, b.contract_address, b.balance, b.last_updated_block,
                 c.name, c.symbol, c.decimals
          FROM erc20_balances b
-         JOIN erc20_contracts c ON LOWER(b.contract_address) = LOWER(c.address)
-         WHERE LOWER(b.address) = LOWER($1) AND b.balance > 0
+         JOIN erc20_contracts c ON b.contract_address = c.address
+         WHERE b.address = $1 AND b.balance > 0
          ORDER BY b.balance DESC
          LIMIT $2 OFFSET $3",
     )
