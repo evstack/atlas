@@ -1,9 +1,14 @@
 use anyhow::Result;
+use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod indexer;
 mod metadata;
+
+/// Retry delays for exponential backoff (in seconds)
+const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
+const MAX_RETRY_DELAY: u64 = 60;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -34,16 +39,54 @@ async fn main() -> Result<()> {
     let metadata_pool = pool.clone();
     let metadata_config = config.clone();
     let metadata_handle = tokio::spawn(async move {
-        metadata::MetadataFetcher::new(metadata_pool, metadata_config)
-            .run()
-            .await
+        run_with_retry(|| async {
+            let fetcher = metadata::MetadataFetcher::new(metadata_pool.clone(), metadata_config.clone())?;
+            fetcher.run().await
+        }).await
     });
 
-    // Run indexer (blocks until shutdown)
-    indexer.run().await?;
+    // Run indexer with retry on failure
+    run_with_retry(|| indexer.run()).await?;
 
     // Wait for metadata fetcher
     metadata_handle.await??;
 
     Ok(())
+}
+
+/// Run an async function with exponential backoff retry
+/// Note: Network errors are handled internally by the indexer with their own retry logic.
+/// This outer retry is for catastrophic errors (DB failures, all RPC retries exhausted, etc.)
+async fn run_with_retry<F, Fut>(f: F) -> Result<()>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    let mut retry_count = 0;
+
+    loop {
+        match f().await {
+            Ok(()) => {
+                // Success - reset retry count and continue
+                retry_count = 0;
+            }
+            Err(e) => {
+                // Get delay for this retry (cap at MAX_RETRY_DELAY)
+                let delay = RETRY_DELAYS
+                    .get(retry_count)
+                    .copied()
+                    .unwrap_or(MAX_RETRY_DELAY);
+
+                tracing::error!(
+                    "Fatal error (internal retries exhausted): {}. Restarting in {}s (attempt {})...",
+                    e,
+                    delay,
+                    retry_count + 1
+                );
+
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+                retry_count += 1;
+            }
+        }
+    }
 }
