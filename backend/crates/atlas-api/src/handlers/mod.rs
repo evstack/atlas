@@ -19,22 +19,37 @@ use sqlx::PgPool;
 ///
 /// This avoids the slow COUNT(*) full table scan on large tables.
 pub async fn get_table_count(pool: &PgPool, table_name: &str) -> Result<i64, sqlx::Error> {
-    // First get the approximate count from pg_class (instant)
-    let approx: (Option<f32>,) = sqlx::query_as(
-        "SELECT reltuples FROM pg_class WHERE relname = $1"
+    // Sum approximate reltuples across partitions if any, else use parent.
+    // This is instant and reasonably accurate for large tables.
+    let approx_partitions: (Option<f64>,) = sqlx::query_as(
+        r#"
+        SELECT SUM(c.reltuples) AS approx
+        FROM pg_class c
+        JOIN pg_inherits i ON i.inhrelid = c.oid
+        JOIN pg_class p ON p.oid = i.inhparent
+        WHERE p.relname = $1
+        "#
     )
     .bind(table_name)
     .fetch_one(pool)
     .await?;
 
-    let approx_count = approx.0.unwrap_or(0.0) as i64;
-
-    // If table is large (> 100k rows), use approximate count
-    // Otherwise, use exact count (fast enough for small tables)
-    if approx_count > 100_000 {
-        Ok(approx_count)
+    let approx = if let Some(sum) = approx_partitions.0 {
+        sum as i64
     } else {
-        // Safe to use exact count for smaller tables
+        let parent: (Option<f64>,) = sqlx::query_as(
+            "SELECT reltuples FROM pg_class WHERE relname = $1"
+        )
+        .bind(table_name)
+        .fetch_one(pool)
+        .await?;
+        parent.0.unwrap_or(0.0) as i64
+    };
+
+    if approx > 100_000 {
+        Ok(approx)
+    } else {
+        // Exact count for small tables
         let exact: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {}", table_name))
             .fetch_one(pool)
             .await?;
