@@ -56,12 +56,17 @@ async fn main() -> Result<()> {
         .route("/api/blocks/{number}", get(handlers::blocks::get_block))
         .route("/api/blocks/{number}/transactions", get(handlers::blocks::get_block_transactions))
         // Transactions
+        .route("/api/transactions", get(handlers::transactions::list_transactions))
         .route("/api/transactions/{hash}", get(handlers::transactions::get_transaction))
         .route("/api/transactions/{hash}/logs", get(handlers::logs::get_transaction_logs))
         .route("/api/transactions/{hash}/logs/decoded", get(handlers::logs::get_transaction_logs_decoded))
+        .route("/api/transactions/{hash}/erc20-transfers", get(handlers::transactions::get_transaction_erc20_transfers))
+        .route("/api/transactions/{hash}/nft-transfers", get(handlers::transactions::get_transaction_nft_transfers))
         // Addresses
+        .route("/api/addresses", get(handlers::addresses::list_addresses))
         .route("/api/addresses/{address}", get(handlers::addresses::get_address))
         .route("/api/addresses/{address}/transactions", get(handlers::addresses::get_address_transactions))
+        .route("/api/addresses/{address}/transfers", get(handlers::addresses::get_address_transfers))
         .route("/api/addresses/{address}/nfts", get(handlers::addresses::get_address_nfts))
         .route("/api/addresses/{address}/tokens", get(handlers::tokens::get_address_tokens))
         .route("/api/addresses/{address}/logs", get(handlers::logs::get_address_logs))
@@ -70,6 +75,7 @@ async fn main() -> Result<()> {
         .route("/api/nfts/collections", get(handlers::nfts::list_collections))
         .route("/api/nfts/collections/{address}", get(handlers::nfts::get_collection))
         .route("/api/nfts/collections/{address}/tokens", get(handlers::nfts::list_collection_tokens))
+        .route("/api/nfts/collections/{address}/transfers", get(handlers::nfts::get_collection_transfers))
         .route("/api/nfts/collections/{address}/tokens/{token_id}", get(handlers::nfts::get_token))
         .route("/api/nfts/collections/{address}/tokens/{token_id}/transfers", get(handlers::nfts::get_token_transfers))
         // ERC-20 Tokens
@@ -100,6 +106,8 @@ async fn main() -> Result<()> {
         .route("/api", post(handlers::etherscan::etherscan_api_post))
         // Search
         .route("/api/search", get(handlers::search::search))
+        // Status
+        .route("/api/status", get(handlers::status::get_status))
         // Health
         .route("/health", get(|| async { "OK" }))
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
