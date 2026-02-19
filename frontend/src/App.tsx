@@ -13,6 +13,9 @@ import {
   TokensPage,
   TokenDetailPage,
   NotFoundPage,
+  WelcomePage,
+  SearchResultsPage,
+  AddressesPage,
 } from './pages';
 
 export default function App() {
@@ -20,11 +23,13 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<Navigate to="/blocks" replace />} />
+          <Route index element={<WelcomePage />} />
           <Route path="blocks" element={<BlocksPage />} />
           <Route path="blocks/:number" element={<BlockDetailPage />} />
           <Route path="blocks/:number/transactions" element={<BlockTransactionsPage />} />
           <Route path="transactions" element={<TransactionsPage />} />
+          <Route path="search" element={<SearchResultsPage />} />
+          <Route path="addresses" element={<AddressesPage />} />
           <Route path="tx/:hash" element={<TransactionDetailPage />} />
           <Route path="address/:address" element={<AddressPage />} />
           <Route path="nfts" element={<NFTsPage />} />

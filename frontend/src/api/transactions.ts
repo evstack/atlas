@@ -1,5 +1,5 @@
 import client from './client';
-import type { Transaction, PaginatedResponse } from '../types';
+import type { Transaction, PaginatedResponse, TxErc20Transfer, TxNftTransfer } from '../types';
 
 export interface GetTransactionsParams {
   page?: number;
@@ -35,4 +35,20 @@ export async function getTransactionsByAddress(address: string, params: { page?:
     params: { page, limit },
   });
   return response.data;
+}
+
+export async function getTxErc20Transfers(txHash: string): Promise<TxErc20Transfer[]> {
+  const response = await client.get(`/transactions/${txHash}/erc20-transfers`);
+  const body = response.data as any;
+  if (Array.isArray(body)) return body as TxErc20Transfer[];
+  if (Array.isArray(body?.data)) return body.data as TxErc20Transfer[];
+  return [];
+}
+
+export async function getTxNftTransfers(txHash: string): Promise<TxNftTransfer[]> {
+  const response = await client.get(`/transactions/${txHash}/nft-transfers`);
+  const body = response.data as any;
+  if (Array.isArray(body)) return body as TxNftTransfer[];
+  if (Array.isArray(body?.data)) return body.data as TxNftTransfer[];
+  return [];
 }

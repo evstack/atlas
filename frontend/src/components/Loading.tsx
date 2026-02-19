@@ -13,7 +13,7 @@ export default function Loading({ size = 'md', text }: LoadingProps) {
   return (
     <div className="flex flex-col items-center justify-center py-12">
       <div
-        className={`${sizeClasses[size]} border-dark-500 border-t-accent-primary animate-spin`}
+        className={`${sizeClasses[size]} rounded-full border-transparent border-t-accent-primary/90 border-l-dark-600/60 border-r-dark-600/60 animate-spin`}
       />
       {text && <p className="mt-4 text-gray-500 text-sm">{text}</p>}
     </div>

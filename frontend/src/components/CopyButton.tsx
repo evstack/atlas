@@ -20,8 +20,8 @@ export default function CopyButton({ text, className = '' }: CopyButtonProps) {
 
   return (
     <button
-      onClick={handleCopy}
-      className={`p-1 hover:bg-dark-600 transition-colors ${className}`}
+      onClick={(e) => { e.stopPropagation(); void handleCopy(); }}
+      className={`p-1 hover:bg-dark-600 transition-colors rounded-md ${className}`}
       title={copied ? 'Copied!' : 'Copy to clipboard'}
     >
       {copied ? (

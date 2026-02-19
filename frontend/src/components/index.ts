@@ -9,5 +9,4 @@ export { default as BlockLink } from './BlockLink';
 export { default as StatusBadge } from './StatusBadge';
 export { default as CopyButton } from './CopyButton';
 export { default as EventLogs } from './EventLogs';
-export { default as LabeledAddress } from './LabeledAddress';
-export { default as ProxyBadge, ProxyIndicator } from './ProxyBadge';
+export { default as ContractTypeBadge } from './ContractTypeBadge';

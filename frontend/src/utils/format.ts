@@ -10,14 +10,39 @@ export function truncateHash(hash: string, startChars = 6, endChars = 4): string
   return `${hash.slice(0, startChars)}...${hash.slice(-endChars)}`;
 }
 
+function expandScientificIntString(input: string): string {
+  const s = input.trim();
+  if (/^\d+$/.test(s)) return s;
+  const m = s.match(/^([\d.]+)[eE]([+-]?\d+)$/);
+  if (!m) return s;
+  const base = m[1];
+  const exp = parseInt(m[2], 10) || 0;
+  const dot = base.indexOf('.');
+  const digits = base.replace('.', '');
+  const decimals = dot >= 0 ? (base.length - dot - 1) : 0;
+  if (exp >= decimals) {
+    return digits + '0'.repeat(exp - decimals);
+  }
+  // If result would be fractional, fall back to removing the decimal point (floor toward zero)
+  const intLen = digits.length - (decimals - exp);
+  const intPart = intLen > 0 ? digits.slice(0, intLen) : '0';
+  return intPart.replace(/^0+(?=\d)/, '');
+}
+
+function pow10BigInt(n: number): bigint {
+  if (n <= 0) return 1n;
+  return BigInt('1' + '0'.repeat(n));
+}
+
 /**
  * Formats a Wei value to Ether with specified decimal places
  */
 export function formatEther(wei: string, decimals = 6): string {
   if (!wei) return '0';
 
-  const weiNum = BigInt(wei);
-  const etherDivisor = BigInt(10 ** 18);
+  const normalized = expandScientificIntString(wei);
+  const weiNum = BigInt(normalized);
+  const etherDivisor = pow10BigInt(18);
   const wholePart = weiNum / etherDivisor;
   const fractionalPart = weiNum % etherDivisor;
 
@@ -33,6 +58,30 @@ export function formatEther(wei: string, decimals = 6): string {
   }
 
   return `${wholePart}.${truncatedFractional}`;
+}
+
+// Exact ETH (no rounding): use all 18 fractional digits, then trim trailing zeros
+export function formatEtherExact(wei: string): string {
+  if (!wei) return '0';
+  const normalized = expandScientificIntString(wei);
+  const weiNum = BigInt(normalized);
+  const etherDivisor = pow10BigInt(18);
+  const wholePart = weiNum / etherDivisor;
+  const fractionalPart = weiNum % etherDivisor;
+  if (fractionalPart === 0n) return wholePart.toString();
+  const fractionalStr = fractionalPart.toString().padStart(18, '0').replace(/0+$/, '');
+  if (fractionalStr === '') return wholePart.toString();
+  return `${wholePart}.${fractionalStr}`;
+}
+
+export function formatUsd(amount: number, opts: { minCents?: number } = {}): string {
+  const { minCents = 1 } = opts;
+  const absCents = Math.round(Math.abs(amount) * 100);
+  const sign = amount < 0 ? '-' : '';
+  if (absCents > 0 && absCents < minCents) {
+    return `${sign}< $0.01`;
+  }
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(amount);
 }
 
 /**
@@ -95,8 +144,8 @@ export function formatGas(gas: string): string {
 export function formatGasPrice(weiPrice: string): string {
   if (!weiPrice) return '0';
 
-  const wei = BigInt(weiPrice);
-  const gweiDivisor = BigInt(10 ** 9);
+  const wei = BigInt(expandScientificIntString(weiPrice));
+  const gweiDivisor = pow10BigInt(9);
   const gwei = wei / gweiDivisor;
   const remainder = wei % gweiDivisor;
 
@@ -134,10 +183,10 @@ export function formatBytes(bytes: number): string {
 export function formatTokenAmount(amount: string, decimals: number, displayDecimals = 6): string {
   if (!amount) return '0';
 
-  const amountNum = BigInt(amount);
+  const amountNum = BigInt(expandScientificIntString(amount));
   if (amountNum === BigInt(0)) return '0';
 
-  const divisor = BigInt(10 ** decimals);
+  const divisor = pow10BigInt(decimals);
   const wholePart = amountNum / divisor;
   const fractionalPart = amountNum % divisor;
 
@@ -155,11 +204,27 @@ export function formatTokenAmount(amount: string, decimals: number, displayDecim
   return `${formatNumber(wholePart.toString())}.${truncatedFractional}`;
 }
 
+// Exact token amount (no rounding): use full fractional precision and trim trailing zeros
+export function formatTokenAmountExact(amount: string, decimals: number): string {
+  if (!amount) return '0';
+  const amountNum = BigInt(expandScientificIntString(amount));
+  if (amountNum === 0n) return '0';
+  if (decimals <= 0) return formatNumber(amountNum.toString());
+  const divisor = pow10BigInt(decimals);
+  const wholePart = amountNum / divisor;
+  const fractionalPart = amountNum % divisor;
+  if (fractionalPart === 0n) return formatNumber(wholePart.toString());
+  const fractionalStr = fractionalPart.toString().padStart(decimals, '0').replace(/0+$/, '');
+  if (fractionalStr === '') return formatNumber(wholePart.toString());
+  return `${formatNumber(wholePart.toString())}.${fractionalStr}`;
+}
+
 /**
  * Formats a percentage value
  * @param percentage The percentage value (0-100)
  * @param decimals Number of decimal places to display
  */
-export function formatPercentage(percentage: number, decimals = 2): string {
+export function formatPercentage(percentage: number | null | undefined, decimals = 2): string {
+  if (percentage === null || percentage === undefined || Number.isNaN(percentage)) return '0%';
   return `${percentage.toFixed(decimals)}%`;
 }
