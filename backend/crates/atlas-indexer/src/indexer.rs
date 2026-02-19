@@ -16,6 +16,13 @@ use tokio::sync::mpsc;
 
 use crate::config::Config;
 
+/// Retry delays for RPC calls (in seconds)
+const RPC_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30];
+const RPC_MAX_RETRIES: usize = 10;
+
+/// Partition size: 10 million blocks per partition
+const PARTITION_SIZE: u64 = 10_000_000;
+
 /// Work item for a worker - a range of blocks to fetch
 #[derive(Debug, Clone)]
 struct WorkItem {
@@ -46,11 +53,19 @@ struct FetchedBlock {
 pub struct Indexer {
     pool: PgPool,
     config: Config,
+    /// Tracks the maximum partition number that has been created
+    /// Used to avoid checking pg_class on every batch
+    current_max_partition: std::sync::atomic::AtomicU64,
 }
 
 impl Indexer {
     pub fn new(pool: PgPool, config: Config) -> Self {
-        Self { pool, config }
+        Self {
+            pool,
+            config,
+            // Will be initialized on first run based on start block
+            current_max_partition: std::sync::atomic::AtomicU64::new(0),
+        }
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -133,8 +148,15 @@ impl Indexer {
         let mut last_log_time = std::time::Instant::now();
 
         loop {
-            // Get chain head
-            let head = provider.get_block_number().await?;
+            // Get chain head with retry
+            let head = match self.get_block_number_with_retry(&provider).await {
+                Ok(h) => h,
+                Err(e) => {
+                    // This should only happen after all retries exhausted (very unlikely)
+                    // Return error to trigger outer retry which will restart workers
+                    return Err(e);
+                }
+            };
             tracing::debug!("Chain head: {}, current: {}", head, current_block);
 
             if current_block > head {
@@ -147,6 +169,9 @@ impl Indexer {
             let end_block = (current_block + self.config.batch_size - 1).min(head);
             let batch_size = (end_block - current_block + 1) as usize;
             tracing::debug!("Fetching batch: {} to {} ({} blocks)", current_block, end_block, batch_size);
+
+            // Ensure partitions exist for this batch range
+            self.ensure_partitions_exist(end_block).await?;
 
             // Spawn a task to send work (avoids deadlock with bounded channels)
             let work_tx_clone = work_tx.clone();
@@ -171,7 +196,7 @@ impl Indexer {
             let mut buffer: BTreeMap<u64, FetchedBlock> = BTreeMap::new();
             let mut next_to_process = current_block;
             let mut blocks_received = 0;
-            let mut failed_blocks: Vec<u64> = Vec::new();
+            let mut failed_blocks: Vec<(u64, String)> = Vec::new();
 
             // Receive all blocks for this batch
             while blocks_received < batch_size {
@@ -188,7 +213,7 @@ impl Indexer {
                     }
                     Some(FetchResult::Error { block_num, error }) => {
                         tracing::warn!("Block {} failed to fetch: {}", block_num, error);
-                        failed_blocks.push(block_num);
+                        failed_blocks.push((block_num, error));
                         blocks_received += 1;
                         // Skip this block for now, continue with others
                         if next_to_process == block_num {
@@ -205,9 +230,73 @@ impl Indexer {
             // Wait for send task to complete
             let _ = send_task.await;
 
-            // Log if we had failures
+            // Retry failed blocks if any
             if !failed_blocks.is_empty() {
-                tracing::error!("Failed to fetch {} blocks: {:?}", failed_blocks.len(), failed_blocks);
+                let block_nums: Vec<u64> = failed_blocks.iter().map(|(n, _)| *n).collect();
+                tracing::warn!("Retrying {} failed blocks: {:?}", failed_blocks.len(), block_nums);
+
+                // Retry up to 3 times with increasing delay
+                for attempt in 1..=3 {
+                    if failed_blocks.is_empty() {
+                        break;
+                    }
+
+                    let delay = Duration::from_secs(attempt * 2); // 2s, 4s, 6s
+                    tracing::info!("Retry attempt {} for {} blocks (waiting {:?})",
+                        attempt, failed_blocks.len(), delay);
+                    tokio::time::sleep(delay).await;
+
+                    let mut still_failed = Vec::new();
+                    for (block_num, last_error) in failed_blocks {
+                        // Fetch single block
+                        let results = Self::fetch_blocks_batch(
+                            &http_client,
+                            &rpc_url,
+                            block_num,
+                            1,
+                            &rate_limiter,
+                        ).await;
+
+                        match results.into_iter().next() {
+                            Some(FetchResult::Success(fetched)) => {
+                                // Process the retried block
+                                self.process_block(&provider, fetched).await?;
+                                tracing::info!("Block {} retry succeeded", block_num);
+                            }
+                            Some(FetchResult::Error { error, .. }) => {
+                                still_failed.push((block_num, error));
+                            }
+                            None => {
+                                still_failed.push((block_num, last_error));
+                            }
+                        }
+                    }
+                    failed_blocks = still_failed;
+                }
+
+                // Store any remaining failures in failed_blocks table
+                if !failed_blocks.is_empty() {
+                    tracing::error!(
+                        "Storing {} blocks in failed_blocks table after 3 retries: {:?}",
+                        failed_blocks.len(),
+                        failed_blocks.iter().map(|(n, _)| n).collect::<Vec<_>>()
+                    );
+
+                    for (block_num, error) in &failed_blocks {
+                        sqlx::query(
+                            "INSERT INTO failed_blocks (block_number, error_message, retry_count, last_failed_at)
+                             VALUES ($1, $2, 3, NOW())
+                             ON CONFLICT (block_number) DO UPDATE SET
+                                error_message = $2,
+                                retry_count = failed_blocks.retry_count + 3,
+                                last_failed_at = NOW()"
+                        )
+                        .bind(*block_num as i64)
+                        .bind(error)
+                        .execute(&self.pool)
+                        .await?;
+                    }
+                }
             }
 
             current_block = end_block + 1;
@@ -223,6 +312,12 @@ impl Indexer {
             );
 
             last_log_time = std::time::Instant::now();
+
+            // If we hit the head (batch smaller than configured), sleep to avoid tight loop
+            if (batch_size as u64) < self.config.batch_size {
+                tracing::debug!("At chain head, sleeping for 1s");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
         }
     }
 
@@ -264,33 +359,82 @@ impl Indexer {
             }));
         }
 
-        // Send batch request
-        let response = match client
-            .post(rpc_url)
-            .json(&batch_request)
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
-                // Return errors for all blocks in batch
-                return (0..count)
-                    .map(|i| FetchResult::Error {
-                        block_num: start_block + i as u64,
-                        error: format!("HTTP request failed: {}", e),
-                    })
-                    .collect();
-            }
-        };
+        // Send batch request with retry for network errors
+        let mut batch_response: Option<Vec<serde_json::Value>> = None;
+        let mut last_error: Option<String> = None;
 
-        // Parse response
-        let batch_response: Vec<serde_json::Value> = match response.json().await {
-            Ok(resp) => resp,
-            Err(e) => {
+        for attempt in 0..RPC_MAX_RETRIES {
+            // Send request
+            let response = match client
+                .post(rpc_url)
+                .json(&batch_request)
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
+                Err(e) => {
+                    let delay = RPC_RETRY_DELAYS
+                        .get(attempt)
+                        .copied()
+                        .unwrap_or(*RPC_RETRY_DELAYS.last().unwrap_or(&30));
+
+                    tracing::warn!(
+                        "RPC batch request failed (attempt {}/{}): {}. Retrying in {}s...",
+                        attempt + 1,
+                        RPC_MAX_RETRIES,
+                        e,
+                        delay
+                    );
+
+                    last_error = Some(format!("HTTP request failed: {}", e));
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    continue;
+                }
+            };
+
+            // Parse response
+            match response.json::<Vec<serde_json::Value>>().await {
+                Ok(resp) => {
+                    if attempt > 0 {
+                        tracing::info!(
+                            "RPC batch request succeeded after {} retries (blocks {} to {})",
+                            attempt,
+                            start_block,
+                            start_block + count as u64 - 1
+                        );
+                    }
+                    batch_response = Some(resp);
+                    break;
+                }
+                Err(e) => {
+                    let delay = RPC_RETRY_DELAYS
+                        .get(attempt)
+                        .copied()
+                        .unwrap_or(*RPC_RETRY_DELAYS.last().unwrap_or(&30));
+
+                    tracing::warn!(
+                        "Failed to parse RPC response (attempt {}/{}): {}. Retrying in {}s...",
+                        attempt + 1,
+                        RPC_MAX_RETRIES,
+                        e,
+                        delay
+                    );
+
+                    last_error = Some(format!("Failed to parse response: {}", e));
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                }
+            }
+        }
+
+        // If all retries failed, return errors for all blocks
+        let batch_response = match batch_response {
+            Some(resp) => resp,
+            None => {
+                let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
                 return (0..count)
                     .map(|i| FetchResult::Error {
                         block_num: start_block + i as u64,
-                        error: format!("Failed to parse response: {}", e),
+                        error: error_msg.clone(),
                     })
                     .collect();
             }
@@ -460,6 +604,122 @@ impl Indexer {
         }
     }
 
+    /// Ensure partitions exist for all partitioned tables up to the given block number
+    /// Uses in-memory tracking to avoid database queries on every batch
+    async fn ensure_partitions_exist(&self, block_number: u64) -> Result<()> {
+        use std::sync::atomic::Ordering;
+
+        let partition_num = block_number / PARTITION_SIZE;
+        let current_max = self.current_max_partition.load(Ordering::Relaxed);
+
+        // Fast path: partition already exists (most common case)
+        if partition_num <= current_max {
+            return Ok(());
+        }
+
+        // First run or crossing boundary - need to check/create partitions
+        // Create all partitions from current_max+1 to partition_num
+        let start_partition = if current_max == 0 {
+            // First run - check what partitions exist
+            let existing: Option<(i64,)> = sqlx::query_as(
+                "SELECT MAX(CAST(SUBSTRING(relname FROM 'blocks_p(\\d+)') AS BIGINT))
+                 FROM pg_class WHERE relname ~ '^blocks_p\\d+$'"
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+
+            match existing {
+                Some((max,)) => {
+                    self.current_max_partition.store(max as u64, Ordering::Relaxed);
+                    if partition_num <= max as u64 {
+                        return Ok(());
+                    }
+                    max as u64 + 1
+                }
+                None => 0, // No partitions exist, start from 0
+            }
+        } else {
+            current_max + 1
+        };
+
+        // Create any missing partitions
+        for p in start_partition..=partition_num {
+            let partition_start = p * PARTITION_SIZE;
+            let partition_end = partition_start + PARTITION_SIZE;
+
+            tracing::info!(
+                "Creating partitions for block range {} to {} (p{})",
+                partition_start,
+                partition_end,
+                p
+            );
+
+            // Create partitions for all partitioned tables
+            let tables = [
+                "blocks",
+                "transactions",
+                "event_logs",
+                "nft_transfers",
+                "erc20_transfers",
+            ];
+
+            for table in tables {
+                let create_sql = format!(
+                    "CREATE TABLE IF NOT EXISTS {}_p{} PARTITION OF {} FOR VALUES FROM ({}) TO ({})",
+                    table, p, table, partition_start, partition_end
+                );
+
+                sqlx::query(&create_sql)
+                    .execute(&self.pool)
+                    .await?;
+            }
+        }
+
+        // Update our tracked max
+        self.current_max_partition.store(partition_num, Ordering::Relaxed);
+        tracing::info!("Partitions up to p{} ready", partition_num);
+        Ok(())
+    }
+
+    /// Get block number with internal retry logic for network failures
+    async fn get_block_number_with_retry(&self, provider: &HttpProvider) -> Result<u64> {
+        let mut last_error = None;
+
+        for attempt in 0..RPC_MAX_RETRIES {
+            match provider.get_block_number().await {
+                Ok(block_num) => {
+                    if attempt > 0 {
+                        tracing::info!("RPC connection restored after {} retries", attempt);
+                    }
+                    return Ok(block_num);
+                }
+                Err(e) => {
+                    let delay = RPC_RETRY_DELAYS
+                        .get(attempt)
+                        .copied()
+                        .unwrap_or(*RPC_RETRY_DELAYS.last().unwrap_or(&30));
+
+                    tracing::warn!(
+                        "RPC request failed (attempt {}/{}): {}. Retrying in {}s...",
+                        attempt + 1,
+                        RPC_MAX_RETRIES,
+                        e,
+                        delay
+                    );
+
+                    last_error = Some(e);
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "RPC connection failed after {} retries: {:?}",
+            RPC_MAX_RETRIES,
+            last_error
+        ))
+    }
+
     async fn truncate_tables(&self) -> Result<()> {
         sqlx::query(
             "TRUNCATE blocks, transactions, addresses, nft_contracts, nft_tokens, nft_transfers,
@@ -495,12 +755,14 @@ impl Indexer {
             .transpose()?
             .unwrap_or_else(|| BigDecimal::from(0));
 
+        let tx_hash_str = format!("{:?}", tx_hash);
+
         sqlx::query(
             "INSERT INTO transactions (hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used, input_data, status, timestamp)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10)
-             ON CONFLICT (hash) DO NOTHING"
+             ON CONFLICT (hash, block_number) DO NOTHING"
         )
-        .bind(format!("{:?}", tx_hash))
+        .bind(&tx_hash_str)
         .bind(block_number as i64)
         .bind(block_index)
         .bind(format!("{:?}", from_addr))
@@ -510,6 +772,17 @@ impl Indexer {
         .bind(gas_limit as i64)
         .bind(input.to_vec())
         .bind(timestamp as i64)
+        .execute(&mut **tx)
+        .await?;
+
+        // Insert into hash lookup table for fast search
+        sqlx::query(
+            "INSERT INTO tx_hash_lookup (hash, block_number)
+             VALUES ($1, $2)
+             ON CONFLICT (hash) DO NOTHING"
+        )
+        .bind(&tx_hash_str)
+        .bind(block_number as i64)
         .execute(&mut **tx)
         .await?;
 
@@ -653,7 +926,7 @@ impl Indexer {
         sqlx::query(
             "INSERT INTO event_logs (tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (tx_hash, log_index) DO NOTHING"
+             ON CONFLICT (tx_hash, log_index, block_number) DO NOTHING"
         )
         .bind(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default())
         .bind(log.log_index.unwrap_or(0) as i32)
@@ -693,7 +966,7 @@ impl Indexer {
         let value_decimal = BigDecimal::from_str(&value.to_string())?;
 
         // Check if contract exists, if not fetch metadata
-        let exists: Option<(i64,)> = sqlx::query_as(
+        let exists: Option<(i32,)> = sqlx::query_as(
             "SELECT 1 FROM erc20_contracts WHERE LOWER(address) = LOWER($1)"
         )
         .bind(&contract_address)
@@ -702,17 +975,18 @@ impl Indexer {
 
         if exists.is_none() {
             // Fetch ERC-20 metadata from contract
-            let (name, symbol, decimals) = self.fetch_erc20_metadata(provider, log.address()).await;
+            let (name, symbol, decimals, total_supply) = self.fetch_erc20_metadata(provider, log.address()).await;
 
             sqlx::query(
-                "INSERT INTO erc20_contracts (address, name, symbol, decimals, first_seen_block)
-                 VALUES ($1, $2, $3, $4, $5)
+                "INSERT INTO erc20_contracts (address, name, symbol, decimals, total_supply, first_seen_block)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (address) DO NOTHING"
             )
             .bind(&contract_address)
             .bind(name)
             .bind(symbol)
             .bind(decimals)
+            .bind(total_supply)
             .bind(block_number as i64)
             .execute(&mut **tx)
             .await?;
@@ -722,7 +996,7 @@ impl Indexer {
         sqlx::query(
             "INSERT INTO erc20_transfers (tx_hash, log_index, contract_address, from_address, to_address, value, block_number, timestamp)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (tx_hash, log_index) DO NOTHING"
+             ON CONFLICT (tx_hash, log_index, block_number) DO NOTHING"
         )
         .bind(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default())
         .bind(log.log_index.unwrap_or(0) as i32)
@@ -770,6 +1044,24 @@ impl Indexer {
             .await?;
         }
 
+        // Update totalSupply if this is a mint or burn
+        let is_mint = from_address == "0x0000000000000000000000000000000000000000";
+        let is_burn = to_address == "0x0000000000000000000000000000000000000000";
+
+        if is_mint || is_burn {
+            // Re-fetch totalSupply from the contract
+            const TOTAL_SUPPLY_SELECTOR: [u8; 4] = [0x18, 0x16, 0x0d, 0xdd];
+            let new_supply = self.call_uint256_method(provider, log.address(), &TOTAL_SUPPLY_SELECTOR).await;
+
+            sqlx::query(
+                "UPDATE erc20_contracts SET total_supply = $1 WHERE LOWER(address) = LOWER($2)"
+            )
+            .bind(new_supply)
+            .bind(&contract_address)
+            .execute(&mut **tx)
+            .await?;
+        }
+
         Ok(())
     }
 
@@ -778,17 +1070,19 @@ impl Indexer {
         &self,
         provider: &HttpProvider,
         address: Address,
-    ) -> (Option<String>, Option<String>, i16) {
+    ) -> (Option<String>, Option<String>, i16, Option<bigdecimal::BigDecimal>) {
         // Function selectors
         const NAME_SELECTOR: [u8; 4] = [0x06, 0xfd, 0xde, 0x03]; // name()
         const SYMBOL_SELECTOR: [u8; 4] = [0x95, 0xd8, 0x9b, 0x41]; // symbol()
         const DECIMALS_SELECTOR: [u8; 4] = [0x31, 0x3c, 0xe5, 0x67]; // decimals()
+        const TOTAL_SUPPLY_SELECTOR: [u8; 4] = [0x18, 0x16, 0x0d, 0xdd]; // totalSupply()
 
         let name = self.call_string_method(provider, address, &NAME_SELECTOR).await;
         let symbol = self.call_string_method(provider, address, &SYMBOL_SELECTOR).await;
         let decimals = self.call_uint8_method(provider, address, &DECIMALS_SELECTOR).await.unwrap_or(18);
+        let total_supply = self.call_uint256_method(provider, address, &TOTAL_SUPPLY_SELECTOR).await;
 
-        (name, symbol, decimals as i16)
+        (name, symbol, decimals as i16, total_supply)
     }
 
     /// Call a method that returns a string
@@ -849,5 +1143,31 @@ impl Indexer {
 
         // uint8 is right-padded in 32 bytes
         Some(result[31])
+    }
+
+    /// Call a method that returns a uint256
+    async fn call_uint256_method(
+        &self,
+        provider: &HttpProvider,
+        address: Address,
+        selector: &[u8; 4],
+    ) -> Option<bigdecimal::BigDecimal> {
+        use alloy::rpc::types::TransactionRequest;
+        use bigdecimal::BigDecimal;
+        use num_bigint::BigInt;
+
+        let tx = TransactionRequest::default()
+            .to(address)
+            .input(alloy::primitives::Bytes::from(selector.to_vec()).into());
+
+        let result = provider.call(&tx).await.ok()?;
+
+        if result.len() < 32 {
+            return None;
+        }
+
+        // uint256 is a 32-byte big-endian value
+        let value = BigInt::from_bytes_be(num_bigint::Sign::Plus, &result[0..32]);
+        Some(BigDecimal::from(value))
     }
 }
