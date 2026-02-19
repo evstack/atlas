@@ -559,6 +559,40 @@ impl Indexer {
 
         // Process receipts and logs
         for receipt in fetched.receipts {
+            // Update the transaction row with accurate receipt data
+            {
+                // Extract tx hash (field on TransactionReceipt)
+                let tx_hash_str = format!("{:?}", receipt.transaction_hash);
+
+                // Status from inner receipt (via TxReceipt trait)
+                let status_flag: bool = receipt.inner.status();
+
+                // Gas used (field on TransactionReceipt)
+                let gas_used_i64: i64 = receipt.gas_used as i64;
+
+                // Contract address (if contract creation)
+                let created_addr: Option<String> = receipt
+                    .contract_address
+                    .map(|a| format!("{:?}", a));
+
+                sqlx::query(
+                    "UPDATE transactions SET status = $1, gas_used = $2, contract_created = $3
+                     WHERE hash = $4 AND block_number = $5"
+                )
+                .bind(status_flag)
+                .bind(gas_used_i64)
+                .bind(&created_addr)
+                .bind(&tx_hash_str)
+                .bind(block_num as i64)
+                .execute(&mut *tx)
+                .await?;
+
+                // Mark newly created contract as contract address
+                if let Some(ref addr) = &created_addr {
+                    self.mark_address_as_contract(&mut tx, addr, block_num).await?;
+                }
+            }
+
             for log in receipt.inner.logs() {
                 // Store all event logs
                 self.insert_event_log(&mut tx, log, block_num).await?;
@@ -585,6 +619,26 @@ impl Indexer {
         .await?;
 
         tx.commit().await?;
+        Ok(())
+    }
+
+    async fn mark_address_as_contract(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        address_str: &str,
+        first_seen_block: u64,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO addresses (address, is_contract, first_seen_block, tx_count)
+             VALUES ($1, true, $2, 0)
+             ON CONFLICT (address) DO UPDATE SET
+                is_contract = true,
+                first_seen_block = LEAST(addresses.first_seen_block, $2)"
+        )
+        .bind(address_str)
+        .bind(first_seen_block as i64)
+        .execute(&mut **tx)
+        .await?;
         Ok(())
     }
 
@@ -759,7 +813,7 @@ impl Indexer {
 
         sqlx::query(
             "INSERT INTO transactions (hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used, input_data, status, timestamp)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (hash, block_number) DO NOTHING"
         )
         .bind(&tx_hash_str)
@@ -769,8 +823,9 @@ impl Indexer {
         .bind(to_addr.map(|a| format!("{:?}", a)))
         .bind(value_decimal)
         .bind(gas_price)
-        .bind(gas_limit as i64)
+        .bind(0i64) // gas_used default; updated later from receipt
         .bind(input.to_vec())
+        .bind(false) // status default; updated later from receipt
         .bind(timestamp as i64)
         .execute(&mut **tx)
         .await?;
@@ -789,9 +844,8 @@ impl Indexer {
         // Upsert addresses
         self.upsert_address(tx, from_addr, block_number, false).await?;
         if let Some(to) = to_addr {
-            // Check if it's a contract by looking at input data length
-            let is_contract = !input.is_empty();
-            self.upsert_address(tx, to, block_number, is_contract).await?;
+            // Do not infer contract status from calldata; just upsert address and tx_count
+            self.upsert_address(tx, to, block_number, false).await?;
         }
 
         Ok(())
@@ -870,6 +924,9 @@ impl Indexer {
         .execute(&mut **tx)
         .await?;
 
+        // Mark as contract
+        self.mark_address_as_contract(tx, &contract_address, block_number).await?;
+
         // Insert transfer record
         sqlx::query(
             "INSERT INTO nft_transfers (tx_hash, log_index, contract_address, token_id, from_address, to_address, block_number, timestamp)
@@ -940,6 +997,10 @@ impl Indexer {
         .execute(&mut **tx)
         .await?;
 
+        // Any address that emits logs is necessarily a contract
+        let emitter = format!("{:?}", log.address());
+        self.mark_address_as_contract(tx, &emitter, block_number).await?;
+
         Ok(())
     }
 
@@ -990,6 +1051,9 @@ impl Indexer {
             .bind(block_number as i64)
             .execute(&mut **tx)
             .await?;
+
+            // Mark as contract
+            self.mark_address_as_contract(tx, &contract_address, block_number).await?;
         }
 
         // Insert transfer record
