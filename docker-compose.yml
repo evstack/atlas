@@ -46,7 +46,7 @@ services:
       RPC_URL: ${RPC_URL}
       API_HOST: 0.0.0.0
       API_PORT: 3000
-      RUST_LOG: atlas_api=info,tower_http=debug
+      RUST_LOG: atlas_api=info,tower_http=info
     ports:
       - "3000:3000"
     depends_on:
