@@ -24,3 +24,4 @@ dotenvy = { workspace = true }
 bigdecimal = { workspace = true }
 hex = { workspace = true }
 chrono = { workspace = true }
+reqwest = { workspace = true }
