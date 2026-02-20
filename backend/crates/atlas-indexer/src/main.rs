@@ -3,6 +3,7 @@ use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod batch;
+mod copy;
 mod config;
 mod fetcher;
 mod indexer;

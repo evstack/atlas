@@ -11,9 +11,11 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio_postgres::{types::ToSql, Client, NoTls};
 
 use crate::batch::{BlockBatch, NftTokenState};
 use crate::config::Config;
+use crate::copy::{copy_blocks, copy_erc20_transfers, copy_event_logs, copy_nft_transfers, copy_transactions};
 use crate::fetcher::{fetch_blocks_batch, get_block_number_with_retry, FetchResult, FetchedBlock, SharedRateLimiter, WorkItem};
 
 /// Partition size: 10 million blocks per partition
@@ -45,6 +47,15 @@ impl Indexer {
 
     pub async fn run(&self) -> Result<()> {
         let provider = Arc::new(ProviderBuilder::new().on_http(self.config.rpc_url.parse()?));
+
+        // Dedicated connection for binary COPY — kept separate from the sqlx pool
+        // because COPY IN requires exclusive use of the connection during the transfer
+        let (mut copy_client, connection) = tokio_postgres::connect(&self.config.database_url, NoTls).await?;
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                tracing::error!("copy connection error: {}", e);
+            }
+        });
 
         // Create rate limiter for RPC requests
         let rps = NonZeroU32::new(self.config.rpc_requests_per_second).unwrap_or(NonZeroU32::new(100).unwrap());
@@ -217,7 +228,7 @@ impl Indexer {
             let new_nft = std::mem::take(&mut batch.new_nft);
 
             // One DB transaction for the entire batch
-            self.write_batch(batch).await?;
+            self.write_batch(&mut copy_client, batch).await?;
 
             // Write succeeded — now safe to update the persistent in-memory sets
             known_erc20.extend(new_erc20);
@@ -258,7 +269,7 @@ impl Indexer {
                                 Self::collect_block(&mut mini_batch, &known_erc20, &known_nft, fetched);
                                 let new_erc20 = std::mem::take(&mut mini_batch.new_erc20);
                                 let new_nft = std::mem::take(&mut mini_batch.new_nft);
-                                self.write_batch(mini_batch).await?;
+                                self.write_batch(&mut copy_client, mini_batch).await?;
                                 known_erc20.extend(new_erc20);
                                 known_nft.extend(new_nft);
                                 tracing::info!("Block {} retry succeeded", block_num);
@@ -506,189 +517,95 @@ impl Indexer {
     // For a batch of N blocks this is ~11 round-trips regardless of N.
     // -----------------------------------------------------------------------
 
-    async fn write_batch(&self, batch: BlockBatch) -> Result<()> {
+    async fn write_batch(&self, copy_client: &mut Client, batch: BlockBatch) -> Result<()> {
         if batch.b_numbers.is_empty() {
             return Ok(());
         }
 
-        let mut tx = self.pool.begin().await?;
+        let mut pg_tx = copy_client.transaction().await?;
 
-        // 1. Blocks
-        sqlx::query(
-            "INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at)
-             SELECT * FROM unnest(
-                $1::bigint[], $2::text[], $3::text[], $4::bigint[],
-                $5::bigint[], $6::bigint[], $7::int[]
-             ) AS t(number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count),
-             LATERAL (SELECT NOW()) AS ts(indexed_at)
-             ON CONFLICT (number) DO UPDATE SET
-                hash = EXCLUDED.hash, parent_hash = EXCLUDED.parent_hash,
-                timestamp = EXCLUDED.timestamp, gas_used = EXCLUDED.gas_used,
-                gas_limit = EXCLUDED.gas_limit, transaction_count = EXCLUDED.transaction_count,
-                indexed_at = NOW()"
-        )
-        .bind(&batch.b_numbers[..])
-        .bind(&batch.b_hashes[..])
-        .bind(&batch.b_parent_hashes[..])
-        .bind(&batch.b_timestamps[..])
-        .bind(&batch.b_gas_used[..])
-        .bind(&batch.b_gas_limits[..])
-        .bind(&batch.b_tx_counts[..])
-        .execute(&mut *tx)
-        .await?;
+        copy_blocks(&mut pg_tx, &batch).await?;
+        copy_transactions(&mut pg_tx, &batch).await?;
+        copy_event_logs(&mut pg_tx, &batch).await?;
+        copy_nft_transfers(&mut pg_tx, &batch).await?;
+        copy_erc20_transfers(&mut pg_tx, &batch).await?;
 
-        // 2. Transactions (with receipt data already merged — no UPDATE needed)
-        if !batch.t_hashes.is_empty() {
-            sqlx::query(
-                "INSERT INTO transactions
-                    (hash, block_number, block_index, from_address, to_address,
-                     value, gas_price, gas_used, input_data, status, contract_created, timestamp)
-                 SELECT hash, block_number, block_index, from_address, to_address,
-                        value::numeric, gas_price::numeric, gas_used, input_data,
-                        status, contract_created, timestamp
-                 FROM unnest(
-                    $1::text[], $2::bigint[], $3::int[], $4::text[], $5::text[],
-                    $6::text[], $7::text[], $8::bigint[], $9::bytea[],
-                    $10::bool[], $11::text[], $12::bigint[]
-                 ) AS t(hash, block_number, block_index, from_address, to_address,
-                        value, gas_price, gas_used, input_data,
-                        status, contract_created, timestamp)
-                 ON CONFLICT (hash, block_number) DO NOTHING"
-            )
-            .bind(&batch.t_hashes[..])
-            .bind(&batch.t_block_numbers[..])
-            .bind(&batch.t_block_indices[..])
-            .bind(&batch.t_froms[..])
-            .bind(&batch.t_tos[..])
-            .bind(&batch.t_values[..])
-            .bind(&batch.t_gas_prices[..])
-            .bind(&batch.t_gas_used[..])
-            .bind(&batch.t_input_data[..])
-            .bind(&batch.t_statuses[..])
-            .bind(&batch.t_contracts_created[..])
-            .bind(&batch.t_timestamps[..])
-            .execute(&mut *tx)
-            .await?;
+        let BlockBatch {
+            tl_hashes,
+            tl_block_numbers,
+            addr_map,
+            nft_contract_addrs,
+            nft_contract_first_seen,
+            nft_token_map,
+            ec_addresses,
+            ec_first_seen_blocks,
+            balance_map,
+            last_block,
+            ..
+        } = batch;
 
-            // tx_hash_lookup
-            sqlx::query(
+        if !tl_hashes.is_empty() {
+            let params: [&(dyn ToSql + Sync); 2] = [&tl_hashes, &tl_block_numbers];
+            pg_tx.execute(
                 "INSERT INTO tx_hash_lookup (hash, block_number)
                  SELECT * FROM unnest($1::text[], $2::bigint[]) AS t(hash, block_number)
-                 ON CONFLICT (hash) DO NOTHING"
+                 ON CONFLICT (hash) DO NOTHING",
+                &params,
             )
-            .bind(&batch.tl_hashes[..])
-            .bind(&batch.tl_block_numbers[..])
-            .execute(&mut *tx)
             .await?;
         }
 
-        // 3. Addresses — deduplicated in Rust, one upsert per unique address
-        if !batch.addr_map.is_empty() {
-            let mut a_addrs: Vec<String> = Vec::with_capacity(batch.addr_map.len());
-            let mut a_contracts: Vec<bool> = Vec::with_capacity(batch.addr_map.len());
-            let mut a_first_seen: Vec<i64> = Vec::with_capacity(batch.addr_map.len());
-            let mut a_tx_counts: Vec<i64> = Vec::with_capacity(batch.addr_map.len());
-            for (addr, state) in batch.addr_map {
+        if !addr_map.is_empty() {
+            let mut a_addrs = Vec::with_capacity(addr_map.len());
+            let mut a_contracts = Vec::with_capacity(addr_map.len());
+            let mut a_first_seen = Vec::with_capacity(addr_map.len());
+            let mut a_tx_counts = Vec::with_capacity(addr_map.len());
+            for (addr, state) in addr_map {
                 a_addrs.push(addr);
                 a_contracts.push(state.is_contract);
                 a_first_seen.push(state.first_seen_block);
                 a_tx_counts.push(state.tx_count_delta);
             }
 
-            sqlx::query(
+            let params: [&(dyn ToSql + Sync); 4] = [&a_addrs, &a_contracts, &a_first_seen, &a_tx_counts];
+            pg_tx.execute(
                 "INSERT INTO addresses (address, is_contract, first_seen_block, tx_count)
                  SELECT * FROM unnest($1::text[], $2::bool[], $3::bigint[], $4::bigint[])
                     AS t(address, is_contract, first_seen_block, tx_count)
                  ON CONFLICT (address) DO UPDATE SET
                     tx_count = addresses.tx_count + EXCLUDED.tx_count,
                     is_contract = addresses.is_contract OR EXCLUDED.is_contract,
-                    first_seen_block = LEAST(addresses.first_seen_block, EXCLUDED.first_seen_block)"
+                    first_seen_block = LEAST(addresses.first_seen_block, EXCLUDED.first_seen_block)",
+                &params,
             )
-            .bind(&a_addrs[..])
-            .bind(&a_contracts[..])
-            .bind(&a_first_seen[..])
-            .bind(&a_tx_counts[..])
-            .execute(&mut *tx)
             .await?;
         }
 
-        // 4. Event logs
-        if !batch.el_tx_hashes.is_empty() {
-            sqlx::query(
-                "INSERT INTO event_logs
-                    (tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number)
-                 SELECT * FROM unnest(
-                    $1::text[], $2::int[], $3::text[], $4::text[],
-                    $5::text[], $6::text[], $7::text[], $8::bytea[], $9::bigint[]
-                 ) AS t(tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number)
-                 ON CONFLICT (tx_hash, log_index, block_number) DO NOTHING"
-            )
-            .bind(&batch.el_tx_hashes[..])
-            .bind(&batch.el_log_indices[..])
-            .bind(&batch.el_addresses[..])
-            .bind(&batch.el_topic0s[..])
-            .bind(&batch.el_topic1s[..])
-            .bind(&batch.el_topic2s[..])
-            .bind(&batch.el_topic3s[..])
-            .bind(&batch.el_datas[..])
-            .bind(&batch.el_block_numbers[..])
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        // 5. NFT contracts
-        if !batch.nft_contract_addrs.is_empty() {
-            sqlx::query(
+        if !nft_contract_addrs.is_empty() {
+            let params: [&(dyn ToSql + Sync); 2] = [&nft_contract_addrs, &nft_contract_first_seen];
+            pg_tx.execute(
                 "INSERT INTO nft_contracts (address, first_seen_block)
                  SELECT * FROM unnest($1::text[], $2::bigint[]) AS t(address, first_seen_block)
-                 ON CONFLICT (address) DO NOTHING"
+                 ON CONFLICT (address) DO NOTHING",
+                &params,
             )
-            .bind(&batch.nft_contract_addrs[..])
-            .bind(&batch.nft_contract_first_seen[..])
-            .execute(&mut *tx)
             .await?;
         }
 
-        // 6. NFT transfers
-        if !batch.nt_tx_hashes.is_empty() {
-            sqlx::query(
-                "INSERT INTO nft_transfers
-                    (tx_hash, log_index, contract_address, token_id, from_address, to_address, block_number, timestamp)
-                 SELECT tx_hash, log_index, contract_address, token_id::numeric,
-                        from_address, to_address, block_number, timestamp
-                 FROM unnest(
-                    $1::text[], $2::int[], $3::text[], $4::text[],
-                    $5::text[], $6::text[], $7::bigint[], $8::bigint[]
-                 ) AS t(tx_hash, log_index, contract_address, token_id,
-                        from_address, to_address, block_number, timestamp)
-                 ON CONFLICT (tx_hash, log_index, block_number) DO NOTHING"
-            )
-            .bind(&batch.nt_tx_hashes[..])
-            .bind(&batch.nt_log_indices[..])
-            .bind(&batch.nt_contracts[..])
-            .bind(&batch.nt_token_ids[..])
-            .bind(&batch.nt_froms[..])
-            .bind(&batch.nt_tos[..])
-            .bind(&batch.nt_block_numbers[..])
-            .bind(&batch.nt_timestamps[..])
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        // 7. NFT tokens — only the latest state per token
-        if !batch.nft_token_map.is_empty() {
-            let mut tok_contracts: Vec<String> = Vec::with_capacity(batch.nft_token_map.len());
-            let mut tok_ids: Vec<String> = Vec::with_capacity(batch.nft_token_map.len());
-            let mut tok_owners: Vec<String> = Vec::with_capacity(batch.nft_token_map.len());
-            let mut tok_last_blocks: Vec<i64> = Vec::with_capacity(batch.nft_token_map.len());
-            for ((contract, token_id), state) in batch.nft_token_map {
+        if !nft_token_map.is_empty() {
+            let mut tok_contracts = Vec::with_capacity(nft_token_map.len());
+            let mut tok_ids = Vec::with_capacity(nft_token_map.len());
+            let mut tok_owners = Vec::with_capacity(nft_token_map.len());
+            let mut tok_last_blocks = Vec::with_capacity(nft_token_map.len());
+            for ((contract, token_id), state) in nft_token_map {
                 tok_contracts.push(contract);
                 tok_ids.push(token_id);
                 tok_owners.push(state.owner);
                 tok_last_blocks.push(state.last_transfer_block);
             }
 
-            sqlx::query(
+            let params: [&(dyn ToSql + Sync); 4] = [&tok_contracts, &tok_ids, &tok_owners, &tok_last_blocks];
+            pg_tx.execute(
                 "INSERT INTO nft_tokens (contract_address, token_id, owner, metadata_fetched, last_transfer_block)
                  SELECT contract_address, token_id::numeric, owner, false, last_transfer_block
                  FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[])
@@ -699,97 +616,61 @@ impl Indexer {
                         THEN EXCLUDED.owner
                         ELSE nft_tokens.owner
                     END,
-                    last_transfer_block = GREATEST(nft_tokens.last_transfer_block, EXCLUDED.last_transfer_block)"
+                    last_transfer_block = GREATEST(nft_tokens.last_transfer_block, EXCLUDED.last_transfer_block)",
+                &params,
             )
-            .bind(&tok_contracts[..])
-            .bind(&tok_ids[..])
-            .bind(&tok_owners[..])
-            .bind(&tok_last_blocks[..])
-            .execute(&mut *tx)
             .await?;
         }
 
-        // 8. ERC-20 contracts (new only, without metadata)
-        if !batch.ec_addresses.is_empty() {
-            sqlx::query(
+        if !ec_addresses.is_empty() {
+            let params: [&(dyn ToSql + Sync); 2] = [&ec_addresses, &ec_first_seen_blocks];
+            pg_tx.execute(
                 "INSERT INTO erc20_contracts (address, decimals, first_seen_block)
                  SELECT address, 18, first_seen_block
                  FROM unnest($1::text[], $2::bigint[]) AS t(address, first_seen_block)
-                 ON CONFLICT (address) DO NOTHING"
+                 ON CONFLICT (address) DO NOTHING",
+                &params,
             )
-            .bind(&batch.ec_addresses[..])
-            .bind(&batch.ec_first_seen_blocks[..])
-            .execute(&mut *tx)
             .await?;
         }
 
-        // 9. ERC-20 transfers
-        if !batch.et_tx_hashes.is_empty() {
-            sqlx::query(
-                "INSERT INTO erc20_transfers
-                    (tx_hash, log_index, contract_address, from_address, to_address, value, block_number, timestamp)
-                 SELECT tx_hash, log_index, contract_address, from_address, to_address,
-                        value::numeric, block_number, timestamp
-                 FROM unnest(
-                    $1::text[], $2::int[], $3::text[], $4::text[], $5::text[],
-                    $6::text[], $7::bigint[], $8::bigint[]
-                 ) AS t(tx_hash, log_index, contract_address, from_address, to_address,
-                        value, block_number, timestamp)
-                 ON CONFLICT (tx_hash, log_index, block_number) DO NOTHING"
-            )
-            .bind(&batch.et_tx_hashes[..])
-            .bind(&batch.et_log_indices[..])
-            .bind(&batch.et_contracts[..])
-            .bind(&batch.et_froms[..])
-            .bind(&batch.et_tos[..])
-            .bind(&batch.et_values[..])
-            .bind(&batch.et_block_numbers[..])
-            .bind(&batch.et_timestamps[..])
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        // 10. ERC-20 balance deltas — aggregated in Rust, one upsert per unique (address, contract)
-        if !batch.balance_map.is_empty() {
-            let mut bal_addrs: Vec<String> = Vec::with_capacity(batch.balance_map.len());
-            let mut bal_contracts: Vec<String> = Vec::with_capacity(batch.balance_map.len());
-            let mut bal_deltas: Vec<String> = Vec::with_capacity(batch.balance_map.len());
-            let mut bal_blocks: Vec<i64> = Vec::with_capacity(batch.balance_map.len());
-            for ((addr, contract), delta) in batch.balance_map {
+        if !balance_map.is_empty() {
+            let mut bal_addrs = Vec::with_capacity(balance_map.len());
+            let mut bal_contracts = Vec::with_capacity(balance_map.len());
+            let mut bal_deltas = Vec::with_capacity(balance_map.len());
+            let mut bal_blocks = Vec::with_capacity(balance_map.len());
+            for ((addr, contract), delta) in balance_map {
                 bal_addrs.push(addr);
                 bal_contracts.push(contract);
-                bal_deltas.push(delta.delta.to_string());
+                bal_deltas.push(delta.delta);
                 bal_blocks.push(delta.last_block);
             }
 
-            sqlx::query(
+            let bal_delta_strs: Vec<String> = bal_deltas.iter().map(|d| d.to_string()).collect();
+            let params: [&(dyn ToSql + Sync); 4] = [&bal_addrs, &bal_contracts, &bal_delta_strs, &bal_blocks];
+            pg_tx.execute(
                 "INSERT INTO erc20_balances (address, contract_address, balance, last_updated_block)
                  SELECT address, contract_address, balance::numeric, last_updated_block
                  FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[])
                     AS t(address, contract_address, balance, last_updated_block)
                  ON CONFLICT (address, contract_address) DO UPDATE SET
                     balance = erc20_balances.balance + EXCLUDED.balance,
-                    last_updated_block = GREATEST(erc20_balances.last_updated_block, EXCLUDED.last_updated_block)"
+                    last_updated_block = GREATEST(erc20_balances.last_updated_block, EXCLUDED.last_updated_block)",
+                &params,
             )
-            .bind(&bal_addrs[..])
-            .bind(&bal_contracts[..])
-            .bind(&bal_deltas[..])
-            .bind(&bal_blocks[..])
-            .execute(&mut *tx)
             .await?;
         }
 
-        // 11. Indexer state — once per batch instead of once per block
-        sqlx::query(
+        let last_value = last_block.to_string();
+        pg_tx.execute(
             "INSERT INTO indexer_state (key, value, updated_at)
              VALUES ('last_indexed_block', $1, NOW())
-             ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
+             ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+            &[&last_value],
         )
-        .bind(batch.last_block.to_string())
-        .execute(&mut *tx)
         .await?;
 
-        tx.commit().await?;
+        pg_tx.commit().await?;
         Ok(())
     }
 
