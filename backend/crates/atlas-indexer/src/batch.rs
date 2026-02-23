@@ -124,10 +124,8 @@ impl BlockBatch {
             is_contract: false,
             tx_count_delta: 0,
         });
-        if block_num < entry.first_seen_block {
-            entry.first_seen_block = block_num;
-        }
-        entry.is_contract = entry.is_contract || is_contract;
+        entry.first_seen_block = entry.first_seen_block.min(block_num);
+        entry.is_contract |= is_contract;
         entry.tx_count_delta += tx_count_delta;
     }
 
@@ -138,10 +136,8 @@ impl BlockBatch {
             delta: BigDecimal::from(0),
             last_block: block,
         });
-        entry.delta = entry.delta.clone() + delta;
-        if block > entry.last_block {
-            entry.last_block = block;
-        }
+        entry.delta += delta;
+        entry.last_block = entry.last_block.max(block);
     }
 }
 
