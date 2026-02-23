@@ -27,3 +27,6 @@ chrono = { workspace = true }
 async-channel = "2.3"
 governor = "0.6"
 tokio-postgres = { version = "0.7" }
+tokio-postgres-rustls = "0.12"
+rustls = "0.23"
+webpki-roots = "0.26"

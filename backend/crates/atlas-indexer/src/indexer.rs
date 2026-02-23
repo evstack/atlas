@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_postgres::{types::ToSql, Client, NoTls};
+use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::batch::{BlockBatch, NftTokenState};
 use crate::config::Config;
@@ -45,17 +46,45 @@ impl Indexer {
         }
     }
 
+    /// Open a tokio-postgres connection for binary COPY, using TLS when sslmode
+    /// requires it (require / verify-ca / verify-full) and plain TCP otherwise.
+    async fn connect_copy_client(database_url: &str) -> Result<Client> {
+        let needs_tls = database_url.contains("sslmode=require")
+            || database_url.contains("sslmode=verify-ca")
+            || database_url.contains("sslmode=verify-full");
+
+        if needs_tls {
+            let mut root_store = rustls::RootCertStore::empty();
+            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            let tls_config = rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+            let tls = MakeRustlsConnect::new(tls_config);
+            let (client, connection) = tokio_postgres::connect(database_url, tls).await?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    tracing::error!("copy connection error: {}", e);
+                }
+            });
+            Ok(client)
+        } else {
+            let (client, connection) = tokio_postgres::connect(database_url, NoTls).await?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    tracing::error!("copy connection error: {}", e);
+                }
+            });
+            Ok(client)
+        }
+    }
+
     pub async fn run(&self) -> Result<()> {
         let provider = Arc::new(ProviderBuilder::new().on_http(self.config.rpc_url.parse()?));
 
         // Dedicated connection for binary COPY — kept separate from the sqlx pool
-        // because COPY IN requires exclusive use of the connection during the transfer
-        let (mut copy_client, connection) = tokio_postgres::connect(&self.config.database_url, NoTls).await?;
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                tracing::error!("copy connection error: {}", e);
-            }
-        });
+        // because COPY IN requires exclusive use of the connection during the transfer.
+        // TLS is used when sslmode=require/verify-ca/verify-full is set in DATABASE_URL.
+        let mut copy_client = Self::connect_copy_client(&self.config.database_url).await?;
 
         // Create rate limiter for RPC requests
         let rps = NonZeroU32::new(self.config.rpc_requests_per_second).unwrap_or(NonZeroU32::new(100).unwrap());
