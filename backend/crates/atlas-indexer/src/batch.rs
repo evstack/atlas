@@ -24,6 +24,7 @@ pub(crate) struct BalanceDelta {
 /// Holds all data collected across a batch of blocks, ready for bulk insert.
 /// Fields are columnar (parallel Vecs) so they can be passed directly to
 /// PostgreSQL UNNEST without any further transformation.
+#[derive(Default)]
 pub(crate) struct BlockBatch {
     // blocks
     pub(crate) b_numbers: Vec<i64>,
@@ -112,64 +113,7 @@ pub(crate) struct BlockBatch {
 
 impl BlockBatch {
     pub(crate) fn new() -> Self {
-        Self {
-            b_numbers: vec![],
-            b_hashes: vec![],
-            b_parent_hashes: vec![],
-            b_timestamps: vec![],
-            b_gas_used: vec![],
-            b_gas_limits: vec![],
-            b_tx_counts: vec![],
-            t_hashes: vec![],
-            t_block_numbers: vec![],
-            t_block_indices: vec![],
-            t_froms: vec![],
-            t_tos: vec![],
-            t_values: vec![],
-            t_gas_prices: vec![],
-            t_gas_used: vec![],
-            t_input_data: vec![],
-            t_statuses: vec![],
-            t_timestamps: vec![],
-            t_contracts_created: vec![],
-            tl_hashes: vec![],
-            tl_block_numbers: vec![],
-            addr_map: HashMap::new(),
-            el_tx_hashes: vec![],
-            el_log_indices: vec![],
-            el_addresses: vec![],
-            el_topic0s: vec![],
-            el_topic1s: vec![],
-            el_topic2s: vec![],
-            el_topic3s: vec![],
-            el_datas: vec![],
-            el_block_numbers: vec![],
-            nft_contract_addrs: vec![],
-            nft_contract_first_seen: vec![],
-            nt_tx_hashes: vec![],
-            nt_log_indices: vec![],
-            nt_contracts: vec![],
-            nt_token_ids: vec![],
-            nt_froms: vec![],
-            nt_tos: vec![],
-            nt_block_numbers: vec![],
-            nt_timestamps: vec![],
-            nft_token_map: HashMap::new(),
-            ec_addresses: vec![],
-            ec_first_seen_blocks: vec![],
-            et_tx_hashes: vec![],
-            et_log_indices: vec![],
-            et_contracts: vec![],
-            et_froms: vec![],
-            et_tos: vec![],
-            et_values: vec![],
-            et_block_numbers: vec![],
-            et_timestamps: vec![],
-            balance_map: HashMap::new(),
-            new_erc20: HashSet::new(),
-            new_nft: HashSet::new(),
-            last_block: 0,
-        }
+        Self::default()
     }
 
     /// Upsert an address into the in-memory deduplication map.
