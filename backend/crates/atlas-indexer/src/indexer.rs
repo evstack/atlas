@@ -257,7 +257,7 @@ impl Indexer {
             let new_nft = std::mem::take(&mut batch.new_nft);
 
             // One DB transaction for the entire batch
-            self.write_batch(&mut copy_client, batch).await?;
+            self.write_batch(&mut copy_client, batch, true).await?;
 
             // Write succeeded — now safe to update the persistent in-memory sets
             known_erc20.extend(new_erc20);
@@ -298,7 +298,10 @@ impl Indexer {
                                 Self::collect_block(&mut mini_batch, &known_erc20, &known_nft, fetched);
                                 let new_erc20 = std::mem::take(&mut mini_batch.new_erc20);
                                 let new_nft = std::mem::take(&mut mini_batch.new_nft);
-                                self.write_batch(&mut copy_client, mini_batch).await?;
+                                // Don't update the watermark — the main batch already wrote
+                                // a higher last_indexed_block; overwriting it with this
+                                // block's lower number would cause a regression on restart.
+                                self.write_batch(&mut copy_client, mini_batch, false).await?;
                                 known_erc20.extend(new_erc20);
                                 known_nft.extend(new_nft);
                                 tracing::info!("Block {} retry succeeded", block_num);
@@ -546,7 +549,7 @@ impl Indexer {
     // For a batch of N blocks this is ~11 round-trips regardless of N.
     // -----------------------------------------------------------------------
 
-    async fn write_batch(&self, copy_client: &mut Client, batch: BlockBatch) -> Result<()> {
+    async fn write_batch(&self, copy_client: &mut Client, batch: BlockBatch, update_watermark: bool) -> Result<()> {
         if batch.b_numbers.is_empty() {
             return Ok(());
         }
@@ -690,14 +693,16 @@ impl Indexer {
             .await?;
         }
 
-        let last_value = last_block.to_string();
-        pg_tx.execute(
-            "INSERT INTO indexer_state (key, value, updated_at)
-             VALUES ('last_indexed_block', $1, NOW())
-             ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
-            &[&last_value],
-        )
-        .await?;
+        if update_watermark {
+            let last_value = last_block.to_string();
+            pg_tx.execute(
+                "INSERT INTO indexer_state (key, value, updated_at)
+                 VALUES ('last_indexed_block', $1, NOW())
+                 ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+                &[&last_value],
+            )
+            .await?;
+        }
 
         pg_tx.commit().await?;
         Ok(())
