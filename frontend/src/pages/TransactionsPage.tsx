@@ -15,7 +15,7 @@ export default function TransactionsPage() {
       return true;
     }
   });
-  const [tick, setTick] = useState(0);
+  const [, setTick] = useState(0);
   const { transactions, pagination, refetch, loading } = useTransactions({ page, limit: 20 });
   const [hasLoaded, setHasLoaded] = useState(false);
   useEffect(() => {
@@ -133,8 +133,7 @@ export default function TransactionsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Transactions</h1>
-        <span className="hidden" aria-hidden="true">{tick}</span>
+        <h1 className="text-2xl font-bold text-fg">Transactions</h1>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setAutoRefresh((v) => !v)}
@@ -164,7 +163,7 @@ export default function TransactionsPage() {
             <thead>
               <tr className="bg-dark-700">
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('hash')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('hash')}>
                     Tx Hash
                     {sort.key === 'hash' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -179,7 +178,7 @@ export default function TransactionsPage() {
                 </th>
                 <th className="table-cell text-left table-header">Type</th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('block_number')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('block_number')}>
                     Block
                     {sort.key === 'block_number' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -193,7 +192,7 @@ export default function TransactionsPage() {
                   </button>
                 </th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('timestamp')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('timestamp')}>
                     Age
                     {sort.key === 'timestamp' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -207,7 +206,7 @@ export default function TransactionsPage() {
                   </button>
                 </th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('from_address')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('from_address')}>
                     From
                     {sort.key === 'from_address' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -221,7 +220,7 @@ export default function TransactionsPage() {
                   </button>
                 </th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('to_address')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('to_address')}>
                     To
                     {sort.key === 'to_address' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -235,7 +234,7 @@ export default function TransactionsPage() {
                   </button>
                 </th>
                 <th className="table-cell text-right table-header">
-                  <button className="flex items-center gap-1 ml-auto hover:text-white" onClick={() => handleSort('value')}>
+                  <button className="flex items-center gap-1 ml-auto hover:text-fg" onClick={() => handleSort('value')}>
                     Value
                     {sort.key === 'value' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -249,7 +248,7 @@ export default function TransactionsPage() {
                   </button>
                 </th>
                 <th className="table-cell text-center table-header">
-                  <button className="flex items-center gap-1 justify-center hover:text-white" onClick={() => handleSort('status')}>
+                  <button className="flex items-center gap-1 justify-center hover:text-fg" onClick={() => handleSort('status')}>
                     Status
                     {sort.key === 'status' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -275,10 +274,10 @@ export default function TransactionsPage() {
                   className={`hover:bg-dark-600/70 transition-colors cursor-pointer ${highlightTxs.has(tx.hash) ? 'row-highlight' : ''}`}
                 >
                   <td className="table-cell">
-                    <span className="font-mono text-xs text-white">{truncateHash(tx.hash, 10, 8)}</span>
+                    <span className="font-mono text-xs text-fg">{truncateHash(tx.hash, 10, 8)}</span>
                   </td>
                   <td className="table-cell">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold bg-dark-600 text-gray-200 border-dark-500">
+                    <span className="badge-chip">
                       {classify(tx)}
                     </span>
                   </td>

@@ -28,10 +28,6 @@ function getProxyTypeLabel(proxyType?: string): string {
   }
 }
 
-function getProxyTypeColor(): string {
-  return 'bg-dark-600 text-white border-dark-500';
-}
-
 export default function ProxyBadge({
   address,
   showImplementation = true,
@@ -44,12 +40,10 @@ export default function ProxyBadge({
   }
 
   const typeLabel = getProxyTypeLabel(proxyInfo.proxy_type);
-  const typeColor = getProxyTypeColor();
-
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
       <div className="flex items-center gap-2">
-        <span className={`px-2 py-1 rounded border text-xs font-medium ${typeColor}`}>
+        <span className="badge-chip text-[0.65rem]">
           Proxy
         </span>
         <span className="text-gray-400 text-xs">
@@ -82,11 +76,9 @@ export function ProxyIndicator({ address }: ProxyIndicatorProps) {
     return null;
   }
 
-  const typeColor = getProxyTypeColor();
-
   return (
     <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${typeColor}`}
+      className="badge-chip text-[0.65rem]"
       title={`${getProxyTypeLabel(proxyInfo.proxy_type)} Proxy - Implementation: ${proxyInfo.implementation_address}`}
     >
       Proxy

@@ -56,7 +56,7 @@ export default function SearchResultsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Search</h1>
+        <h1 className="text-2xl font-bold text-fg">Search</h1>
         <p className="text-gray-400 text-sm">Results for “{q}”</p>
       </div>
       {loading ? (
@@ -130,7 +130,7 @@ export default function SearchResultsPage() {
                     <span className="text-gray-500 text-xs">{n.name || 'NFT'}</span>
                   </div>
                   <div className="mt-2">
-                    <div className="text-white text-sm truncate">#{n.token_id}</div>
+                    <div className="text-fg text-sm truncate">#{n.token_id}</div>
                     <div className="text-gray-500 text-xs truncate">{n.contract_address}</div>
                   </div>
                 </Link>
@@ -146,7 +146,7 @@ export default function SearchResultsPage() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="card p-3">
-      <h2 className="text-base font-semibold text-white mb-3">{title}</h2>
+      <h2 className="text-base font-semibold text-fg mb-3">{title}</h2>
       {children}
     </section>
   );

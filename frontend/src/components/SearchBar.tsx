@@ -192,7 +192,7 @@ export default function SearchBar() {
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={onKeyDown}
         placeholder="Search Address / Tx Hash / Block / Token / NFT"
-        className="w-full bg-dark-700/80 backdrop-blur border border-dark-500 px-4 py-2 pl-10 text-sm text-white placeholder-gray-500 rounded-full shadow-md shadow-black/20 focus:outline-none focus:border-accent-primary focus:ring-2 focus:ring-accent-primary/40 transition"
+        className="w-full bg-dark-700/80 backdrop-blur border border-dark-500 px-4 py-2 pl-10 text-sm text-fg placeholder-gray-500 rounded-full shadow-md shadow-black/20 focus:outline-none focus:border-accent-primary focus:ring-2 focus:ring-accent-primary/40 transition"
       />
       <svg
         className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500"
@@ -235,7 +235,7 @@ export default function SearchBar() {
                 >
                   <TypeIcon type={r.type} />
                   <div className="min-w-0">
-                    <div className="text-sm text-white truncate">
+                    <div className="text-sm text-fg truncate">
                       {getPrimaryText(r)}
                     </div>
                     <div className="text-xs text-gray-500 truncate">
@@ -262,7 +262,7 @@ export default function SearchBar() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
                 <div className="min-w-0">
-                  <div className="text-sm text-white truncate">View all results for “{query.trim()}”</div>
+                  <div className="text-sm text-fg truncate">View all results for “{query.trim()}”</div>
                 </div>
               </li>
             </ul>

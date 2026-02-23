@@ -5,6 +5,7 @@ import useLatestBlockHeight from '../hooks/useLatestBlockHeight';
 import SmoothCounter from './SmoothCounter';
 import logoImg from '../assets/logo.png';
 import { BlockStatsContext } from '../context/BlockStatsContext';
+import { useTheme } from '../hooks/useTheme';
 
 export default function Layout() {
   const location = useLocation();
@@ -17,6 +18,7 @@ export default function Layout() {
   const displayRafRef = useRef<number | null>(null);
   const lastFrameRef = useRef<number>(0);
   const displayedRef = useRef<number>(0);
+  const displayInitializedRef = useRef(false);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
@@ -31,19 +33,21 @@ export default function Layout() {
       }
       displayRafRef.current = window.requestAnimationFrame(() => {
         setDisplayedHeight(null);
+        displayInitializedRef.current = false;
         displayRafRef.current = null;
       });
       return;
     }
 
     // Initialize displayed to at least current height on first run
-    if (displayedHeight == null || height > displayedRef.current) {
+    if (!displayInitializedRef.current || height > displayedRef.current) {
       displayedRef.current = Math.max(displayedRef.current || 0, height);
       if (displayRafRef.current !== null) {
         cancelAnimationFrame(displayRafRef.current);
       }
       displayRafRef.current = window.requestAnimationFrame(() => {
         setDisplayedHeight(displayedRef.current);
+        displayInitializedRef.current = true;
         displayRafRef.current = null;
       });
     }
@@ -94,9 +98,11 @@ export default function Layout() {
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     `inline-flex items-center h-10 px-4 rounded-full leading-none transition-colors duration-150 ${
       isActive
-        ? 'bg-dark-700/70 text-white'
-        : 'text-gray-400 hover:text-white hover:bg-dark-700/40'
+        ? 'bg-dark-700/70 text-fg'
+        : 'text-gray-400 hover:text-fg hover:bg-dark-700/40'
     }`;
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -132,6 +138,41 @@ export default function Layout() {
 
             {/* Right status: latest height + live pulse */}
             <div className="hidden md:flex items-center justify-end">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+                className="inline-flex items-center justify-center w-10 h-10 rounded-full border border-transparent hover:border-dark-600/60 bg-transparent hover:bg-dark-700/40 transition-colors mr-4"
+              >
+                {isDark ? (
+                  <svg
+                    className="w-5 h-5 text-gray-200"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M21 14.5a8.5 8.5 0 01-11.5-11.5 8.5 8.5 0 1011.5 11.5z" />
+                  </svg>
+                ) : (
+                  <svg
+                    className="w-5 h-5 text-gray-700"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2v2m0 16v2M20 12h2M2 12h2M17.657 6.343l-1.414 1.414M7.757 16.243l-1.414 1.414M6.343 6.343l1.414 1.414M16.243 16.243l1.414 1.414" />
+                  </svg>
+                )}
+              </button>
               <div className="flex items-center gap-3 text-sm text-gray-300">
                 <span
                   className={`inline-block w-2.5 h-2.5 rounded-full ${recentlyUpdated ? 'bg-red-500 live-dot' : 'bg-gray-600'}`}
@@ -165,6 +206,41 @@ export default function Layout() {
             <NavLink to="/nfts" className={navLinkClass}>
               NFTs
             </NavLink>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="inline-flex items-center justify-center w-10 h-10 rounded-full border border-transparent hover:border-dark-600/60 bg-transparent hover:bg-dark-700/40 transition-colors"
+            >
+              {isDark ? (
+                <svg
+                  className="w-5 h-5 text-gray-200"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M21 14.5a8.5 8.5 0 01-11.5-11.5 8.5 8.5 0 1011.5 11.5z" />
+                </svg>
+              ) : (
+                <svg
+                  className="w-5 h-5 text-gray-700"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M12 2v2m0 16v2M20 12h2M2 12h2M17.657 6.343l-1.414 1.414M7.757 16.243l-1.414 1.414M6.343 6.343l1.414 1.414M16.243 16.243l1.414 1.414" />
+                </svg>
+              )}
+            </button>
           </nav>
         </div>
       </header>

@@ -22,7 +22,7 @@ export default function NFTContractPage() {
       <div className="flex items-center space-x-4 mb-6">
         <div>
           <div className="flex items-center space-x-3">
-            <h1 className="text-2xl font-bold text-white">
+            <h1 className="text-2xl font-bold text-fg">
               {contract?.name || 'NFT Collection'}
             </h1>
           </div>
@@ -39,7 +39,7 @@ export default function NFTContractPage() {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
         <div className="card">
           <p className="text-gray-400 text-sm mb-1">Total Supply</p>
-          <p className="text-xl font-semibold text-white">
+          <p className="text-xl font-semibold text-fg">
             {contract?.total_supply !== null && contract?.total_supply !== undefined
               ? formatNumber(contract.total_supply)
               : (pagination?.total !== undefined
@@ -49,11 +49,11 @@ export default function NFTContractPage() {
         </div>
         <div className="card">
           <p className="text-gray-400 text-sm mb-1">Symbol</p>
-          <p className="text-xl font-semibold text-white">{contract?.symbol || '---'}</p>
+          <p className="text-xl font-semibold text-fg">{contract?.symbol || '---'}</p>
         </div>
         <div className="card">
           <p className="text-gray-400 text-sm mb-1">First Seen Block</p>
-          <p className="text-xl font-semibold text-white">
+          <p className="text-xl font-semibold text-fg">
             {contract?.first_seen_block ? formatNumber(contract.first_seen_block) : '---'}
           </p>
         </div>
@@ -99,7 +99,7 @@ export default function NFTContractPage() {
                     </div>
 
                     <div>
-                      <p className="text-white font-medium truncate">{displayName}</p>
+                      <p className="text-fg font-medium truncate">{displayName}</p>
                       <p className="text-gray-400 text-sm mt-1">ID: {truncateHash(token.token_id, 8, 6)}</p>
                       <p className="text-gray-500 text-xs mt-1">Owner: {truncateHash(token.owner)}</p>
                     </div>

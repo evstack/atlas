@@ -98,7 +98,7 @@ export default function AddressesPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Addresses</h1>
+        <h1 className="text-2xl font-bold text-fg">Addresses</h1>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setAutoRefresh((v) => !v)}
@@ -128,7 +128,7 @@ export default function AddressesPage() {
             <thead>
               <tr className="bg-dark-700">
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('address')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('address')}>
                     Address
                     {sort.key === 'address' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -142,7 +142,7 @@ export default function AddressesPage() {
                   </button>
                 </th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('address_type')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('address_type')}>
                     Type
                     {sort.key === 'address_type' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -156,7 +156,7 @@ export default function AddressesPage() {
                   </button>
                 </th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('first_seen_block')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('first_seen_block')}>
                     First Seen
                     {sort.key === 'first_seen_block' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -170,7 +170,7 @@ export default function AddressesPage() {
                   </button>
                 </th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('tx_count')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('tx_count')}>
                     Txns
                     {sort.key === 'tx_count' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -197,7 +197,7 @@ export default function AddressesPage() {
                 >
                   <td className="table-cell">
                     <div className="flex items-center gap-1">
-                      <span className="font-mono text-xs text-white">{truncateHash(addr.address, 10, 8)}</span>
+                      <span className="font-mono text-xs text-fg">{truncateHash(addr.address, 10, 8)}</span>
                       <CopyButton text={addr.address} />
                     </div>
                   </td>

@@ -16,17 +16,17 @@ export default function WelcomePage() {
           <img src={logoImg} alt="Atlas" className="h-40 md:h-56 lg:h-64 w-auto rounded-lg" />
         </div>
         <SearchBar />
-        <p className="mt-4 text-gray-400 text-sm">
+        <p className="mt-4 text-fg-subtle text-sm">
           Search blocks, transactions, tokens, accounts, and NFTs.
         </p>
         <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 gap-3 text-left">
           <div className="card p-3">
-            <p className="text-gray-400 text-xs mb-1">Total Blocks</p>
-            <p className="text-white text-lg font-semibold">{totals ? formatNumber(totals.blocksTotal) : (loading ? '…' : '—')}</p>
+            <p className="text-fg-subtle text-xs mb-1">Total Blocks</p>
+            <p className="text-fg text-lg font-semibold">{totals ? formatNumber(totals.blocksTotal) : (loading ? '…' : '—')}</p>
           </div>
           <div className="card p-3">
-            <p className="text-gray-400 text-xs mb-1">Avg Block Time</p>
-            <p className="text-white text-lg font-semibold">
+            <p className="text-fg-subtle text-xs mb-1">Avg Block Time</p>
+            <p className="text-fg text-lg font-semibold">
               {headerAvgSec != null
                 ? (headerAvgSec < 1 ? `${Math.round(headerAvgSec * 1000)} ms` : `${headerAvgSec.toFixed(1)} s`)
                 : (avgBlockTimeSec != null
@@ -35,16 +35,16 @@ export default function WelcomePage() {
             </p>
           </div>
           <div className="card p-3">
-            <p className="text-gray-400 text-xs mb-1">Total Transactions</p>
-            <p className="text-white text-lg font-semibold">{totals ? formatNumber(totals.transactionsTotal) : (loading ? '…' : '—')}</p>
+            <p className="text-fg-subtle text-xs mb-1">Total Transactions</p>
+            <p className="text-fg text-lg font-semibold">{totals ? formatNumber(totals.transactionsTotal) : (loading ? '…' : '—')}</p>
           </div>
           <div className="card p-3">
-            <p className="text-gray-400 text-xs mb-1">Total Addresses</p>
-            <p className="text-white text-lg font-semibold">{totals ? formatNumber(totals.addressesTotal) : (loading ? '…' : '—')}</p>
+            <p className="text-fg-subtle text-xs mb-1">Total Addresses</p>
+            <p className="text-fg text-lg font-semibold">{totals ? formatNumber(totals.addressesTotal) : (loading ? '…' : '—')}</p>
           </div>
           <div className="card p-3 col-span-2 sm:col-span-1">
-            <p className="text-gray-400 text-xs mb-1">Transactions (24h)</p>
-            <p className="text-white text-lg font-semibold">{dailyTx != null ? formatNumber(dailyTx) : (loading ? '…' : '—')}</p>
+            <p className="text-fg-subtle text-xs mb-1">Transactions (24h)</p>
+            <p className="text-fg text-lg font-semibold">{dailyTx != null ? formatNumber(dailyTx) : (loading ? '…' : '—')}</p>
           </div>
         </div>
       </div>

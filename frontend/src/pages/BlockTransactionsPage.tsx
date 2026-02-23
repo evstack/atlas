@@ -18,7 +18,7 @@ export default function BlockTransactionsPage() {
           Block #{formatNumber(blockNumber || 0)}
         </Link>
         <span className="text-gray-400">/</span>
-        <h1 className="text-2xl font-bold text-white">Transactions</h1>
+        <h1 className="text-2xl font-bold text-fg">Transactions</h1>
         {pagination && pagination.total > 0 && (
           <span className="text-gray-400 text-sm">
             ({formatNumber(pagination.total)} total)

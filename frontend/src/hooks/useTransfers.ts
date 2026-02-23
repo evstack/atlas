@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { AddressTransfer, ApiError } from '../types';
 import { getAddressTransfers, type GetAddressTransfersParams } from '../api/addresses';
 
@@ -16,12 +16,19 @@ export function useAddressTransfers(address: string | undefined, params: GetAddr
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const paramsRef = useRef(params);
+  const paramsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
+
   const fetchTransfers = useCallback(async () => {
     if (!address) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
-      const response = await getAddressTransfers(address, params);
+      const response = await getAddressTransfers(address, paramsRef.current);
       setTransfers(response.data);
       setPagination({ page: response.page, limit: response.limit, total: response.total, total_pages: response.total_pages });
     } catch (err) {
@@ -29,10 +36,9 @@ export function useAddressTransfers(address: string | undefined, params: GetAddr
     } finally {
       setLoading(false);
     }
-  }, [address, params.page, params.limit, params.transfer_type]);
+  }, [address]);
 
-  useEffect(() => { fetchTransfers(); }, [fetchTransfers]);
+  useEffect(() => { fetchTransfers(); }, [fetchTransfers, paramsKey]);
 
   return { transfers, pagination, loading, error, refetch: fetchTransfers };
 }
-

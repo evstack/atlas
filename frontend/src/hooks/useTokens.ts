@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Token, TokenHolder, TokenTransfer, AddressTokenBalance, ApiError } from '../types';
 import {
   getTokens,
@@ -28,11 +28,18 @@ export function useTokens(params: GetTokensParams = {}): UseTokensResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const paramsRef = useRef(params);
+  const paramsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
+
   const fetchTokens = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await getTokens(params);
+      const response = await getTokens(paramsRef.current);
       setTokens(response.data);
       setPagination({
         page: response.page,
@@ -45,11 +52,11 @@ export function useTokens(params: GetTokensParams = {}): UseTokensResult {
     } finally {
       setLoading(false);
     }
-  }, [params.page, params.limit]);
+  }, []);
 
   useEffect(() => {
     fetchTokens();
-  }, [fetchTokens]);
+  }, [fetchTokens, paramsKey]);
 
   return { tokens, pagination, loading, error, refetch: fetchTokens };
 }
@@ -105,6 +112,13 @@ export function useTokenHolders(address: string | undefined, params: GetTokenHol
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const holdersParamsRef = useRef(params);
+  const holdersParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    holdersParamsRef.current = params;
+  }, [params]);
+
   const fetchHolders = useCallback(async () => {
     if (!address) {
       setLoading(false);
@@ -114,7 +128,7 @@ export function useTokenHolders(address: string | undefined, params: GetTokenHol
     setLoading(true);
     setError(null);
     try {
-      const response = await getTokenHolders(address, params);
+      const response = await getTokenHolders(address, holdersParamsRef.current);
       setHolders(response.data);
       setPagination({
         page: response.page,
@@ -127,11 +141,11 @@ export function useTokenHolders(address: string | undefined, params: GetTokenHol
     } finally {
       setLoading(false);
     }
-  }, [address, params.page, params.limit]);
+  }, [address]);
 
   useEffect(() => {
     fetchHolders();
-  }, [fetchHolders]);
+  }, [fetchHolders, holdersParamsKey]);
 
   return { holders, pagination, loading, error, refetch: fetchHolders };
 }
@@ -150,6 +164,13 @@ export function useTokenTransfers(address: string | undefined, params: GetTokenT
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const transfersParamsRef = useRef(params);
+  const transfersParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    transfersParamsRef.current = params;
+  }, [params]);
+
   const fetchTransfers = useCallback(async () => {
     if (!address) {
       setLoading(false);
@@ -159,7 +180,7 @@ export function useTokenTransfers(address: string | undefined, params: GetTokenT
     setLoading(true);
     setError(null);
     try {
-      const response = await getTokenTransfers(address, params);
+      const response = await getTokenTransfers(address, transfersParamsRef.current);
       setTransfers(response.data);
       setPagination({
         page: response.page,
@@ -172,11 +193,11 @@ export function useTokenTransfers(address: string | undefined, params: GetTokenT
     } finally {
       setLoading(false);
     }
-  }, [address, params.page, params.limit]);
+  }, [address]);
 
   useEffect(() => {
     fetchTransfers();
-  }, [fetchTransfers]);
+  }, [fetchTransfers, transfersParamsKey]);
 
   return { transfers, pagination, loading, error, refetch: fetchTransfers };
 }
@@ -195,6 +216,13 @@ export function useAddressTokens(address: string | undefined, params: GetAddress
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const addressParamsRef = useRef(params);
+  const addressParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    addressParamsRef.current = params;
+  }, [params]);
+
   const fetchBalances = useCallback(async () => {
     if (!address) {
       setLoading(false);
@@ -204,7 +232,7 @@ export function useAddressTokens(address: string | undefined, params: GetAddress
     setLoading(true);
     setError(null);
     try {
-      const response = await getAddressTokens(address, params);
+      const response = await getAddressTokens(address, addressParamsRef.current);
       setBalances(response.data);
       setPagination({
         page: response.page,
@@ -217,11 +245,11 @@ export function useAddressTokens(address: string | undefined, params: GetAddress
     } finally {
       setLoading(false);
     }
-  }, [address, params.page, params.limit]);
+  }, [address]);
 
   useEffect(() => {
     fetchBalances();
-  }, [fetchBalances]);
+  }, [fetchBalances, addressParamsKey]);
 
   return { balances, pagination, loading, error, refetch: fetchBalances };
 }

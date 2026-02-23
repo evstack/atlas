@@ -25,7 +25,7 @@ export default function TokenDetailPage() {
     <div>
       {/* Header */}
       <div className="flex items-center space-x-3 mb-6">
-        <h1 className="text-2xl font-bold text-white">
+        <h1 className="text-2xl font-bold text-fg">
           {token?.name || 'Token'}
         </h1>
         {token?.symbol && (
@@ -54,11 +54,11 @@ export default function TokenDetailPage() {
         </div>
         <div className="card">
           <p className="text-gray-400 text-sm mb-1">Decimals</p>
-          <p className="text-xl font-semibold text-white">{token?.decimals ?? '---'}</p>
+          <p className="text-xl font-semibold text-fg">{token?.decimals ?? '---'}</p>
         </div>
         <div className="card">
           <p className="text-gray-400 text-sm mb-1">Total Supply</p>
-          <p className="text-xl font-semibold text-white font-mono">
+          <p className="text-xl font-semibold text-fg font-mono">
             {token?.total_supply
               ? `${formatTokenAmount(token.total_supply, token.decimals)} ${token.symbol || ''}`
               : '---'}
@@ -66,7 +66,7 @@ export default function TokenDetailPage() {
         </div>
         <div className="card">
           <p className="text-gray-400 text-sm mb-1">Holders</p>
-          <p className="text-xl font-semibold text-white">
+          <p className="text-xl font-semibold text-fg">
             {holdersPagination ? formatNumber(holdersPagination.total) : '---'}
           </p>
         </div>

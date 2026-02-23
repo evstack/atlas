@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ProxyInfo, CombinedAbi, ApiError } from '../types';
 import { getProxies, getContractProxy, getContractCombinedAbi } from '../api/proxies';
 import type { GetProxiesParams } from '../api/proxies';
@@ -17,11 +17,18 @@ export function useProxies(params: GetProxiesParams = {}): UseProxiesResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const paramsRef = useRef(params);
+  const paramsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
+
   const fetchProxies = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await getProxies(params);
+      const response = await getProxies(paramsRef.current);
       setProxies(response.data);
       setPagination({
         page: response.page,
@@ -34,11 +41,11 @@ export function useProxies(params: GetProxiesParams = {}): UseProxiesResult {
     } finally {
       setLoading(false);
     }
-  }, [params.page, params.limit]);
+  }, []);
 
   useEffect(() => {
     fetchProxies();
-  }, [fetchProxies]);
+  }, [fetchProxies, paramsKey]);
 
   return { proxies, pagination, loading, error, refetch: fetchProxies };
 }

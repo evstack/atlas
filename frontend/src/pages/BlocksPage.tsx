@@ -23,7 +23,7 @@ export default function BlocksPage() {
   const [highlightBlocks, setHighlightBlocks] = useState<Set<number>>(new Set());
   const timeoutsRef = useRef<Map<number, number>>(new Map());
   const highlightRafRef = useRef<number | null>(null);
-  const [tick, setTick] = useState(0);
+  const [, setTick] = useState(0);
 
   const handleSort = (key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used') => {
     setSort((prev) => {
@@ -135,8 +135,7 @@ export default function BlocksPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Blocks</h1>
-        <span className="hidden" aria-hidden="true">{tick}</span>
+        <h1 className="text-2xl font-bold text-fg">Blocks</h1>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setAutoRefresh((v) => !v)}
@@ -166,7 +165,7 @@ export default function BlocksPage() {
             <thead>
               <tr className="bg-dark-700">
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('number')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('number')}>
                     Block
                     {sort.key === 'number' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -180,7 +179,7 @@ export default function BlocksPage() {
                   </button>
                 </th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('hash')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('hash')}>
                     Hash
                     {sort.key === 'hash' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -194,7 +193,7 @@ export default function BlocksPage() {
                   </button>
                 </th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('timestamp')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('timestamp')}>
                     Age
                     {sort.key === 'timestamp' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -208,7 +207,7 @@ export default function BlocksPage() {
                   </button>
                 </th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('transaction_count')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('transaction_count')}>
                     Txns
                     {sort.key === 'transaction_count' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -222,7 +221,7 @@ export default function BlocksPage() {
                   </button>
                 </th>
                 <th className="table-cell text-left table-header">
-                  <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('gas_used')}>
+                  <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('gas_used')}>
                     Gas Used
                     {sort.key === 'gas_used' && (
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
