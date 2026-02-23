@@ -200,10 +200,10 @@ pub(crate) async fn fetch_blocks_batch(
                             .map_err(|e| format!("Failed to parse receipts: {}", e))
                     }
                 } else {
-                    Ok(Vec::new())
+                    Err("No result in receipts response".to_string())
                 }
             }
-            None => Ok(Vec::new()),
+            None => Err(format!("Missing receipts response for block {}", block_num)),
         };
 
         // Combine block + receipts into a single result
