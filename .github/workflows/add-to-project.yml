@@ -1,0 +1,27 @@
+name: Add issues to project
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add to project
+        uses: actions/add-to-project@v1
+        id: add
+        with:
+          project-url: https://github.com/orgs/evstack/projects/7
+          github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}
+
+      - name: Set Area to devx
+        env:
+          GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
+          ITEM_ID: ${{ steps.add.outputs.itemId }}
+        run: |
+          gh project item-edit \
+            --project-id PVT_kwDOBy5rXM4ALaHM \
+            --id "$ITEM_ID" \
+            --field-id PVTSSF_lADOBy5rXM4ALaHMzg92rZc \
+            --single-select-option-id 9e422eba
