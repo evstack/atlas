@@ -20,14 +20,12 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
-            database_url: env::var("DATABASE_URL")
-                .context("DATABASE_URL must be set")?,
+            database_url: env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
             db_max_connections: env::var("DB_MAX_CONNECTIONS")
                 .unwrap_or_else(|_| "20".to_string())
                 .parse()
                 .context("Invalid DB_MAX_CONNECTIONS")?,
-            rpc_url: env::var("RPC_URL")
-                .context("RPC_URL must be set")?,
+            rpc_url: env::var("RPC_URL").context("RPC_URL must be set")?,
             rpc_requests_per_second: env::var("RPC_REQUESTS_PER_SECOND")
                 .unwrap_or_else(|_| "100".to_string())
                 .parse()

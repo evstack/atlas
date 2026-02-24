@@ -20,7 +20,13 @@ pub(crate) struct WorkItem {
 }
 
 pub(crate) type HttpProvider = RootProvider<Http<Client>, Ethereum>;
-pub(crate) type SharedRateLimiter = Arc<RateLimiter<governor::state::NotKeyed, governor::state::InMemoryState, governor::clock::DefaultClock>>;
+pub(crate) type SharedRateLimiter = Arc<
+    RateLimiter<
+        governor::state::NotKeyed,
+        governor::state::InMemoryState,
+        governor::clock::DefaultClock,
+    >,
+>;
 
 /// Result of fetching a block from RPC
 pub(crate) enum FetchResult {
@@ -42,7 +48,11 @@ pub(crate) async fn fetch_blocks_batch(
     count: usize,
     rate_limiter: &SharedRateLimiter,
 ) -> Vec<FetchResult> {
-    tracing::debug!("Fetching batch: blocks {} to {}", start_block, start_block + count as u64 - 1);
+    tracing::debug!(
+        "Fetching batch: blocks {} to {}",
+        start_block,
+        start_block + count as u64 - 1
+    );
 
     // Wait for rate limiter - we're making 2*count RPC calls in one HTTP request
     for _ in 0..(count * 2) {
@@ -78,12 +88,7 @@ pub(crate) async fn fetch_blocks_batch(
 
     for attempt in 0..RPC_MAX_RETRIES {
         // Send request
-        let response = match client
-            .post(rpc_url)
-            .json(&batch_request)
-            .send()
-            .await
-        {
+        let response = match client.post(rpc_url).json(&batch_request).send().await {
             Ok(resp) => resp,
             Err(e) => {
                 let delay = RPC_RETRY_DELAYS

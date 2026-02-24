@@ -4,9 +4,9 @@ use axum::{
 };
 use std::sync::Arc;
 
-use atlas_common::{AtlasError, Block, Pagination, PaginatedResponse, Transaction};
-use crate::AppState;
 use crate::error::ApiResult;
+use crate::AppState;
+use atlas_common::{AtlasError, Block, PaginatedResponse, Pagination, Transaction};
 
 pub async fn list_blocks(
     State(state): State<Arc<AppState>>,
@@ -30,7 +30,12 @@ pub async fn list_blocks(
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(Json(PaginatedResponse::new(blocks, pagination.page, pagination.limit, total_count)))
+    Ok(Json(PaginatedResponse::new(
+        blocks,
+        pagination.page,
+        pagination.limit,
+        total_count,
+    )))
 }
 
 pub async fn get_block(
@@ -55,12 +60,10 @@ pub async fn get_block_transactions(
     Path(number): Path<i64>,
     Query(pagination): Query<Pagination>,
 ) -> ApiResult<Json<PaginatedResponse<Transaction>>> {
-    let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM transactions WHERE block_number = $1"
-    )
-    .bind(number)
-    .fetch_one(&state.pool)
-    .await?;
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions WHERE block_number = $1")
+        .bind(number)
+        .fetch_one(&state.pool)
+        .await?;
 
     let transactions: Vec<Transaction> = sqlx::query_as(
         "SELECT hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used, input_data, status, contract_created, timestamp
@@ -75,5 +78,10 @@ pub async fn get_block_transactions(
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(Json(PaginatedResponse::new(transactions, pagination.page, pagination.limit, total.0)))
+    Ok(Json(PaginatedResponse::new(
+        transactions,
+        pagination.page,
+        pagination.limit,
+        total.0,
+    )))
 }

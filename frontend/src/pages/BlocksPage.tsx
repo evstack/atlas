@@ -123,6 +123,7 @@ export default function BlocksPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-white">Blocks</h1>
+        <span className="hidden" aria-hidden="true">{tick}</span>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setAutoRefresh((v) => !v)}

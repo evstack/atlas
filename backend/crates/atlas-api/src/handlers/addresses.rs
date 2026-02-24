@@ -5,9 +5,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use atlas_common::{Address, AtlasError, NftToken, Pagination, PaginatedResponse, Transaction};
-use crate::AppState;
 use crate::error::ApiResult;
+use crate::AppState;
+use atlas_common::{Address, AtlasError, NftToken, PaginatedResponse, Pagination, Transaction};
 
 /// Merged address response that combines data from addresses, nft_contracts, and erc20_contracts tables
 #[derive(Debug, Clone, Serialize)]
@@ -59,8 +59,12 @@ pub struct AddressFilters {
     pub address_type: Option<String>,
 }
 
-fn default_page() -> u32 { 1 }
-fn default_limit() -> u32 { 20 }
+fn default_page() -> u32 {
+    1
+}
+fn default_limit() -> u32 {
+    20
+}
 
 pub async fn list_addresses(
     State(state): State<Arc<AppState>>,
@@ -144,7 +148,9 @@ pub async fn list_addresses(
             "eoa" | "contract" | "erc20" | "nft" => Some(address_type.to_lowercase()),
             _ => None,
         };
-        if let Some(at) = at { conditions.push(format!("address_type = '{}'", at)); }
+        if let Some(at) = at {
+            conditions.push(format!("address_type = '{}'", at));
+        }
     }
 
     let where_clause = if conditions.is_empty() {
@@ -156,12 +162,13 @@ pub async fn list_addresses(
     // Count total
     let count_query = format!(
         "{} {} ",
-        base_query.replace("SELECT * FROM all_addresses", "SELECT COUNT(*) FROM all_addresses"),
+        base_query.replace(
+            "SELECT * FROM all_addresses",
+            "SELECT COUNT(*) FROM all_addresses"
+        ),
         where_clause
     );
-    let total: (i64,) = sqlx::query_as(&count_query)
-        .fetch_one(&state.pool)
-        .await?;
+    let total: (i64,) = sqlx::query_as(&count_query).fetch_one(&state.pool).await?;
 
     // Fetch addresses sorted by tx_count (most active first), then by first_seen_block
     let query = format!(
@@ -171,11 +178,11 @@ pub async fn list_addresses(
         base_query, where_clause, limit, offset
     );
 
-    let addresses: Vec<AddressListItem> = sqlx::query_as(&query)
-        .fetch_all(&state.pool)
-        .await?;
+    let addresses: Vec<AddressListItem> = sqlx::query_as(&query).fetch_all(&state.pool).await?;
 
-    Ok(Json(PaginatedResponse::new(addresses, page, limit, total.0)))
+    Ok(Json(PaginatedResponse::new(
+        addresses, page, limit, total.0,
+    )))
 }
 
 pub async fn get_address(
@@ -188,7 +195,7 @@ pub async fn get_address(
     let base_addr: Option<Address> = sqlx::query_as(
         "SELECT address, is_contract, first_seen_block, tx_count
          FROM addresses
-         WHERE LOWER(address) = LOWER($1)"
+         WHERE LOWER(address) = LOWER($1)",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -198,7 +205,7 @@ pub async fn get_address(
     let nft_contract: Option<NftContractRow> = sqlx::query_as(
         "SELECT address, name, symbol, total_supply, first_seen_block
          FROM nft_contracts
-         WHERE LOWER(address) = LOWER($1)"
+         WHERE LOWER(address) = LOWER($1)",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -208,7 +215,7 @@ pub async fn get_address(
     let erc20_contract: Option<Erc20ContractRow> = sqlx::query_as(
         "SELECT address, name, symbol, decimals, total_supply, first_seen_block
          FROM erc20_contracts
-         WHERE LOWER(address) = LOWER($1)"
+         WHERE LOWER(address) = LOWER($1)",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -274,7 +281,10 @@ pub async fn get_address(
         // Edge case: found in both NFT and ERC-20 (shouldn't happen, prefer ERC-20)
         (base, _, Some(erc20)) => Ok(Json(AddressDetailResponse {
             address: erc20.address.clone(),
-            first_seen_block: base.as_ref().map(|b| b.first_seen_block).unwrap_or(erc20.first_seen_block),
+            first_seen_block: base
+                .as_ref()
+                .map(|b| b.first_seen_block)
+                .unwrap_or(erc20.first_seen_block),
             tx_count: base.as_ref().map(|b| b.tx_count).unwrap_or(0),
             address_type: "erc20".to_string(),
             name: erc20.name,
@@ -283,7 +293,9 @@ pub async fn get_address(
             total_supply: erc20.total_supply.map(|s| s.to_string()),
         })),
         // Not found anywhere
-        (None, None, None) => Err(AtlasError::NotFound(format!("Address {} not found", address)).into()),
+        (None, None, None) => {
+            Err(AtlasError::NotFound(format!("Address {} not found", address)).into())
+        }
     }
 }
 
@@ -316,7 +328,7 @@ pub async fn get_address_transactions(
     let address = normalize_address(&address);
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM transactions WHERE from_address = $1 OR to_address = $1"
+        "SELECT COUNT(*) FROM transactions WHERE from_address = $1 OR to_address = $1",
     )
     .bind(&address)
     .fetch_one(&state.pool)
@@ -335,7 +347,12 @@ pub async fn get_address_transactions(
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(Json(PaginatedResponse::new(transactions, pagination.page, pagination.limit, total.0)))
+    Ok(Json(PaginatedResponse::new(
+        transactions,
+        pagination.page,
+        pagination.limit,
+        total.0,
+    )))
 }
 
 pub async fn get_address_nfts(
@@ -345,12 +362,10 @@ pub async fn get_address_nfts(
 ) -> ApiResult<Json<PaginatedResponse<NftToken>>> {
     let address = normalize_address(&address);
 
-    let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM nft_tokens WHERE owner = $1"
-    )
-    .bind(&address)
-    .fetch_one(&state.pool)
-    .await?;
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM nft_tokens WHERE owner = $1")
+        .bind(&address)
+        .fetch_one(&state.pool)
+        .await?;
 
     let tokens: Vec<NftToken> = sqlx::query_as(
         "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
@@ -365,7 +380,12 @@ pub async fn get_address_nfts(
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(Json(PaginatedResponse::new(tokens, pagination.page, pagination.limit, total.0)))
+    Ok(Json(PaginatedResponse::new(
+        tokens,
+        pagination.page,
+        pagination.limit,
+        total.0,
+    )))
 }
 
 /// Unified transfer type combining ERC-20 and NFT transfers
@@ -561,7 +581,9 @@ pub async fn get_address_transfers(
         })
         .collect();
 
-    Ok(Json(PaginatedResponse::new(transfers, page, limit, total.0)))
+    Ok(Json(PaginatedResponse::new(
+        transfers, page, limit, total.0,
+    )))
 }
 
 fn normalize_address(address: &str) -> String {

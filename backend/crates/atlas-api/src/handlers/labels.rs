@@ -9,9 +9,9 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use atlas_common::{AddressLabel, AddressLabelInput, AtlasError, Pagination, PaginatedResponse};
-use crate::AppState;
 use crate::error::ApiResult;
+use crate::AppState;
+use atlas_common::{AddressLabel, AddressLabelInput, AtlasError, PaginatedResponse, Pagination};
 
 /// Query parameters for label filtering
 #[derive(Debug, Deserialize)]
@@ -30,12 +30,11 @@ pub async fn list_labels(
     Query(query): Query<LabelQuery>,
 ) -> ApiResult<Json<PaginatedResponse<AddressLabel>>> {
     let (total, labels) = if let Some(tag) = &query.tag {
-        let total: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM address_labels WHERE $1 = ANY(tags)",
-        )
-        .bind(tag)
-        .fetch_one(&state.pool)
-        .await?;
+        let total: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM address_labels WHERE $1 = ANY(tags)")
+                .bind(tag)
+                .fetch_one(&state.pool)
+                .await?;
 
         let labels: Vec<AddressLabel> = sqlx::query_as(
             "SELECT address, name, tags, created_at, updated_at
@@ -54,12 +53,11 @@ pub async fn list_labels(
     } else if let Some(search) = &query.search {
         let search_pattern = format!("%{}%", search.to_lowercase());
 
-        let total: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM address_labels WHERE LOWER(name) LIKE $1",
-        )
-        .bind(&search_pattern)
-        .fetch_one(&state.pool)
-        .await?;
+        let total: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM address_labels WHERE LOWER(name) LIKE $1")
+                .bind(&search_pattern)
+                .fetch_one(&state.pool)
+                .await?;
 
         let labels: Vec<AddressLabel> = sqlx::query_as(
             "SELECT address, name, tags, created_at, updated_at
@@ -123,9 +121,7 @@ pub async fn get_label(
 }
 
 /// GET /api/labels/tags - Get all available tags
-pub async fn list_tags(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<Json<Vec<TagCount>>> {
+pub async fn list_tags(State(state): State<Arc<AppState>>) -> ApiResult<Json<Vec<TagCount>>> {
     let tags: Vec<TagCount> = sqlx::query_as(
         "SELECT unnest(tags) as tag, COUNT(*) as count
          FROM address_labels

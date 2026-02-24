@@ -36,7 +36,6 @@ export default function ImageIpfs({ srcUrl, gateways = DEFAULT_GATEWAYS, alt = '
   if (!srcUrl) return null;
 
   return (
-    // eslint-disable-next-line jsx-a11y/alt-text
     <img
       {...rest}
       src={resolvedSrc}
@@ -53,4 +52,3 @@ export default function ImageIpfs({ srcUrl, gateways = DEFAULT_GATEWAYS, alt = '
     />
   );
 }
-

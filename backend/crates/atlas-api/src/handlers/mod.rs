@@ -1,15 +1,15 @@
-pub mod blocks;
-pub mod transactions;
 pub mod addresses;
-pub mod nfts;
-pub mod search;
-pub mod tokens;
-pub mod logs;
+pub mod blocks;
+pub mod contracts;
 pub mod etherscan;
 pub mod labels;
+pub mod logs;
+pub mod nfts;
 pub mod proxy;
-pub mod contracts;
+pub mod search;
 pub mod status;
+pub mod tokens;
+pub mod transactions;
 
 use sqlx::PgPool;
 
@@ -29,7 +29,7 @@ pub async fn get_table_count(pool: &PgPool, table_name: &str) -> Result<i64, sql
         JOIN pg_inherits i ON i.inhrelid = c.oid
         JOIN pg_class p ON p.oid = i.inhparent
         WHERE p.relname = $1
-        "#
+        "#,
     )
     .bind(table_name)
     .fetch_one(pool)
@@ -38,12 +38,11 @@ pub async fn get_table_count(pool: &PgPool, table_name: &str) -> Result<i64, sql
     let approx = if let Some(sum) = approx_partitions.0 {
         sum as i64
     } else {
-        let parent: (Option<f64>,) = sqlx::query_as(
-            "SELECT reltuples::float8 FROM pg_class WHERE relname = $1"
-        )
-        .bind(table_name)
-        .fetch_one(pool)
-        .await?;
+        let parent: (Option<f64>,) =
+            sqlx::query_as("SELECT reltuples::float8 FROM pg_class WHERE relname = $1")
+                .bind(table_name)
+                .fetch_one(pool)
+                .await?;
         parent.0.unwrap_or(0.0) as i64
     };
 
@@ -61,8 +60,6 @@ pub async fn get_table_count(pool: &PgPool, table_name: &str) -> Result<i64, sql
 /// Get count with a WHERE clause efficiently.
 /// Uses exact count since filtered queries are usually fast with proper indexes.
 pub async fn get_filtered_count(pool: &PgPool, query: &str) -> Result<i64, sqlx::Error> {
-    let count: (i64,) = sqlx::query_as(query)
-        .fetch_one(pool)
-        .await?;
+    let count: (i64,) = sqlx::query_as(query).fetch_one(pool).await?;
     Ok(count.0)
 }

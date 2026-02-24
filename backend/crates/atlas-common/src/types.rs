@@ -362,8 +362,12 @@ pub struct Pagination {
     pub limit: u32,
 }
 
-fn default_page() -> u32 { 1 }
-fn default_limit() -> u32 { 20 }
+fn default_page() -> u32 {
+    1
+}
+fn default_limit() -> u32 {
+    20
+}
 
 impl Pagination {
     pub fn offset(&self) -> i64 {

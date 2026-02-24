@@ -130,6 +130,7 @@ export default function TransactionsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-white">Transactions</h1>
+        <span className="hidden" aria-hidden="true">{tick}</span>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setAutoRefresh((v) => !v)}

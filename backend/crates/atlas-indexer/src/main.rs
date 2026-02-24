@@ -3,8 +3,8 @@ use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod batch;
-mod copy;
 mod config;
+mod copy;
 mod fetcher;
 mod indexer;
 mod metadata;
@@ -17,8 +17,10 @@ const MAX_RETRY_DELAY: u64 = 60;
 async fn main() -> Result<()> {
     // Initialize tracing
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| "atlas_indexer=info,sqlx=warn".into()))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "atlas_indexer=info,sqlx=warn".into()),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -29,7 +31,8 @@ async fn main() -> Result<()> {
     let config = config::Config::from_env()?;
 
     // Create database pool
-    let pool = atlas_common::db::create_pool(&config.database_url, config.db_max_connections).await?;
+    let pool =
+        atlas_common::db::create_pool(&config.database_url, config.db_max_connections).await?;
 
     // Run migrations
     tracing::info!("Running database migrations");
@@ -43,9 +46,11 @@ async fn main() -> Result<()> {
     let metadata_config = config.clone();
     let metadata_handle = tokio::spawn(async move {
         run_with_retry(|| async {
-            let fetcher = metadata::MetadataFetcher::new(metadata_pool.clone(), metadata_config.clone())?;
+            let fetcher =
+                metadata::MetadataFetcher::new(metadata_pool.clone(), metadata_config.clone())?;
             fetcher.run().await
-        }).await
+        })
+        .await
     });
 
     // Run indexer with retry on failure

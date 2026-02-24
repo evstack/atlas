@@ -5,9 +5,9 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use atlas_common::{AtlasError, EventLog, Pagination, PaginatedResponse};
-use crate::AppState;
 use crate::error::ApiResult;
+use crate::AppState;
+use atlas_common::{AtlasError, EventLog, PaginatedResponse, Pagination};
 
 /// Query parameters for log filtering
 #[derive(Debug, Deserialize)]
@@ -50,13 +50,12 @@ pub async fn get_address_logs(
     let (total, logs) = if let Some(topic0) = &query.topic0 {
         let topic0 = normalize_hash(topic0);
 
-        let total: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM event_logs WHERE address = $1 AND topic0 = $2",
-        )
-        .bind(&address)
-        .bind(&topic0)
-        .fetch_one(&state.pool)
-        .await?;
+        let total: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM event_logs WHERE address = $1 AND topic0 = $2")
+                .bind(&address)
+                .bind(&topic0)
+                .fetch_one(&state.pool)
+                .await?;
 
         let logs: Vec<EventLog> = sqlx::query_as(
             "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
@@ -74,12 +73,10 @@ pub async fn get_address_logs(
 
         (total.0, logs)
     } else {
-        let total: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM event_logs WHERE address = $1",
-        )
-        .bind(&address)
-        .fetch_one(&state.pool)
-        .await?;
+        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM event_logs WHERE address = $1")
+            .bind(&address)
+            .fetch_one(&state.pool)
+            .await?;
 
         let logs: Vec<EventLog> = sqlx::query_as(
             "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
@@ -110,18 +107,15 @@ pub async fn get_logs_by_topic(
     State(state): State<Arc<AppState>>,
     Query(query): Query<LogsQuery>,
 ) -> ApiResult<Json<PaginatedResponse<EventLog>>> {
-    let topic0 = query
-        .topic0
-        .as_ref()
-        .ok_or_else(|| AtlasError::InvalidInput("topic0 query parameter is required".to_string()))?;
+    let topic0 = query.topic0.as_ref().ok_or_else(|| {
+        AtlasError::InvalidInput("topic0 query parameter is required".to_string())
+    })?;
     let topic0 = normalize_hash(topic0);
 
-    let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM event_logs WHERE topic0 = $1",
-    )
-    .bind(&topic0)
-    .fetch_one(&state.pool)
-    .await?;
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM event_logs WHERE topic0 = $1")
+        .bind(&topic0)
+        .fetch_one(&state.pool)
+        .await?;
 
     let logs: Vec<EventLog> = sqlx::query_as(
         "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded

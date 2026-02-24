@@ -5,9 +5,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use atlas_common::{Block, Transaction, Address, NftContract, Erc20Contract};
-use crate::AppState;
 use crate::error::ApiResult;
+use crate::AppState;
+use atlas_common::{Address, Block, Erc20Contract, NftContract, Transaction};
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
@@ -43,7 +43,10 @@ pub async fn search(
     let mut results = Vec::new();
 
     if query.is_empty() {
-        return Ok(Json(SearchResponse { results, query: query.to_string() }));
+        return Ok(Json(SearchResponse {
+            results,
+            query: query.to_string(),
+        }));
     }
 
     // Detect query type and run appropriate searches in parallel
@@ -104,15 +107,21 @@ pub async fn search(
         }
     }
 
-    Ok(Json(SearchResponse { results, query: query.to_string() }))
+    Ok(Json(SearchResponse {
+        results,
+        query: query.to_string(),
+    }))
 }
 
-async fn search_address(state: &AppState, address: &str) -> Result<Option<Address>, atlas_common::AtlasError> {
+async fn search_address(
+    state: &AppState,
+    address: &str,
+) -> Result<Option<Address>, atlas_common::AtlasError> {
     // Address is already lowercased by caller
     sqlx::query_as(
         "SELECT address, is_contract, first_seen_block, tx_count
          FROM addresses
-         WHERE address = $1"
+         WHERE address = $1",
     )
     .bind(address)
     .fetch_optional(&state.pool)
@@ -120,7 +129,10 @@ async fn search_address(state: &AppState, address: &str) -> Result<Option<Addres
     .map_err(Into::into)
 }
 
-async fn search_transaction(state: &AppState, hash: &str) -> Result<Option<Transaction>, atlas_common::AtlasError> {
+async fn search_transaction(
+    state: &AppState,
+    hash: &str,
+) -> Result<Option<Transaction>, atlas_common::AtlasError> {
     // Use tx_hash_lookup table for O(1) lookup, then fetch full tx with partition key
     sqlx::query_as(
         "SELECT t.hash, t.block_number, t.block_index, t.from_address, t.to_address, t.value, t.gas_price, t.gas_used, t.input_data, t.status, t.contract_created, t.timestamp
@@ -134,7 +146,10 @@ async fn search_transaction(state: &AppState, hash: &str) -> Result<Option<Trans
     .map_err(Into::into)
 }
 
-async fn search_block_by_hash(state: &AppState, hash: &str) -> Result<Option<Block>, atlas_common::AtlasError> {
+async fn search_block_by_hash(
+    state: &AppState,
+    hash: &str,
+) -> Result<Option<Block>, atlas_common::AtlasError> {
     // Hash is already lowercased by caller
     sqlx::query_as(
         "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
@@ -147,7 +162,10 @@ async fn search_block_by_hash(state: &AppState, hash: &str) -> Result<Option<Blo
     .map_err(Into::into)
 }
 
-async fn search_block_by_number(state: &AppState, number: i64) -> Result<Option<Block>, atlas_common::AtlasError> {
+async fn search_block_by_number(
+    state: &AppState,
+    number: i64,
+) -> Result<Option<Block>, atlas_common::AtlasError> {
     sqlx::query_as(
         "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
          FROM blocks
@@ -159,14 +177,17 @@ async fn search_block_by_number(state: &AppState, number: i64) -> Result<Option<
     .map_err(Into::into)
 }
 
-async fn search_nft_collections(state: &AppState, query: &str) -> Result<Vec<NftContract>, atlas_common::AtlasError> {
+async fn search_nft_collections(
+    state: &AppState,
+    query: &str,
+) -> Result<Vec<NftContract>, atlas_common::AtlasError> {
     let pattern = format!("%{}%", query);
     sqlx::query_as(
         "SELECT address, name, symbol, total_supply, first_seen_block
          FROM nft_contracts
          WHERE name ILIKE $1 OR symbol ILIKE $1
          ORDER BY total_supply DESC NULLS LAST
-         LIMIT 10"
+         LIMIT 10",
     )
     .bind(&pattern)
     .fetch_all(&state.pool)
@@ -174,14 +195,17 @@ async fn search_nft_collections(state: &AppState, query: &str) -> Result<Vec<Nft
     .map_err(Into::into)
 }
 
-async fn search_erc20_tokens(state: &AppState, query: &str) -> Result<Vec<Erc20Contract>, atlas_common::AtlasError> {
+async fn search_erc20_tokens(
+    state: &AppState,
+    query: &str,
+) -> Result<Vec<Erc20Contract>, atlas_common::AtlasError> {
     let pattern = format!("%{}%", query);
     sqlx::query_as(
         "SELECT address, name, symbol, decimals, total_supply, first_seen_block
          FROM erc20_contracts
          WHERE name ILIKE $1 OR symbol ILIKE $1
          ORDER BY first_seen_block DESC
-         LIMIT 10"
+         LIMIT 10",
     )
     .bind(&pattern)
     .fetch_all(&state.pool)

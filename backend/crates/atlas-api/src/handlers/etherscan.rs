@@ -12,10 +12,10 @@ use bigdecimal::BigDecimal;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use atlas_common::{AtlasError, ContractAbi, Transaction, VerifyContractRequest};
-use crate::AppState;
 use crate::error::ApiResult;
 use crate::handlers::contracts;
+use crate::AppState;
+use atlas_common::{AtlasError, ContractAbi, Transaction, VerifyContractRequest};
 
 /// Etherscan API response wrapper
 #[derive(Debug, Serialize)]
@@ -136,7 +136,10 @@ pub async fn etherscan_api_post(
 ) -> ApiResult<Json<serde_json::Value>> {
     if form.module != "contract" {
         return Ok(Json(serde_json::to_value(EtherscanResponse::error(
-            format!("POST only supported for contract module, got: {}", form.module),
+            format!(
+                "POST only supported for contract module, got: {}",
+                form.module
+            ),
             serde_json::Value::Null,
         ))?));
     }
@@ -192,30 +195,27 @@ async fn verify_source_code_etherscan(
     };
 
     // Call the internal verification logic
-    match contracts::verify_contract(
-        axum::extract::State(state),
-        Json(request),
-    ).await {
+    match contracts::verify_contract(axum::extract::State(state), Json(request)).await {
         Ok(Json(response)) => {
             if response.success {
                 // Etherscan returns a GUID for async verification, we verify synchronously
                 // Return success with address as the "GUID"
                 Ok(Json(serde_json::to_value(EtherscanResponse::ok(
-                    response.address
+                    response.address,
                 ))?))
             } else {
                 Ok(Json(serde_json::to_value(EtherscanResponse::error(
-                    response.message.unwrap_or_else(|| "Verification failed".to_string()),
+                    response
+                        .message
+                        .unwrap_or_else(|| "Verification failed".to_string()),
                     serde_json::Value::Null,
                 ))?))
             }
         }
-        Err(e) => {
-            Ok(Json(serde_json::to_value(EtherscanResponse::error(
-                e.to_string(),
-                serde_json::Value::Null,
-            ))?))
-        }
+        Err(e) => Ok(Json(serde_json::to_value(EtherscanResponse::error(
+            e.to_string(),
+            serde_json::Value::Null,
+        ))?)),
     }
 }
 
@@ -307,39 +307,57 @@ async fn handle_proxy_module(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let provider = ProviderBuilder::new()
-        .on_http(state.rpc_url.parse().map_err(|e| AtlasError::Config(format!("Invalid RPC URL: {}", e)))?);
+    let provider = ProviderBuilder::new().on_http(
+        state
+            .rpc_url
+            .parse()
+            .map_err(|e| AtlasError::Config(format!("Invalid RPC URL: {}", e)))?,
+    );
 
     match query.action.as_str() {
         "eth_blockNumber" => {
-            let block_number = provider.get_block_number().await
+            let block_number = provider
+                .get_block_number()
+                .await
                 .map_err(|e| AtlasError::Rpc(e.to_string()))?;
-            Ok(Json(serde_json::to_value(EtherscanResponse::ok(
-                format!("0x{:x}", block_number),
-            ))?))
+            Ok(Json(serde_json::to_value(EtherscanResponse::ok(format!(
+                "0x{:x}",
+                block_number
+            )))?))
         }
         "eth_getBlockByNumber" => {
-            let block_no = query.blockno.as_ref()
+            let block_no = query
+                .blockno
+                .as_ref()
                 .ok_or_else(|| AtlasError::InvalidInput("blockno required".to_string()))?;
             let block_num: u64 = if let Some(stripped) = block_no.strip_prefix("0x") {
                 u64::from_str_radix(stripped, 16)
                     .map_err(|_| AtlasError::InvalidInput("Invalid block number".to_string()))?
             } else {
-                block_no.parse()
+                block_no
+                    .parse()
                     .map_err(|_| AtlasError::InvalidInput("Invalid block number".to_string()))?
             };
             let block = provider
-                .get_block_by_number(alloy::rpc::types::BlockNumberOrTag::Number(block_num), alloy::rpc::types::BlockTransactionsKind::Full)
+                .get_block_by_number(
+                    alloy::rpc::types::BlockNumberOrTag::Number(block_num),
+                    alloy::rpc::types::BlockTransactionsKind::Full,
+                )
                 .await
                 .map_err(|e| AtlasError::Rpc(e.to_string()))?;
             Ok(Json(serde_json::to_value(EtherscanResponse::ok(block))?))
         }
         "eth_getTransactionByHash" => {
-            let hash = query.txhash.as_ref()
+            let hash = query
+                .txhash
+                .as_ref()
                 .ok_or_else(|| AtlasError::InvalidInput("txhash required".to_string()))?;
-            let hash_bytes: alloy::primitives::B256 = hash.parse()
+            let hash_bytes: alloy::primitives::B256 = hash
+                .parse()
                 .map_err(|_| AtlasError::InvalidInput("Invalid transaction hash".to_string()))?;
-            let tx = provider.get_transaction_by_hash(hash_bytes).await
+            let tx = provider
+                .get_transaction_by_hash(hash_bytes)
+                .await
                 .map_err(|e| AtlasError::Rpc(e.to_string()))?;
             Ok(Json(serde_json::to_value(EtherscanResponse::ok(tx))?))
         }
@@ -358,18 +376,27 @@ async fn get_balance(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let address = query.address.as_ref()
+    let address = query
+        .address
+        .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("address required".to_string()))?;
     let address = normalize_address(address);
 
     // Get balance from RPC
-    let provider = ProviderBuilder::new()
-        .on_http(state.rpc_url.parse().map_err(|e| AtlasError::Config(format!("Invalid RPC URL: {}", e)))?);
+    let provider = ProviderBuilder::new().on_http(
+        state
+            .rpc_url
+            .parse()
+            .map_err(|e| AtlasError::Config(format!("Invalid RPC URL: {}", e)))?,
+    );
 
-    let addr: alloy::primitives::Address = address.parse()
+    let addr: alloy::primitives::Address = address
+        .parse()
         .map_err(|_| AtlasError::InvalidInput("Invalid address".to_string()))?;
 
-    let balance = provider.get_balance(addr).await
+    let balance = provider
+        .get_balance(addr)
+        .await
         .map_err(|e| AtlasError::Rpc(e.to_string()))?;
 
     Ok(Json(serde_json::to_value(EtherscanResponse::ok(
@@ -381,21 +408,30 @@ async fn get_balance_multi(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let addresses_str = query.address.as_ref()
+    let addresses_str = query
+        .address
+        .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("address required".to_string()))?;
 
-    let provider = ProviderBuilder::new()
-        .on_http(state.rpc_url.parse().map_err(|e| AtlasError::Config(format!("Invalid RPC URL: {}", e)))?);
+    let provider = ProviderBuilder::new().on_http(
+        state
+            .rpc_url
+            .parse()
+            .map_err(|e| AtlasError::Config(format!("Invalid RPC URL: {}", e)))?,
+    );
 
     let addresses: Vec<&str> = addresses_str.split(',').collect();
     let mut results = Vec::new();
 
     for addr_str in addresses {
         let addr_str = normalize_address(addr_str.trim());
-        let addr: alloy::primitives::Address = addr_str.parse()
+        let addr: alloy::primitives::Address = addr_str
+            .parse()
             .map_err(|_| AtlasError::InvalidInput(format!("Invalid address: {}", addr_str)))?;
 
-        let balance = provider.get_balance(addr).await
+        let balance = provider
+            .get_balance(addr)
+            .await
             .map_err(|e| AtlasError::Rpc(e.to_string()))?;
 
         results.push(serde_json::json!({
@@ -435,7 +471,9 @@ async fn get_tx_list(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let address = query.address.as_ref()
+    let address = query
+        .address
+        .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("address required".to_string()))?;
     let address = normalize_address(address);
 
@@ -474,7 +512,7 @@ async fn get_tx_list(
                 block_number: tx.block_number.to_string(),
                 time_stamp: tx.timestamp.to_string(),
                 hash: tx.hash,
-                nonce: "0".to_string(), // Not stored
+                nonce: "0".to_string(),     // Not stored
                 block_hash: "".to_string(), // Would need join
                 transaction_index: tx.block_index.to_string(),
                 from: tx.from_address,
@@ -501,9 +539,10 @@ async fn get_internal_tx_list(
     _query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
     // Internal transactions require trace support - return empty for now
-    Ok(Json(serde_json::to_value(EtherscanResponse::ok(
-        Vec::<serde_json::Value>::new(),
-    ))?))
+    Ok(Json(serde_json::to_value(EtherscanResponse::ok(Vec::<
+        serde_json::Value,
+    >::new(
+    )))?))
 }
 
 /// Token transfer in Etherscan format
@@ -553,7 +592,9 @@ async fn get_token_tx_list(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let address = query.address.as_ref()
+    let address = query
+        .address
+        .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("address required".to_string()))?;
     let address = normalize_address(address);
 
@@ -615,9 +656,13 @@ async fn get_token_balance(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let address = query.address.as_ref()
+    let address = query
+        .address
+        .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("address required".to_string()))?;
-    let contract_address = query.contractaddress.as_ref()
+    let contract_address = query
+        .contractaddress
+        .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("contractaddress required".to_string()))?;
 
     let address = normalize_address(address);
@@ -636,7 +681,9 @@ async fn get_token_balance(
         .map(|(b,)| b.to_string())
         .unwrap_or_else(|| "0".to_string());
 
-    Ok(Json(serde_json::to_value(EtherscanResponse::ok(balance_str))?))
+    Ok(Json(serde_json::to_value(EtherscanResponse::ok(
+        balance_str,
+    ))?))
 }
 
 // =====================
@@ -647,7 +694,9 @@ async fn get_contract_abi(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let address = query.address.as_ref()
+    let address = query
+        .address
+        .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("address required".to_string()))?;
     let address = normalize_address(address);
 
@@ -698,7 +747,9 @@ async fn get_source_code(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let address = query.address.as_ref()
+    let address = query
+        .address
+        .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("address required".to_string()))?;
     let address = normalize_address(address);
 
@@ -722,24 +773,34 @@ async fn get_source_code(
 
     match contract {
         Some(c) => {
-            let abi_str = serde_json::to_string(&c.abi)
-                .map_err(|e| AtlasError::Internal(e.to_string()))?;
+            let abi_str =
+                serde_json::to_string(&c.abi).map_err(|e| AtlasError::Internal(e.to_string()))?;
             let result = SourceCodeResult {
                 source_code: c.source_code.unwrap_or_default(),
                 abi: abi_str,
                 contract_name: "".to_string(), // Not stored
                 compiler_version: c.compiler_version.unwrap_or_default(),
-                optimization_used: if c.optimization_used.unwrap_or(false) { "1" } else { "0" }.to_string(),
+                optimization_used: if c.optimization_used.unwrap_or(false) {
+                    "1"
+                } else {
+                    "0"
+                }
+                .to_string(),
                 runs: c.runs.unwrap_or(200).to_string(),
                 constructor_arguments: "".to_string(),
                 evm_version: "".to_string(),
                 library: "".to_string(),
                 license_type: "".to_string(),
                 proxy: if proxy.is_some() { "1" } else { "0" }.to_string(),
-                implementation: proxy.as_ref().map(|(_, impl_addr)| impl_addr.clone()).unwrap_or_default(),
+                implementation: proxy
+                    .as_ref()
+                    .map(|(_, impl_addr)| impl_addr.clone())
+                    .unwrap_or_default(),
                 swarm_source: "".to_string(),
             };
-            Ok(Json(serde_json::to_value(EtherscanResponse::ok(vec![result]))?))
+            Ok(Json(serde_json::to_value(EtherscanResponse::ok(vec![
+                result,
+            ]))?))
         }
         None => Ok(Json(serde_json::to_value(EtherscanResponse::error(
             "Contract source code not verified",
@@ -756,16 +817,17 @@ async fn get_tx_receipt_status(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let txhash = query.txhash.as_ref()
+    let txhash = query
+        .txhash
+        .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("txhash required".to_string()))?;
     let txhash = normalize_hash(txhash);
 
-    let status: Option<(bool,)> = sqlx::query_as(
-        "SELECT status FROM transactions WHERE LOWER(hash) = LOWER($1)",
-    )
-    .bind(&txhash)
-    .fetch_optional(&state.pool)
-    .await?;
+    let status: Option<(bool,)> =
+        sqlx::query_as("SELECT status FROM transactions WHERE LOWER(hash) = LOWER($1)")
+            .bind(&txhash)
+            .fetch_optional(&state.pool)
+            .await?;
 
     match status {
         Some((success,)) => Ok(Json(serde_json::to_value(EtherscanResponse::ok(
@@ -786,29 +848,33 @@ async fn get_block_reward(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let blockno = query.blockno.as_ref()
+    let blockno = query
+        .blockno
+        .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("blockno required".to_string()))?;
-    let block_number: i64 = blockno.parse()
+    let block_number: i64 = blockno
+        .parse()
         .map_err(|_| AtlasError::InvalidInput("Invalid block number".to_string()))?;
 
-    let block: Option<(i64, String, i64)> = sqlx::query_as(
-        "SELECT number, hash, timestamp FROM blocks WHERE number = $1",
-    )
-    .bind(block_number)
-    .fetch_optional(&state.pool)
-    .await?;
+    let block: Option<(i64, String, i64)> =
+        sqlx::query_as("SELECT number, hash, timestamp FROM blocks WHERE number = $1")
+            .bind(block_number)
+            .fetch_optional(&state.pool)
+            .await?;
 
     match block {
         Some((number, _hash, timestamp)) => {
             // L2s typically don't have block rewards in the traditional sense
-            Ok(Json(serde_json::to_value(EtherscanResponse::ok(serde_json::json!({
-                "blockNumber": number.to_string(),
-                "timeStamp": timestamp.to_string(),
-                "blockMiner": "", // L2 doesn't have miners
-                "blockReward": "0",
-                "uncles": [],
-                "uncleInclusionReward": "0"
-            })))?))
+            Ok(Json(serde_json::to_value(EtherscanResponse::ok(
+                serde_json::json!({
+                    "blockNumber": number.to_string(),
+                    "timeStamp": timestamp.to_string(),
+                    "blockMiner": "", // L2 doesn't have miners
+                    "blockReward": "0",
+                    "uncles": [],
+                    "uncleInclusionReward": "0"
+                }),
+            ))?))
         }
         None => Ok(Json(serde_json::to_value(EtherscanResponse::error(
             "Block not found",

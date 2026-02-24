@@ -41,8 +41,8 @@ pub(crate) struct BlockBatch {
     pub(crate) t_block_indices: Vec<i32>,
     pub(crate) t_froms: Vec<String>,
     pub(crate) t_tos: Vec<Option<String>>,
-    pub(crate) t_values: Vec<String>,         // BigDecimal as string → cast to numeric in SQL
-    pub(crate) t_gas_prices: Vec<String>,     // BigDecimal as string → cast to numeric in SQL
+    pub(crate) t_values: Vec<String>, // BigDecimal as string → cast to numeric in SQL
+    pub(crate) t_gas_prices: Vec<String>, // BigDecimal as string → cast to numeric in SQL
     pub(crate) t_gas_used: Vec<i64>,
     pub(crate) t_input_data: Vec<Vec<u8>>,
     pub(crate) t_statuses: Vec<bool>,
@@ -75,7 +75,7 @@ pub(crate) struct BlockBatch {
     pub(crate) nt_tx_hashes: Vec<String>,
     pub(crate) nt_log_indices: Vec<i32>,
     pub(crate) nt_contracts: Vec<String>,
-    pub(crate) nt_token_ids: Vec<String>,  // BigDecimal as string
+    pub(crate) nt_token_ids: Vec<String>, // BigDecimal as string
     pub(crate) nt_froms: Vec<String>,
     pub(crate) nt_tos: Vec<String>,
     pub(crate) nt_block_numbers: Vec<i64>,
@@ -94,7 +94,7 @@ pub(crate) struct BlockBatch {
     pub(crate) et_contracts: Vec<String>,
     pub(crate) et_froms: Vec<String>,
     pub(crate) et_tos: Vec<String>,
-    pub(crate) et_values: Vec<String>,   // BigDecimal as string
+    pub(crate) et_values: Vec<String>, // BigDecimal as string
     pub(crate) et_block_numbers: Vec<i64>,
     pub(crate) et_timestamps: Vec<i64>,
 
@@ -118,7 +118,13 @@ impl BlockBatch {
 
     /// Upsert an address into the in-memory deduplication map.
     /// tx_count_delta is added to whatever was already accumulated for this address.
-    pub(crate) fn touch_addr(&mut self, address: String, block_num: i64, is_contract: bool, tx_count_delta: i64) {
+    pub(crate) fn touch_addr(
+        &mut self,
+        address: String,
+        block_num: i64,
+        is_contract: bool,
+        tx_count_delta: i64,
+    ) {
         let entry = self.addr_map.entry(address).or_insert(AddrState {
             first_seen_block: block_num,
             is_contract: false,
@@ -131,13 +137,21 @@ impl BlockBatch {
 
     /// Add a balance delta for (address, contract).
     /// Multiple transfers in the same batch are aggregated into one row.
-    pub(crate) fn apply_balance_delta(&mut self, address: String, contract: String, delta: BigDecimal, block: i64) {
-        let entry = self.balance_map.entry((address, contract)).or_insert(BalanceDelta {
-            delta: BigDecimal::from(0),
-            last_block: block,
-        });
+    pub(crate) fn apply_balance_delta(
+        &mut self,
+        address: String,
+        contract: String,
+        delta: BigDecimal,
+        block: i64,
+    ) {
+        let entry = self
+            .balance_map
+            .entry((address, contract))
+            .or_insert(BalanceDelta {
+                delta: BigDecimal::from(0),
+                last_block: block,
+            });
         entry.delta += delta;
         entry.last_block = entry.last_block.max(block);
     }
 }
-

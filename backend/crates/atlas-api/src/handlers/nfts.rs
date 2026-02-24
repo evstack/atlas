@@ -1,14 +1,14 @@
+use alloy::primitives::{Address, U256};
 use axum::{
     extract::{Path, Query, State},
     Json,
 };
-use std::sync::Arc;
-use alloy::primitives::{Address, U256};
 use serde::Deserialize;
+use std::sync::Arc;
 
-use atlas_common::{AtlasError, NftContract, NftToken, NftTransfer, Pagination, PaginatedResponse};
-use crate::AppState;
 use crate::error::ApiResult;
+use crate::AppState;
+use atlas_common::{AtlasError, NftContract, NftToken, NftTransfer, PaginatedResponse, Pagination};
 
 /// NFT metadata JSON structure (ERC-721 standard)
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -32,14 +32,19 @@ pub async fn list_collections(
         "SELECT address, name, symbol, total_supply, first_seen_block
          FROM nft_contracts
          ORDER BY first_seen_block DESC
-         LIMIT $1 OFFSET $2"
+         LIMIT $1 OFFSET $2",
     )
     .bind(pagination.limit())
     .bind(pagination.offset())
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(Json(PaginatedResponse::new(collections, pagination.page, pagination.limit, total.0)))
+    Ok(Json(PaginatedResponse::new(
+        collections,
+        pagination.page,
+        pagination.limit,
+        total.0,
+    )))
 }
 
 pub async fn get_collection(
@@ -51,7 +56,7 @@ pub async fn get_collection(
     let mut collection: NftContract = sqlx::query_as(
         "SELECT address, name, symbol, total_supply, first_seen_block
          FROM nft_contracts
-         WHERE LOWER(address) = LOWER($1)"
+         WHERE LOWER(address) = LOWER($1)",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -63,7 +68,7 @@ pub async fn get_collection(
         if let Ok((name, symbol)) = fetch_collection_metadata(&state.rpc_url, &address).await {
             // Update the database
             sqlx::query(
-                "UPDATE nft_contracts SET name = $1, symbol = $2 WHERE LOWER(address) = LOWER($3)"
+                "UPDATE nft_contracts SET name = $1, symbol = $2 WHERE LOWER(address) = LOWER($3)",
             )
             .bind(&name)
             .bind(&symbol)
@@ -80,14 +85,19 @@ pub async fn get_collection(
 }
 
 /// Fetch NFT collection name and symbol from contract
-async fn fetch_collection_metadata(rpc_url: &str, contract_address: &str) -> Result<(Option<String>, Option<String>), AtlasError> {
+async fn fetch_collection_metadata(
+    rpc_url: &str,
+    contract_address: &str,
+) -> Result<(Option<String>, Option<String>), AtlasError> {
     use alloy::providers::{Provider, ProviderBuilder};
     use alloy::rpc::types::TransactionRequest;
 
-    let contract: Address = contract_address.parse()
+    let contract: Address = contract_address
+        .parse()
         .map_err(|_| AtlasError::InvalidInput("Invalid contract address".to_string()))?;
 
-    let url: reqwest::Url = rpc_url.parse()
+    let url: reqwest::Url = rpc_url
+        .parse()
         .map_err(|_| AtlasError::InvalidInput("Invalid RPC URL".to_string()))?;
     let provider = ProviderBuilder::new().on_http(url);
 
@@ -96,7 +106,11 @@ async fn fetch_collection_metadata(rpc_url: &str, contract_address: &str) -> Res
         let tx = TransactionRequest::default()
             .to(contract)
             .input(alloy::primitives::Bytes::from(vec![0x06, 0xfd, 0xde, 0x03]).into());
-        provider.call(&tx).await.ok().and_then(|r| decode_abi_string(&r))
+        provider
+            .call(&tx)
+            .await
+            .ok()
+            .and_then(|r| decode_abi_string(&r))
     };
 
     // symbol() selector = 0x95d89b41
@@ -104,7 +118,11 @@ async fn fetch_collection_metadata(rpc_url: &str, contract_address: &str) -> Res
         let tx = TransactionRequest::default()
             .to(contract)
             .input(alloy::primitives::Bytes::from(vec![0x95, 0xd8, 0x9b, 0x41]).into());
-        provider.call(&tx).await.ok().and_then(|r| decode_abi_string(&r))
+        provider
+            .call(&tx)
+            .await
+            .ok()
+            .and_then(|r| decode_abi_string(&r))
     };
 
     Ok((name, symbol))
@@ -117,12 +135,11 @@ pub async fn list_collection_tokens(
 ) -> ApiResult<Json<PaginatedResponse<NftToken>>> {
     let address = normalize_address(&address);
 
-    let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM nft_tokens WHERE LOWER(contract_address) = LOWER($1)"
-    )
-    .bind(&address)
-    .fetch_one(&state.pool)
-    .await?;
+    let total: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM nft_tokens WHERE LOWER(contract_address) = LOWER($1)")
+            .bind(&address)
+            .fetch_one(&state.pool)
+            .await?;
 
     let tokens: Vec<NftToken> = sqlx::query_as(
         "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
@@ -137,7 +154,12 @@ pub async fn list_collection_tokens(
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(Json(PaginatedResponse::new(tokens, pagination.page, pagination.limit, total.0)))
+    Ok(Json(PaginatedResponse::new(
+        tokens,
+        pagination.page,
+        pagination.limit,
+        total.0,
+    )))
 }
 
 pub async fn get_token(
@@ -174,7 +196,8 @@ async fn fetch_and_store_metadata(
     token_id: &str,
 ) -> Result<NftToken, AtlasError> {
     // Parse contract address and token ID
-    let contract_addr: Address = contract_address.parse()
+    let contract_addr: Address = contract_address
+        .parse()
         .map_err(|_| AtlasError::InvalidInput("Invalid contract address".to_string()))?;
     let token_id_u256 = U256::from_str_radix(token_id, 10)
         .map_err(|_| AtlasError::InvalidInput("Invalid token ID".to_string()))?;
@@ -188,7 +211,11 @@ async fn fetch_and_store_metadata(
             Ok(metadata) => {
                 let image = metadata.image.as_ref().map(|img| resolve_ipfs_url(img));
                 let name = metadata.name.clone();
-                (Some(serde_json::to_value(&metadata).unwrap_or_default()), image, name)
+                (
+                    Some(serde_json::to_value(&metadata).unwrap_or_default()),
+                    image,
+                    name,
+                )
             }
             Err(_) => (None, None, None),
         }
@@ -204,7 +231,7 @@ async fn fetch_and_store_metadata(
             metadata = $2,
             image_url = $3,
             name = $4
-         WHERE LOWER(contract_address) = LOWER($5) AND token_id = $6::numeric"
+         WHERE LOWER(contract_address) = LOWER($5) AND token_id = $6::numeric",
     )
     .bind(&token_uri)
     .bind(&metadata_json)
@@ -283,12 +310,14 @@ async fn fetch_metadata_from_uri(uri: &str) -> Result<NftMetadata, AtlasError> {
         .build()
         .map_err(|e| AtlasError::MetadataFetch(e.to_string()))?;
 
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .send()
         .await
         .map_err(|e| AtlasError::MetadataFetch(format!("Failed to fetch metadata: {}", e)))?;
 
-    let metadata: NftMetadata = response.json()
+    let metadata: NftMetadata = response
+        .json()
         .await
         .map_err(|e| AtlasError::MetadataFetch(format!("Failed to parse metadata: {}", e)))?;
 
@@ -317,7 +346,7 @@ pub async fn get_collection_transfers(
     let address = normalize_address(&address);
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM nft_transfers WHERE LOWER(contract_address) = LOWER($1)"
+        "SELECT COUNT(*) FROM nft_transfers WHERE LOWER(contract_address) = LOWER($1)",
     )
     .bind(&address)
     .fetch_one(&state.pool)
@@ -336,7 +365,12 @@ pub async fn get_collection_transfers(
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(Json(PaginatedResponse::new(transfers, pagination.page, pagination.limit, total.0)))
+    Ok(Json(PaginatedResponse::new(
+        transfers,
+        pagination.page,
+        pagination.limit,
+        total.0,
+    )))
 }
 
 /// GET /api/nfts/collections/{address}/tokens/{token_id}/transfers - Get transfers for a specific token
@@ -369,7 +403,12 @@ pub async fn get_token_transfers(
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(Json(PaginatedResponse::new(transfers, pagination.page, pagination.limit, total.0)))
+    Ok(Json(PaginatedResponse::new(
+        transfers,
+        pagination.page,
+        pagination.limit,
+        total.0,
+    )))
 }
 
 fn normalize_address(address: &str) -> String {
