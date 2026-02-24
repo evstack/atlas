@@ -327,6 +327,7 @@ async fn fetch_metadata_from_uri(uri: &str) -> Result<NftMetadata, AtlasError> {
 /// Convert IPFS URLs to HTTP gateway URLs
 fn resolve_ipfs_url(uri: &str) -> String {
     if let Some(stripped) = uri.strip_prefix("ipfs://") {
+        let stripped = stripped.strip_prefix("ipfs/").unwrap_or(stripped);
         // Convert ipfs://QmXxx... to https://ipfs.io/ipfs/QmXxx...
         format!("https://ipfs.io/ipfs/{}", stripped)
     } else if let Some(stripped) = uri.strip_prefix("ar://") {

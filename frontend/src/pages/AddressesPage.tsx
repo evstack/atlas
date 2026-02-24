@@ -49,18 +49,20 @@ export default function AddressesPage() {
       if (highlightRafRef.current !== null) {
         window.cancelAnimationFrame(highlightRafRef.current);
       }
-      highlightRafRef.current = window.requestAnimationFrame(() => {
-        setHighlight((prev) => new Set([...prev, ...newOnes]));
-        highlightRafRef.current = null;
-      });
       for (const h of newOnes) {
         seenRef.current.add(h);
-        const t = window.setTimeout(() => {
-          setHighlight((prev) => { const n = new Set(prev); n.delete(h); return n; });
-          timersRef.current.delete(h);
-        }, 900);
-        timersRef.current.set(h, t);
       }
+      highlightRafRef.current = window.requestAnimationFrame(() => {
+        setHighlight((prev) => new Set([...prev, ...newOnes]));
+        for (const h of newOnes) {
+          const t = window.setTimeout(() => {
+            setHighlight((prev) => { const n = new Set(prev); n.delete(h); return n; });
+            timersRef.current.delete(h);
+          }, 900);
+          timersRef.current.set(h, t);
+        }
+        highlightRafRef.current = null;
+      });
     }
   }, [addresses]);
 

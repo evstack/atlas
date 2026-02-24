@@ -14,6 +14,9 @@ pub enum AtlasError {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
     #[error("Metadata fetch error: {0}")]
     MetadataFetch(String),
 
@@ -38,6 +41,7 @@ impl AtlasError {
         match self {
             AtlasError::NotFound(_) => 404,
             AtlasError::InvalidInput(_) => 400,
+            AtlasError::Unauthorized(_) => 401,
             AtlasError::Database(_) | AtlasError::Internal(_) => 500,
             AtlasError::Rpc(_) | AtlasError::MetadataFetch(_) => 502,
             AtlasError::Config(_) => 500,

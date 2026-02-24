@@ -6,7 +6,7 @@ A lightweight Ethereum L2 blockchain explorer.
 
 ### Prerequisites
 
-- `just`
+- `just` 1.0+
 - Docker and Docker Compose
 - Bun 1.0+
 - Rust 1.75+
@@ -28,10 +28,13 @@ docker-compose up -d postgres
 just frontend-install
 ```
 
-Start backend services (run in separate terminals):
+Start backend services (each in its own terminal):
 
 ```bash
 just backend-indexer
+```
+
+```bash
 just backend-api
 ```
 

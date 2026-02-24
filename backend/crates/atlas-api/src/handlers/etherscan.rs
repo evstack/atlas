@@ -69,6 +69,7 @@ pub struct EtherscanQuery {
     /// Sort order (asc/desc)
     pub sort: Option<String>,
     /// API key (optional, for rate limiting)
+    #[serde(rename = "apikey")]
     pub _apikey: Option<String>,
 }
 
@@ -509,7 +510,7 @@ async fn get_tx_list(
     let result: Vec<EtherscanTransaction> = transactions
         .into_iter()
         .map(|tx| {
-            let confirmations = current_block.0 - tx.block_number;
+            let confirmations = current_block.0.saturating_sub(tx.block_number);
             EtherscanTransaction {
                 block_number: tx.block_number.to_string(),
                 time_stamp: tx.timestamp.to_string(),
@@ -626,7 +627,7 @@ async fn get_token_tx_list(
     let result: Vec<EtherscanTokenTransfer> = transfers
         .into_iter()
         .map(|transfer| {
-            let confirmations = current_block.0 - transfer.block_number;
+            let confirmations = current_block.0.saturating_sub(transfer.block_number);
             EtherscanTokenTransfer {
                 block_number: transfer.block_number.to_string(),
                 time_stamp: transfer.timestamp.to_string(),

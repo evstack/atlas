@@ -33,4 +33,4 @@ backend-indexer:
   cd backend && cargo run --bin atlas-indexer
 
 # Combined checks
-ci: backend-fmt backend-clippy backend-test frontend-lint frontend-build
+ci: backend-fmt backend-clippy backend-test frontend-install frontend-lint frontend-build

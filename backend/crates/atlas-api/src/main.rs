@@ -16,6 +16,7 @@ pub struct AppState {
     pub pool: PgPool,
     pub rpc_url: String,
     pub solc_path: String,
+    pub admin_api_key: Option<String>,
 }
 
 #[tokio::main]
@@ -36,6 +37,7 @@ async fn main() -> Result<()> {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set");
     let solc_path = std::env::var("SOLC_PATH").unwrap_or_else(|_| "solc".to_string());
+    let admin_api_key = std::env::var("ADMIN_API_KEY").ok();
     let host = std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = std::env::var("API_PORT")
         .unwrap_or_else(|_| "3000".to_string())
@@ -53,6 +55,7 @@ async fn main() -> Result<()> {
         pool,
         rpc_url,
         solc_path,
+        admin_api_key,
     });
 
     // Build router

@@ -4,12 +4,14 @@
 
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     Json,
 };
 use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::error::ApiResult;
+use crate::handlers::auth::require_admin;
 use crate::AppState;
 use atlas_common::{AddressLabel, AddressLabelInput, AtlasError, PaginatedResponse, Pagination};
 
@@ -144,8 +146,11 @@ pub struct TagCount {
 /// POST /api/labels - Create or update a label
 pub async fn upsert_label(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(input): Json<AddressLabelInput>,
 ) -> ApiResult<Json<AddressLabel>> {
+    require_admin(&headers, &state)?;
+
     let address = normalize_address(&input.address);
 
     let label: AddressLabel = sqlx::query_as(
@@ -169,8 +174,11 @@ pub async fn upsert_label(
 /// DELETE /api/labels/:address - Delete a label
 pub async fn delete_label(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(address): Path<String>,
 ) -> ApiResult<Json<()>> {
+    require_admin(&headers, &state)?;
+
     let address = normalize_address(&address);
 
     let result = sqlx::query("DELETE FROM address_labels WHERE LOWER(address) = LOWER($1)")
@@ -194,8 +202,11 @@ pub struct BulkLabelsInput {
 /// POST /api/labels/bulk - Bulk import labels
 pub async fn bulk_import_labels(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(input): Json<BulkLabelsInput>,
 ) -> ApiResult<Json<BulkImportResult>> {
+    require_admin(&headers, &state)?;
+
     let mut imported = 0;
     let mut errors = Vec::new();
 

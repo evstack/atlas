@@ -5,11 +5,13 @@
 use alloy::providers::Provider;
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     Json,
 };
 use std::sync::Arc;
 
 use crate::error::ApiResult;
+use crate::handlers::auth::require_admin;
 use crate::AppState;
 use atlas_common::{AtlasError, ContractAbi, ProxyContract};
 
@@ -238,8 +240,11 @@ pub async fn list_proxies(
 /// POST /api/contracts/:address/detect-proxy - Trigger proxy detection for a contract
 pub async fn detect_proxy(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(address): Path<String>,
 ) -> ApiResult<Json<ProxyDetectionResult>> {
+    require_admin(&headers, &state)?;
+
     let address = normalize_address(&address);
 
     // Get RPC provider

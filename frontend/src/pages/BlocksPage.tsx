@@ -98,22 +98,24 @@ export default function BlocksPage() {
       if (highlightRafRef.current !== null) {
         window.cancelAnimationFrame(highlightRafRef.current);
       }
-      highlightRafRef.current = window.requestAnimationFrame(() => {
-        setHighlightBlocks((prev) => new Set([...prev, ...newlyAdded]));
-        highlightRafRef.current = null;
-      });
       for (const n of newlyAdded) {
         seenBlocksRef.current.add(n);
-        const t = window.setTimeout(() => {
-          setHighlightBlocks((prev) => {
-            const next = new Set(prev);
-            next.delete(n);
-            return next;
-          });
-          timeoutsRef.current.delete(n);
-        }, 1600);
-        timeoutsRef.current.set(n, t);
       }
+      highlightRafRef.current = window.requestAnimationFrame(() => {
+        setHighlightBlocks((prev) => new Set([...prev, ...newlyAdded]));
+        for (const n of newlyAdded) {
+          const t = window.setTimeout(() => {
+            setHighlightBlocks((prev) => {
+              const next = new Set(prev);
+              next.delete(n);
+              return next;
+            });
+            timeoutsRef.current.delete(n);
+          }, 1600);
+          timeoutsRef.current.set(n, t);
+        }
+        highlightRafRef.current = null;
+      });
     }
   }, [blocks]);
 

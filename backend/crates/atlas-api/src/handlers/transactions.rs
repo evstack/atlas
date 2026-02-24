@@ -16,7 +16,7 @@ pub async fn list_transactions(
     Query(pagination): Query<Pagination>,
 ) -> ApiResult<Json<PaginatedResponse<Transaction>>> {
     // Use optimized count (approximate for large tables, exact for small)
-    let total = get_table_count(&state.pool, "transactions").await?;
+    let total = get_table_count(&state.pool).await?;
 
     let transactions: Vec<Transaction> = sqlx::query_as(
         "SELECT hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used, input_data, status, contract_created, timestamp
@@ -41,12 +41,7 @@ pub async fn get_transaction(
     State(state): State<Arc<AppState>>,
     Path(hash): Path<String>,
 ) -> ApiResult<Json<Transaction>> {
-    // Normalize hash format
-    let hash = if hash.starts_with("0x") {
-        hash
-    } else {
-        format!("0x{}", hash)
-    };
+    let hash = normalize_hash(&hash);
 
     let transaction: Transaction = sqlx::query_as(
         "SELECT hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used, input_data, status, contract_created, timestamp

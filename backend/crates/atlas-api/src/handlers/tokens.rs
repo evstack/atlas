@@ -106,11 +106,15 @@ pub async fn get_token_holders(
     let address = normalize_address(&address);
 
     // Verify token exists
-    let _: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM erc20_contracts WHERE address = $1")
-        .bind(&address)
-        .fetch_one(&state.pool)
-        .await
-        .map_err(|_| AtlasError::NotFound(format!("Token {} not found", address)))?;
+    let exists: Option<(String,)> = sqlx::query_as(
+        "SELECT address FROM erc20_contracts WHERE LOWER(address) = LOWER($1) LIMIT 1",
+    )
+    .bind(&address)
+    .fetch_optional(&state.pool)
+    .await?;
+    if exists.is_none() {
+        return Err(AtlasError::NotFound(format!("Token {} not found", address)).into());
+    }
 
     let total: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM erc20_balances WHERE contract_address = $1 AND balance > 0",
