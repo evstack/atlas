@@ -54,5 +54,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  atlas-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:8080"
+    depends_on:
+      - atlas-api
+    restart: unless-stopped
+
 volumes:
   pgdata:
