@@ -37,7 +37,6 @@ struct SolcContract {
 
 #[derive(Debug, Deserialize)]
 struct SolcEvm {
-    bytecode: Option<SolcBytecode>,
     #[serde(rename = "deployedBytecode")]
     deployed_bytecode: Option<SolcBytecode>,
 }

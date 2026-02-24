@@ -326,12 +326,12 @@ async fn fetch_metadata_from_uri(uri: &str) -> Result<NftMetadata, AtlasError> {
 
 /// Convert IPFS URLs to HTTP gateway URLs
 fn resolve_ipfs_url(uri: &str) -> String {
-    if uri.starts_with("ipfs://") {
+    if let Some(stripped) = uri.strip_prefix("ipfs://") {
         // Convert ipfs://QmXxx... to https://ipfs.io/ipfs/QmXxx...
-        format!("https://ipfs.io/ipfs/{}", &uri[7..])
-    } else if uri.starts_with("ar://") {
+        format!("https://ipfs.io/ipfs/{}", stripped)
+    } else if let Some(stripped) = uri.strip_prefix("ar://") {
         // Arweave URLs
-        format!("https://arweave.net/{}", &uri[5..])
+        format!("https://arweave.net/{}", stripped)
     } else {
         uri.to_string()
     }

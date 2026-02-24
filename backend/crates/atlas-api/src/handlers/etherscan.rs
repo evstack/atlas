@@ -57,9 +57,11 @@ pub struct EtherscanQuery {
     /// Block number
     pub blockno: Option<String>,
     /// Start block for range queries
-    pub startblock: Option<i64>,
+    #[serde(rename = "startblock")]
+    pub _startblock: Option<i64>,
     /// End block for range queries
-    pub endblock: Option<i64>,
+    #[serde(rename = "endblock")]
+    pub _endblock: Option<i64>,
     /// Page number
     pub page: Option<u32>,
     /// Results per page
@@ -67,7 +69,7 @@ pub struct EtherscanQuery {
     /// Sort order (asc/desc)
     pub sort: Option<String>,
     /// API key (optional, for rate limiting)
-    pub apikey: Option<String>,
+    pub _apikey: Option<String>,
 }
 
 /// Etherscan-compatible contract verification request (form data)
@@ -103,8 +105,8 @@ pub struct EtherscanVerifyRequest {
     #[serde(rename = "licenseType", default)]
     pub license_type: String,
     /// API key
-    #[serde(default)]
-    pub apikey: String,
+    #[serde(default, rename = "apikey")]
+    pub _apikey: String,
 }
 
 fn default_runs_str() -> String {

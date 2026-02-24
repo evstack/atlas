@@ -220,8 +220,7 @@ impl MetadataFetcher {
                     &client,
                     &provider,
                     &ipfs_gateway,
-                    &contract_address,
-                    &token_id,
+                    (&contract_address, &token_id),
                     token_uri.as_deref(),
                     retry_attempts,
                 )
@@ -337,11 +336,12 @@ async fn fetch_and_store_token_metadata(
     client: &reqwest::Client,
     provider: &HttpProvider,
     ipfs_gateway: &str,
-    contract_address: &str,
-    token_id: &str,
+    token_key: (&str, &str),
     token_uri: Option<&str>,
     retry_attempts: u32,
 ) -> Result<()> {
+    let (contract_address, token_id) = token_key;
+
     // If no token_uri, fetch it from the contract
     let uri = match token_uri {
         Some(uri) if !uri.is_empty() => uri.to_string(),
@@ -525,10 +525,10 @@ async fn fetch_token_uri(
 
 /// Resolve IPFS, Arweave, and other URI schemes to HTTP URLs
 fn resolve_uri(uri: &str, ipfs_gateway: &str) -> String {
-    if uri.starts_with("ipfs://") {
-        format!("{}{}", ipfs_gateway, &uri[7..])
-    } else if uri.starts_with("ar://") {
-        format!("https://arweave.net/{}", &uri[5..])
+    if let Some(stripped) = uri.strip_prefix("ipfs://") {
+        format!("{}{}", ipfs_gateway, stripped)
+    } else if let Some(stripped) = uri.strip_prefix("ar://") {
+        format!("https://arweave.net/{}", stripped)
     } else if uri.starts_with("data:") {
         // Data URIs are already complete
         uri.to_string()

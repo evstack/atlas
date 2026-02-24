@@ -30,7 +30,7 @@ pub(crate) type SharedRateLimiter = Arc<
 
 /// Result of fetching a block from RPC
 pub(crate) enum FetchResult {
-    Success(FetchedBlock),
+    Success(Box<FetchedBlock>),
     Error { block_num: u64, error: String },
 }
 
@@ -215,11 +215,11 @@ pub(crate) async fn fetch_blocks_batch(
         match (block_result, receipts_result) {
             (Ok(block), Ok(receipts)) => {
                 tracing::debug!("Block {} complete ({} receipts)", block_num, receipts.len());
-                results.push(FetchResult::Success(FetchedBlock {
+                results.push(FetchResult::Success(Box::new(FetchedBlock {
                     number: block_num,
                     block,
                     receipts,
-                }));
+                })));
             }
             (Err(e), _) => {
                 tracing::warn!("Failed to fetch block {}: {}", block_num, e);

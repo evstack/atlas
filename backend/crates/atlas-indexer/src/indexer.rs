@@ -141,30 +141,21 @@ impl Indexer {
 
             tokio::spawn(async move {
                 tracing::debug!("Worker {} started", worker_id);
-                loop {
-                    // Wait for work (blocks here until work arrives)
-                    match work_rx.recv().await {
-                        Ok(work_item) => {
-                            // Fetch batch of blocks using JSON-RPC batching
-                            let results = fetch_blocks_batch(
-                                &client,
-                                &url,
-                                work_item.start_block,
-                                work_item.count,
-                                &limiter,
-                            )
-                            .await;
+                while let Ok(work_item) = work_rx.recv().await {
+                    // Fetch batch of blocks using JSON-RPC batching
+                    let results = fetch_blocks_batch(
+                        &client,
+                        &url,
+                        work_item.start_block,
+                        work_item.count,
+                        &limiter,
+                    )
+                    .await;
 
-                            // Send all results back
-                            for result in results {
-                                if result_tx.send(result).await.is_err() {
-                                    return; // Channel closed
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            // Channel closed, exit worker
-                            break;
+                    // Send all results back
+                    for result in results {
+                        if result_tx.send(result).await.is_err() {
+                            return; // Channel closed
                         }
                     }
                 }
@@ -245,7 +236,7 @@ impl Indexer {
             while blocks_received < batch_size {
                 match result_rx.recv().await {
                     Some(FetchResult::Success(fetched)) => {
-                        buffer.insert(fetched.number, fetched);
+                        buffer.insert(fetched.number, *fetched);
                         blocks_received += 1;
 
                         // Collect consecutive blocks in order (sync, no await)
@@ -325,7 +316,7 @@ impl Indexer {
                                     &mut mini_batch,
                                     &known_erc20,
                                     &known_nft,
-                                    fetched,
+                                    *fetched,
                                 );
                                 let new_erc20 = std::mem::take(&mut mini_batch.new_erc20);
                                 let new_nft = std::mem::take(&mut mini_batch.new_nft);

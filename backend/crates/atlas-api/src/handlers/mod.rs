@@ -56,10 +56,3 @@ pub async fn get_table_count(pool: &PgPool, table_name: &str) -> Result<i64, sql
         Ok(exact.0)
     }
 }
-
-/// Get count with a WHERE clause efficiently.
-/// Uses exact count since filtered queries are usually fast with proper indexes.
-pub async fn get_filtered_count(pool: &PgPool, query: &str) -> Result<i64, sqlx::Error> {
-    let count: (i64,) = sqlx::query_as(query).fetch_one(pool).await?;
-    Ok(count.0)
-}
