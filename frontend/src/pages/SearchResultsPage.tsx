@@ -21,8 +21,15 @@ export default function SearchResultsPage() {
       try {
         const res = await apiSearch(q);
         if (!cancelled) setResults(res.results || []);
-      } catch (e: any) {
-        if (!cancelled) setError(e?.error || e?.message || 'Failed to search');
+      } catch (e: unknown) {
+        if (!cancelled) {
+          const msg = typeof e === 'object' && e !== null && 'error' in e && typeof (e as { error?: unknown }).error === 'string'
+            ? (e as { error: string }).error
+            : e instanceof Error
+              ? e.message
+              : 'Failed to search';
+          setError(msg);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -31,11 +38,11 @@ export default function SearchResultsPage() {
   }, [q]);
 
   const groups = useMemo(() => ({
-    blocks: results.filter(r => r.type === 'block') as any[],
-    transactions: results.filter(r => r.type === 'transaction') as any[],
-    addresses: results.filter(r => r.type === 'address') as any[],
-    nfts: results.filter(r => r.type === 'nft') as any[],
-    nftCollections: results.filter(r => r.type === 'nft_collection') as any[],
+    blocks: results.filter((r): r is Extract<AnySearchResult, { type: 'block' }> => r.type === 'block'),
+    transactions: results.filter((r): r is Extract<AnySearchResult, { type: 'transaction' }> => r.type === 'transaction'),
+    addresses: results.filter((r): r is Extract<AnySearchResult, { type: 'address' }> => r.type === 'address'),
+    nfts: results.filter((r): r is Extract<AnySearchResult, { type: 'nft' }> => r.type === 'nft'),
+    nftCollections: results.filter((r): r is Extract<AnySearchResult, { type: 'nft_collection' }> => r.type === 'nft_collection'),
   }), [results]);
 
   if (!q) {
@@ -64,7 +71,7 @@ export default function SearchResultsPage() {
             <table className="w-full">
               <thead><tr className="bg-dark-700"><th className="table-cell text-left table-header">Block</th><th className="table-cell text-left table-header">Hash</th><th className="table-cell text-left table-header">Txns</th></tr></thead>
               <tbody>
-                {groups.blocks.map((b: any) => (
+                {groups.blocks.map((b) => (
                   <tr key={b.hash} className="hover:bg-dark-700/50 transition-colors">
                     <td className="table-cell"><BlockLink blockNumber={b.number} /></td>
                     <td className="table-cell"><span className="hash text-gray-300 text-xs">{truncateHash(b.hash, 10, 8)}</span></td>
@@ -79,7 +86,7 @@ export default function SearchResultsPage() {
             <table className="w-full">
               <thead><tr className="bg-dark-700"><th className="table-cell text-left table-header">Tx Hash</th><th className="table-cell text-left table-header">Block</th><th className="table-cell text-left table-header">From</th><th className="table-cell text-left table-header">To</th></tr></thead>
               <tbody>
-                {groups.transactions.map((t: any) => (
+                {groups.transactions.map((t) => (
                   <tr key={t.hash} className="hover:bg-dark-700/50 transition-colors">
                     <td className="table-cell"><TxHashLink hash={t.hash} /></td>
                     <td className="table-cell"><BlockLink blockNumber={t.block_number} /></td>
@@ -93,7 +100,7 @@ export default function SearchResultsPage() {
 
           <Section title={`Addresses (${formatNumber(groups.addresses.length)})`}>
             <ul className="divide-y divide-dark-700">
-              {groups.addresses.map((a: any) => (
+              {groups.addresses.map((a) => (
                 <li key={a.address} className="py-2">
                   <AddressLink address={a.address} />
                   <span className="ml-2 text-xs text-gray-500">{a.is_contract ? 'Contract' : 'EOA'}</span>
@@ -104,7 +111,7 @@ export default function SearchResultsPage() {
 
           <Section title={`NFT Collections (${formatNumber(groups.nftCollections.length)})`}>
             <ul className="divide-y divide-dark-700">
-              {groups.nftCollections.map((c: any) => (
+              {groups.nftCollections.map((c) => (
                 <li key={c.address} className="py-2 flex items-center justify-between">
                   <Link to={`/nfts/${c.address}`} className="text-accent-primary hover:underline">
                     {c.name || 'NFT Collection'}
@@ -117,7 +124,7 @@ export default function SearchResultsPage() {
 
           <Section title={`NFTs (${formatNumber(groups.nfts.length)})`}>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {groups.nfts.map((n: any) => (
+              {groups.nfts.map((n) => (
                 <Link key={`${n.contract_address}-${n.token_id}`} to={`/nfts/${n.contract_address}/${n.token_id}`} className="block group">
                   <div className="aspect-square bg-dark-700 border border-dark-600 rounded-lg overflow-hidden flex items-center justify-center">
                     <span className="text-gray-500 text-xs">{n.name || 'NFT'}</span>

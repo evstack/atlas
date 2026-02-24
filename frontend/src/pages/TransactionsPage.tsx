@@ -39,7 +39,11 @@ export default function TransactionsPage() {
   }, [autoRefresh, refetch, loading]);
 
   useEffect(() => {
-    try { localStorage.setItem('txs:autoRefresh', String(autoRefresh)); } catch {}
+    try {
+      localStorage.setItem('txs:autoRefresh', String(autoRefresh));
+    } catch {
+      // Ignore storage write failures (e.g. private mode/quota).
+    }
   }, [autoRefresh]);
 
   // Age ticker

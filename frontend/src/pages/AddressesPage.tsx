@@ -13,16 +13,14 @@ export default function AddressesPage() {
     } catch { return true; }
   });
   const { addresses, pagination, refetch, loading } = useAddresses({ page, limit: 20 });
-  const [hasLoaded, setHasLoaded] = useState(false);
-  useEffect(() => {
-    if (!loading) setHasLoaded(true);
-  }, [loading]);
+  const hasLoaded = !loading || pagination !== null;
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'address' | 'address_type' | 'first_seen_block' | 'tx_count' | null; direction: 'asc' | 'desc'; }>({ key: 'tx_count', direction: 'desc' });
   const seenRef = useRef<Set<string>>(new Set());
   const initializedRef = useRef(false);
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
   const timersRef = useRef<Map<string, number>>(new Map());
+  const highlightRafRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -30,7 +28,13 @@ export default function AddressesPage() {
     return () => clearInterval(id);
   }, [autoRefresh, refetch, loading]);
 
-  useEffect(() => { try { localStorage.setItem('addresses:autoRefresh', String(autoRefresh)); } catch {} }, [autoRefresh]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('addresses:autoRefresh', String(autoRefresh));
+    } catch {
+      // Ignore storage write failures (e.g. private mode/quota).
+    }
+  }, [autoRefresh]);
 
   useEffect(() => {
     if (!addresses.length) return;
@@ -42,7 +46,13 @@ export default function AddressesPage() {
     const newOnes: string[] = [];
     for (const a of addresses) if (!seenRef.current.has(a.address)) newOnes.push(a.address);
     if (newOnes.length) {
-      setHighlight((prev) => new Set([...prev, ...newOnes]));
+      if (highlightRafRef.current !== null) {
+        window.cancelAnimationFrame(highlightRafRef.current);
+      }
+      highlightRafRef.current = window.requestAnimationFrame(() => {
+        setHighlight((prev) => new Set([...prev, ...newOnes]));
+        highlightRafRef.current = null;
+      });
       for (const h of newOnes) {
         seenRef.current.add(h);
         const t = window.setTimeout(() => {
@@ -54,7 +64,14 @@ export default function AddressesPage() {
     }
   }, [addresses]);
 
-  useEffect(() => () => { for (const [,t] of timersRef.current) clearTimeout(t); timersRef.current.clear(); }, []);
+  useEffect(() => () => {
+    if (highlightRafRef.current !== null) {
+      window.cancelAnimationFrame(highlightRafRef.current);
+      highlightRafRef.current = null;
+    }
+    for (const [, t] of timersRef.current) clearTimeout(t);
+    timersRef.current.clear();
+  }, []);
 
   const handleSort = (key: 'address' | 'address_type' | 'first_seen_block' | 'tx_count') => {
     setSort((prev) => prev.key === key ? { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' } : { key, direction: key === 'tx_count' || key === 'first_seen_block' ? 'desc' : 'asc' });
@@ -183,7 +200,7 @@ export default function AddressesPage() {
                     </div>
                   </td>
                   <td className="table-cell text-xs text-gray-300">
-                    <ContractTypeBadge type={(addr.address_type || 'eoa') as any} />
+                    <ContractTypeBadge type={addr.address_type || 'eoa'} />
                   </td>
                   <td className="table-cell text-xs text-gray-300">
                     {formatNumber(addr.first_seen_block)}

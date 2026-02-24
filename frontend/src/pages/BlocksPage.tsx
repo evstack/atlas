@@ -15,16 +15,14 @@ export default function BlocksPage() {
     }
   });
   const { blocks, pagination, refetch, loading } = useBlocks({ page, limit: 20 });
-  const [hasLoaded, setHasLoaded] = useState(false);
-  useEffect(() => {
-    if (!loading) setHasLoaded(true);
-  }, [loading]);
+  const hasLoaded = !loading || pagination !== null;
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
   const seenBlocksRef = useRef<Set<number>>(new Set());
   const initializedRef = useRef(false);
   const [highlightBlocks, setHighlightBlocks] = useState<Set<number>>(new Set());
   const timeoutsRef = useRef<Map<number, number>>(new Map());
+  const highlightRafRef = useRef<number | null>(null);
   const [tick, setTick] = useState(0);
 
   const handleSort = (key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used') => {
@@ -71,7 +69,9 @@ export default function BlocksPage() {
   useEffect(() => {
     try {
       localStorage.setItem('blocks:autoRefresh', String(autoRefresh));
-    } catch {}
+    } catch {
+      // Ignore storage write failures (e.g. private mode/quota).
+    }
   }, [autoRefresh]);
 
   // Detect newly seen blocks and flash highlight
@@ -95,7 +95,13 @@ export default function BlocksPage() {
       }
     }
     if (newlyAdded.length) {
-      setHighlightBlocks((prev) => new Set([...prev, ...newlyAdded]));
+      if (highlightRafRef.current !== null) {
+        window.cancelAnimationFrame(highlightRafRef.current);
+      }
+      highlightRafRef.current = window.requestAnimationFrame(() => {
+        setHighlightBlocks((prev) => new Set([...prev, ...newlyAdded]));
+        highlightRafRef.current = null;
+      });
       for (const n of newlyAdded) {
         seenBlocksRef.current.add(n);
         const t = window.setTimeout(() => {
@@ -113,9 +119,14 @@ export default function BlocksPage() {
 
   // Cleanup on unmount
   useEffect(() => {
+    const activeTimeouts = timeoutsRef.current;
     return () => {
-      for (const [, t] of timeoutsRef.current) clearTimeout(t);
-      timeoutsRef.current.clear();
+      if (highlightRafRef.current !== null) {
+        window.cancelAnimationFrame(highlightRafRef.current);
+        highlightRafRef.current = null;
+      }
+      for (const [, t] of activeTimeouts) clearTimeout(t);
+      activeTimeouts.clear();
     };
   }, []);
 

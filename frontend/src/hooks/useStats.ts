@@ -16,8 +16,13 @@ export default function useStats() {
       const [t, d] = await Promise.all([getTotals(), getDailyTxCount(30, 100)]);
       setTotals(t);
       setDailyTx(d);
-    } catch (e: any) {
-      setError(e?.error || e?.message || 'Failed to load stats');
+    } catch (e: unknown) {
+      const msg = typeof e === 'object' && e !== null && 'error' in e && typeof (e as { error?: unknown }).error === 'string'
+        ? (e as { error: string }).error
+        : e instanceof Error
+          ? e.message
+          : 'Failed to load stats';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -32,4 +37,3 @@ export default function useStats() {
 
   return { totals, dailyTx, avgBlockTimeSec, loading, error, refetch: fetchAll };
 }
-

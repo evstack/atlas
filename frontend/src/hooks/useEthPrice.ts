@@ -22,7 +22,11 @@ export default function useEthPrice({ refreshMs = 60000 }: UseEthPriceOptions = 
   };
 
   const saveToCache = (v: number) => {
-    try { localStorage.setItem('price:eth_usd', JSON.stringify({ v, t: Date.now() })); } catch {}
+    try {
+      localStorage.setItem('price:eth_usd', JSON.stringify({ v, t: Date.now() }));
+    } catch {
+      return;
+    }
   };
 
   const fetchPrice = useCallback(async () => {
@@ -46,7 +50,9 @@ export default function useEthPrice({ refreshMs = 60000 }: UseEthPriceOptions = 
           const json = await res.json();
           price = typeof json?.ethereum?.usd === 'number' ? json.ethereum.usd : null;
         }
-      } catch {}
+      } catch {
+        price = null;
+      }
 
       // Fallback: Coinbase
       if (price == null) {
@@ -57,14 +63,16 @@ export default function useEthPrice({ refreshMs = 60000 }: UseEthPriceOptions = 
             const rate = Number(json2?.data?.rates?.USD);
             if (!Number.isNaN(rate) && rate > 0) price = rate;
           }
-        } catch {}
+        } catch {
+          price = null;
+        }
       }
 
       if (price == null) throw new Error('Failed to fetch ETH price');
       setUsd(price);
       saveToCache(price);
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to fetch price');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to fetch price');
     } finally {
       setLoading(false);
     }
@@ -78,4 +86,3 @@ export default function useEthPrice({ refreshMs = 60000 }: UseEthPriceOptions = 
 
   return { usd, loading, error, refetch: fetchPrice };
 }
-

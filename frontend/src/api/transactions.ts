@@ -39,16 +39,22 @@ export async function getTransactionsByAddress(address: string, params: { page?:
 
 export async function getTxErc20Transfers(txHash: string): Promise<TxErc20Transfer[]> {
   const response = await client.get(`/transactions/${txHash}/erc20-transfers`);
-  const body = response.data as any;
+  const body = response.data as unknown;
   if (Array.isArray(body)) return body as TxErc20Transfer[];
-  if (Array.isArray(body?.data)) return body.data as TxErc20Transfer[];
+  if (typeof body === 'object' && body !== null && 'data' in body) {
+    const data = (body as { data?: unknown }).data;
+    if (Array.isArray(data)) return data as TxErc20Transfer[];
+  }
   return [];
 }
 
 export async function getTxNftTransfers(txHash: string): Promise<TxNftTransfer[]> {
   const response = await client.get(`/transactions/${txHash}/nft-transfers`);
-  const body = response.data as any;
+  const body = response.data as unknown;
   if (Array.isArray(body)) return body as TxNftTransfer[];
-  if (Array.isArray(body?.data)) return body.data as TxNftTransfer[];
+  if (typeof body === 'object' && body !== null && 'data' in body) {
+    const data = (body as { data?: unknown }).data;
+    if (Array.isArray(data)) return data as TxNftTransfer[];
+  }
   return [];
 }

@@ -20,8 +20,13 @@ export default function useEthBalance(address: string | undefined): UseEthBalanc
     try {
       const wei = await getEthBalance(address);
       setBalanceWei(wei);
-    } catch (e: any) {
-      setError(e?.error || e?.message || 'Failed to fetch balance');
+    } catch (e: unknown) {
+      const msg = typeof e === 'object' && e !== null && 'error' in e && typeof (e as { error?: unknown }).error === 'string'
+        ? (e as { error: string }).error
+        : e instanceof Error
+          ? e.message
+          : 'Failed to fetch balance';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -31,4 +36,3 @@ export default function useEthBalance(address: string | undefined): UseEthBalanc
 
   return { balanceWei, loading, error, refetch: fetchBalance };
 }
-
