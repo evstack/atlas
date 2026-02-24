@@ -10,23 +10,42 @@ export default function Layout() {
   const location = useLocation();
   const isHome = location.pathname === '/';
   const { height, lastUpdatedAt, bps } = useLatestBlockHeight(2000, 1000000);
-  const recentlyUpdated = lastUpdatedAt ? (Date.now() - lastUpdatedAt) < 10000 : false;
+  const [now, setNow] = useState(() => Date.now());
+  const recentlyUpdated = lastUpdatedAt ? (now - lastUpdatedAt) < 10000 : false;
   const [displayedHeight, setDisplayedHeight] = useState<number | null>(null);
   const rafRef = useRef<number | null>(null);
+  const displayRafRef = useRef<number | null>(null);
   const lastFrameRef = useRef<number>(0);
   const displayedRef = useRef<number>(0);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // Smoothly increment displayed height using bps
   useEffect(() => {
     if (height == null) {
-      setDisplayedHeight(null);
+      if (displayRafRef.current !== null) {
+        cancelAnimationFrame(displayRafRef.current);
+      }
+      displayRafRef.current = window.requestAnimationFrame(() => {
+        setDisplayedHeight(null);
+        displayRafRef.current = null;
+      });
       return;
     }
 
     // Initialize displayed to at least current height on first run
     if (displayedHeight == null || height > displayedRef.current) {
       displayedRef.current = Math.max(displayedRef.current || 0, height);
-      setDisplayedHeight(displayedRef.current);
+      if (displayRafRef.current !== null) {
+        cancelAnimationFrame(displayRafRef.current);
+      }
+      displayRafRef.current = window.requestAnimationFrame(() => {
+        setDisplayedHeight(displayedRef.current);
+        displayRafRef.current = null;
+      });
     }
 
     const loop = (t: number) => {
@@ -56,7 +75,9 @@ export default function Layout() {
     rafRef.current = window.requestAnimationFrame(loop);
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (displayRafRef.current) cancelAnimationFrame(displayRafRef.current);
       rafRef.current = null;
+      displayRafRef.current = null;
       lastFrameRef.current = 0;
     };
   }, [height, bps]);
@@ -119,8 +140,7 @@ export default function Layout() {
                 <SmoothCounter value={displayedHeight} />
                 <span className="text-gray-600">|</span>
                 <span
-                  className="font-mono inline-block w-16 text-right whitespace-nowrap"
-                  style={{ fontVariantNumeric: 'tabular-nums' as any }}
+                  className="font-mono tabular-nums inline-block w-16 text-right whitespace-nowrap"
                 >
                   {blockTimeLabel}
                 </span>

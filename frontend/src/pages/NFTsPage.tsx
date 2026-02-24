@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useNftContracts } from '../hooks';
 import { Pagination, Loading } from '../components';
@@ -7,10 +7,7 @@ import { formatNumber, truncateHash } from '../utils';
 export default function NFTsPage() {
   const [page, setPage] = useState(1);
   const { contracts, pagination, loading } = useNftContracts({ page, limit: 20 });
-  const [hasLoaded, setHasLoaded] = useState(false);
-  useEffect(() => {
-    if (!loading) setHasLoaded(true);
-  }, [loading]);
+  const hasLoaded = !loading || pagination !== null;
 
   return (
     <div>

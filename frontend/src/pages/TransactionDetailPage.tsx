@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTransaction, useTransactionDecodedLogs } from '../hooks';
 import { AddressLink, BlockLink, StatusBadge, CopyButton, EventLogs, Loading } from '../components';
@@ -61,7 +62,7 @@ export default function TransactionDetailPage() {
     return () => { cancelled = true; };
   }, [hash]);
 
-  type DetailRow = { label: string; value: JSX.Element | string; stacked?: boolean };
+  type DetailRow = { label: string; value: ReactNode; stacked?: boolean };
   const details: DetailRow[] = transaction ? [
     {
       label: 'Transaction Hash',

@@ -6,16 +6,15 @@ A lightweight Ethereum L2 blockchain explorer.
 
 ### Prerequisites
 
+- `just` 1.0+
 - Docker and Docker Compose
-- Bun 1.0+ (for frontend development)
-- Rust 1.75+ (for backend development)
+- Bun 1.0+
+- Rust 1.75+
 
 ### Running with Docker
 
 ```bash
 cp .env.example .env
-# Edit .env with your RPC endpoint
-
 docker-compose up -d
 ```
 
@@ -23,34 +22,43 @@ Access the explorer at http://localhost:3000
 
 ### Local Development
 
-**Backend:**
-
 ```bash
-cd backend
-
-# Start PostgreSQL
+cp .env.example .env
 docker-compose up -d postgres
-
-# Set environment
-export DATABASE_URL=postgres://atlas:atlas@localhost/atlas
-export RPC_URL=https://your-l2-rpc.example.com
-
-# Run services
-cargo run --bin atlas-indexer
-cargo run --bin atlas-api  # in another terminal
+just frontend-install
 ```
 
-**Frontend:**
+Start backend services (each in its own terminal):
 
 ```bash
-cd frontend
-bun install
-bun run dev
+just backend-indexer
+```
+
+```bash
+just backend-api
+```
+
+Start frontend:
+
+```bash
+just frontend-dev
+```
+
+### Useful Commands
+
+```bash
+just --list
+just frontend-lint
+just frontend-build
+just backend-fmt
+just backend-clippy
+just backend-test
+just ci
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set your RPC endpoint. Available options:
+Copy `.env.example` to `.env` and set `RPC_URL`. Common options:
 
 | Variable | Description | Default |
 |----------|-------------|---------|

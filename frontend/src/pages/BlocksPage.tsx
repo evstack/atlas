@@ -15,16 +15,14 @@ export default function BlocksPage() {
     }
   });
   const { blocks, pagination, refetch, loading } = useBlocks({ page, limit: 20 });
-  const [hasLoaded, setHasLoaded] = useState(false);
-  useEffect(() => {
-    if (!loading) setHasLoaded(true);
-  }, [loading]);
+  const hasLoaded = !loading || pagination !== null;
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
   const seenBlocksRef = useRef<Set<number>>(new Set());
   const initializedRef = useRef(false);
   const [highlightBlocks, setHighlightBlocks] = useState<Set<number>>(new Set());
   const timeoutsRef = useRef<Map<number, number>>(new Map());
+  const highlightRafRef = useRef<number | null>(null);
   const [tick, setTick] = useState(0);
 
   const handleSort = (key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used') => {
@@ -71,7 +69,9 @@ export default function BlocksPage() {
   useEffect(() => {
     try {
       localStorage.setItem('blocks:autoRefresh', String(autoRefresh));
-    } catch {}
+    } catch {
+      // Ignore storage write failures (e.g. private mode/quota).
+    }
   }, [autoRefresh]);
 
   // Detect newly seen blocks and flash highlight
@@ -95,27 +95,40 @@ export default function BlocksPage() {
       }
     }
     if (newlyAdded.length) {
-      setHighlightBlocks((prev) => new Set([...prev, ...newlyAdded]));
+      if (highlightRafRef.current !== null) {
+        window.cancelAnimationFrame(highlightRafRef.current);
+      }
       for (const n of newlyAdded) {
         seenBlocksRef.current.add(n);
-        const t = window.setTimeout(() => {
-          setHighlightBlocks((prev) => {
-            const next = new Set(prev);
-            next.delete(n);
-            return next;
-          });
-          timeoutsRef.current.delete(n);
-        }, 1600);
-        timeoutsRef.current.set(n, t);
       }
+      highlightRafRef.current = window.requestAnimationFrame(() => {
+        setHighlightBlocks((prev) => new Set([...prev, ...newlyAdded]));
+        for (const n of newlyAdded) {
+          const t = window.setTimeout(() => {
+            setHighlightBlocks((prev) => {
+              const next = new Set(prev);
+              next.delete(n);
+              return next;
+            });
+            timeoutsRef.current.delete(n);
+          }, 1600);
+          timeoutsRef.current.set(n, t);
+        }
+        highlightRafRef.current = null;
+      });
     }
   }, [blocks]);
 
   // Cleanup on unmount
   useEffect(() => {
+    const activeTimeouts = timeoutsRef.current;
     return () => {
-      for (const [, t] of timeoutsRef.current) clearTimeout(t);
-      timeoutsRef.current.clear();
+      if (highlightRafRef.current !== null) {
+        window.cancelAnimationFrame(highlightRafRef.current);
+        highlightRafRef.current = null;
+      }
+      for (const [, t] of activeTimeouts) clearTimeout(t);
+      activeTimeouts.clear();
     };
   }, []);
 
@@ -123,6 +136,7 @@ export default function BlocksPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-white">Blocks</h1>
+        <span className="hidden" aria-hidden="true">{tick}</span>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setAutoRefresh((v) => !v)}

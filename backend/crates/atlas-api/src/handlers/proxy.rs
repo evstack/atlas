@@ -5,13 +5,15 @@
 use alloy::providers::Provider;
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     Json,
 };
 use std::sync::Arc;
 
-use atlas_common::{AtlasError, ContractAbi, ProxyContract};
-use crate::AppState;
 use crate::error::ApiResult;
+use crate::handlers::auth::require_admin;
+use crate::AppState;
+use atlas_common::{AtlasError, ContractAbi, ProxyContract};
 
 /// GET /api/contracts/:address/proxy - Get proxy information for a contract
 pub async fn get_proxy_info(
@@ -238,17 +240,25 @@ pub async fn list_proxies(
 /// POST /api/contracts/:address/detect-proxy - Trigger proxy detection for a contract
 pub async fn detect_proxy(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(address): Path<String>,
 ) -> ApiResult<Json<ProxyDetectionResult>> {
+    require_admin(&headers, &state)?;
+
     let address = normalize_address(&address);
 
     // Get RPC provider
     use alloy::providers::{Provider, ProviderBuilder};
 
-    let provider = ProviderBuilder::new()
-        .on_http(state.rpc_url.parse().map_err(|e| AtlasError::Config(format!("Invalid RPC URL: {}", e)))?);
+    let provider = ProviderBuilder::new().on_http(
+        state
+            .rpc_url
+            .parse()
+            .map_err(|e| AtlasError::Config(format!("Invalid RPC URL: {}", e)))?,
+    );
 
-    let addr: alloy::primitives::Address = address.parse()
+    let addr: alloy::primitives::Address = address
+        .parse()
         .map_err(|_| AtlasError::InvalidInput("Invalid address".to_string()))?;
 
     // Check known proxy storage slots
@@ -256,7 +266,9 @@ pub async fn detect_proxy(
 
     if let Some((impl_addr, proxy_type, admin_addr)) = result {
         // Get current block
-        let current_block = provider.get_block_number().await
+        let current_block = provider
+            .get_block_number()
+            .await
             .map_err(|e| AtlasError::Rpc(e.to_string()))?;
 
         // Store in database
@@ -334,9 +346,19 @@ mod slots {
 
 /// Detect proxy implementation from storage slots
 async fn detect_proxy_impl(
-    provider: &alloy::providers::RootProvider<alloy::transports::http::Http<alloy::transports::http::Client>, alloy::network::Ethereum>,
+    provider: &alloy::providers::RootProvider<
+        alloy::transports::http::Http<alloy::transports::http::Client>,
+        alloy::network::Ethereum,
+    >,
     address: alloy::primitives::Address,
-) -> Result<Option<(alloy::primitives::Address, atlas_common::ProxyType, Option<alloy::primitives::Address>)>, AtlasError> {
+) -> Result<
+    Option<(
+        alloy::primitives::Address,
+        atlas_common::ProxyType,
+        Option<alloy::primitives::Address>,
+    )>,
+    AtlasError,
+> {
     use alloy::primitives::Address;
 
     // Check EIP-1967 implementation slot
@@ -358,7 +380,11 @@ async fn detect_proxy_impl(
                 if !admin_slot.is_zero() {
                     let admin_bytes = admin_slot.to_be_bytes::<32>();
                     let addr = Address::from_slice(&admin_bytes[12..]);
-                    if !addr.is_zero() { Some(addr) } else { None }
+                    if !addr.is_zero() {
+                        Some(addr)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -366,7 +392,11 @@ async fn detect_proxy_impl(
                 None
             };
 
-            return Ok(Some((impl_addr, atlas_common::ProxyType::Eip1967, admin_addr)));
+            return Ok(Some((
+                impl_addr,
+                atlas_common::ProxyType::Eip1967,
+                admin_addr,
+            )));
         }
     }
 

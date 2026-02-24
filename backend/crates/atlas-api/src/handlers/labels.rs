@@ -4,14 +4,16 @@
 
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     Json,
 };
 use serde::Deserialize;
 use std::sync::Arc;
 
-use atlas_common::{AddressLabel, AddressLabelInput, AtlasError, Pagination, PaginatedResponse};
-use crate::AppState;
 use crate::error::ApiResult;
+use crate::handlers::auth::require_admin;
+use crate::AppState;
+use atlas_common::{AddressLabel, AddressLabelInput, AtlasError, PaginatedResponse, Pagination};
 
 /// Query parameters for label filtering
 #[derive(Debug, Deserialize)]
@@ -30,12 +32,11 @@ pub async fn list_labels(
     Query(query): Query<LabelQuery>,
 ) -> ApiResult<Json<PaginatedResponse<AddressLabel>>> {
     let (total, labels) = if let Some(tag) = &query.tag {
-        let total: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM address_labels WHERE $1 = ANY(tags)",
-        )
-        .bind(tag)
-        .fetch_one(&state.pool)
-        .await?;
+        let total: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM address_labels WHERE $1 = ANY(tags)")
+                .bind(tag)
+                .fetch_one(&state.pool)
+                .await?;
 
         let labels: Vec<AddressLabel> = sqlx::query_as(
             "SELECT address, name, tags, created_at, updated_at
@@ -54,12 +55,11 @@ pub async fn list_labels(
     } else if let Some(search) = &query.search {
         let search_pattern = format!("%{}%", search.to_lowercase());
 
-        let total: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM address_labels WHERE LOWER(name) LIKE $1",
-        )
-        .bind(&search_pattern)
-        .fetch_one(&state.pool)
-        .await?;
+        let total: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM address_labels WHERE LOWER(name) LIKE $1")
+                .bind(&search_pattern)
+                .fetch_one(&state.pool)
+                .await?;
 
         let labels: Vec<AddressLabel> = sqlx::query_as(
             "SELECT address, name, tags, created_at, updated_at
@@ -123,9 +123,7 @@ pub async fn get_label(
 }
 
 /// GET /api/labels/tags - Get all available tags
-pub async fn list_tags(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<Json<Vec<TagCount>>> {
+pub async fn list_tags(State(state): State<Arc<AppState>>) -> ApiResult<Json<Vec<TagCount>>> {
     let tags: Vec<TagCount> = sqlx::query_as(
         "SELECT unnest(tags) as tag, COUNT(*) as count
          FROM address_labels
@@ -148,8 +146,11 @@ pub struct TagCount {
 /// POST /api/labels - Create or update a label
 pub async fn upsert_label(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(input): Json<AddressLabelInput>,
 ) -> ApiResult<Json<AddressLabel>> {
+    require_admin(&headers, &state)?;
+
     let address = normalize_address(&input.address);
 
     let label: AddressLabel = sqlx::query_as(
@@ -173,8 +174,11 @@ pub async fn upsert_label(
 /// DELETE /api/labels/:address - Delete a label
 pub async fn delete_label(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(address): Path<String>,
 ) -> ApiResult<Json<()>> {
+    require_admin(&headers, &state)?;
+
     let address = normalize_address(&address);
 
     let result = sqlx::query("DELETE FROM address_labels WHERE LOWER(address) = LOWER($1)")
@@ -198,8 +202,11 @@ pub struct BulkLabelsInput {
 /// POST /api/labels/bulk - Bulk import labels
 pub async fn bulk_import_labels(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(input): Json<BulkLabelsInput>,
 ) -> ApiResult<Json<BulkImportResult>> {
+    require_admin(&headers, &state)?;
+
     let mut imported = 0;
     let mut errors = Vec::new();
 

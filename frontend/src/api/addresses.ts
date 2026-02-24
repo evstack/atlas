@@ -29,8 +29,7 @@ export async function getEthBalance(address: string): Promise<string> {
     params: { module: 'account', action: 'balance', address },
   });
   // Returns Wei as string
-  // @ts-expect-error dynamic shape compatible
-  return (response.data as any).result ?? '0';
+  return response.data.result ?? '0';
 }
 
 // New: Address transfers (ERC-20 + NFT)

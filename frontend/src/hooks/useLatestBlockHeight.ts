@@ -10,6 +10,7 @@ export interface LatestHeightState {
 }
 
 export default function useLatestBlockHeight(pollMs = 2000, _windowBlocks = 1000000): LatestHeightState {
+  void _windowBlocks;
   const [height, setHeight] = useState<number | null>(null);
   const heightRef = useRef<number | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -49,8 +50,8 @@ export default function useLatestBlockHeight(pollMs = 2000, _windowBlocks = 1000
       } else {
         setHeight(null);
       }
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to fetch latest height');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to fetch latest height');
     } finally {
       setLoading(false);
       fetchingRef.current = false;

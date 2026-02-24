@@ -3,6 +3,7 @@ import { useBlock, useBlockTransactions } from '../hooks';
 import { CopyButton, Loading, AddressLink, TxHashLink, StatusBadge } from '../components';
 import { formatNumber, formatTimestamp, formatGas, truncateHash, formatTimeAgo, formatEther } from '../utils';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 
 export default function BlockDetailPage() {
   const { number } = useParams<{ number: string }>();
@@ -11,7 +12,7 @@ export default function BlockDetailPage() {
   const [txPage, setTxPage] = useState(1);
   const { transactions, pagination, loading } = useBlockTransactions(blockNumber, { page: txPage, limit: 20 });
 
-  type DetailRow = { label: string; value: JSX.Element | string; stacked?: boolean };
+  type DetailRow = { label: string; value: ReactNode; stacked?: boolean };
   const details: DetailRow[] = block ? [
     { label: 'Block Height', value: formatNumber(block.number) },
     { label: 'Timestamp', value: formatTimestamp(block.timestamp) },

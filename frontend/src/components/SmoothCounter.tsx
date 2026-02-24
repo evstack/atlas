@@ -1,5 +1,3 @@
-import React from 'react';
-
 interface SmoothCounterProps {
   value: number | null;
   className?: string;
@@ -14,4 +12,3 @@ export default function SmoothCounter({ value, className = '' }: SmoothCounterPr
     </span>
   );
 }
-

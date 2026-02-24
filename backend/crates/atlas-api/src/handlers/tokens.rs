@@ -4,12 +4,12 @@ use axum::{
 };
 use std::sync::Arc;
 
-use atlas_common::{
-    AtlasError, Erc20Balance, Erc20Contract, Erc20Holder, Erc20Transfer, Pagination,
-    PaginatedResponse,
-};
-use crate::AppState;
 use crate::error::ApiResult;
+use crate::AppState;
+use atlas_common::{
+    AtlasError, Erc20Balance, Erc20Contract, Erc20Holder, Erc20Transfer, PaginatedResponse,
+    Pagination,
+};
 
 /// GET /api/tokens - List all ERC-20 tokens
 pub async fn list_tokens(
@@ -72,12 +72,11 @@ pub async fn get_token(
     .fetch_one(&state.pool)
     .await?;
 
-    let transfer_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_transfers WHERE contract_address = $1",
-    )
-    .bind(&address)
-    .fetch_one(&state.pool)
-    .await?;
+    let transfer_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM erc20_transfers WHERE contract_address = $1")
+            .bind(&address)
+            .fetch_one(&state.pool)
+            .await?;
 
     // Compute total_supply from balances if not set
     if contract.total_supply.is_none() {
@@ -107,13 +106,15 @@ pub async fn get_token_holders(
     let address = normalize_address(&address);
 
     // Verify token exists
-    let _: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_contracts WHERE address = $1",
+    let exists: Option<(String,)> = sqlx::query_as(
+        "SELECT address FROM erc20_contracts WHERE LOWER(address) = LOWER($1) LIMIT 1",
     )
     .bind(&address)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| AtlasError::NotFound(format!("Token {} not found", address)))?;
+    .fetch_optional(&state.pool)
+    .await?;
+    if exists.is_none() {
+        return Err(AtlasError::NotFound(format!("Token {} not found", address)).into());
+    }
 
     let total: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM erc20_balances WHERE contract_address = $1 AND balance > 0",
@@ -199,12 +200,11 @@ pub async fn get_token_transfers(
 ) -> ApiResult<Json<PaginatedResponse<Erc20Transfer>>> {
     let address = normalize_address(&address);
 
-    let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM erc20_transfers WHERE contract_address = $1",
-    )
-    .bind(&address)
-    .fetch_one(&state.pool)
-    .await?;
+    let total: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM erc20_transfers WHERE contract_address = $1")
+            .bind(&address)
+            .fetch_one(&state.pool)
+            .await?;
 
     let transfers: Vec<Erc20Transfer> = sqlx::query_as(
         "SELECT id, tx_hash, log_index, contract_address, from_address, to_address, value, block_number, timestamp

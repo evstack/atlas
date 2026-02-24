@@ -2,7 +2,7 @@ use anyhow::Result;
 use tokio::pin;
 use tokio_postgres::{
     binary_copy::BinaryCopyInWriter,
-    types::{Type, ToSql},
+    types::{ToSql, Type},
     Transaction,
 };
 

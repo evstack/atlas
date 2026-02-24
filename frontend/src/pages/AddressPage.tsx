@@ -312,7 +312,7 @@ export default function AddressPage() {
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {nfts.map((t) => {
-                  const imageUrl = t.image_url || (t as any).token_uri || null;
+                  const imageUrl = t.image_url || t.token_uri || null;
                   const displayName = t.name || `#${t.token_id}`;
                   return (
                     <Link key={`${t.contract_address}-${t.token_id}`} to={`/nfts/${t.contract_address}/${t.token_id}`} className="block group">

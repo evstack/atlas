@@ -16,15 +16,19 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::batch::{BlockBatch, NftTokenState};
 use crate::config::Config;
-use crate::copy::{copy_blocks, copy_erc20_transfers, copy_event_logs, copy_nft_transfers, copy_transactions};
-use crate::fetcher::{fetch_blocks_batch, get_block_number_with_retry, FetchResult, FetchedBlock, SharedRateLimiter, WorkItem};
+use crate::copy::{
+    copy_blocks, copy_erc20_transfers, copy_event_logs, copy_nft_transfers, copy_transactions,
+};
+use crate::fetcher::{
+    fetch_blocks_batch, get_block_number_with_retry, FetchResult, FetchedBlock, SharedRateLimiter,
+    WorkItem,
+};
 
 /// Partition size: 10 million blocks per partition
 const PARTITION_SIZE: u64 = 10_000_000;
 
 /// ERC-20/721 Transfer event signature: Transfer(address,address,uint256)
-const TRANSFER_TOPIC: &str =
-    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+const TRANSFER_TOPIC: &str = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
@@ -87,7 +91,8 @@ impl Indexer {
         let mut copy_client = Self::connect_copy_client(&self.config.database_url).await?;
 
         // Create rate limiter for RPC requests
-        let rps = NonZeroU32::new(self.config.rpc_requests_per_second).unwrap_or(NonZeroU32::new(100).unwrap());
+        let rps = NonZeroU32::new(self.config.rpc_requests_per_second)
+            .unwrap_or(NonZeroU32::new(100).unwrap());
         let rate_limiter: SharedRateLimiter = Arc::new(RateLimiter::direct(Quota::per_second(rps)));
         tracing::info!("Rate limiting RPC requests to {} req/sec", rps);
 
@@ -109,13 +114,18 @@ impl Indexer {
 
         let num_workers = self.config.fetch_workers as usize;
         let rpc_batch_size = self.config.rpc_batch_size as usize;
-        tracing::info!("Starting {} fetch workers with {} blocks per RPC batch", num_workers, rpc_batch_size);
+        tracing::info!(
+            "Starting {} fetch workers with {} blocks per RPC batch",
+            num_workers,
+            rpc_batch_size
+        );
 
         // Channels for work distribution and results
         // work_tx: send WorkItems (block ranges) to fetch workers
         // result_tx: workers send fetched blocks back to main loop
         let (work_tx, work_rx) = async_channel::bounded::<WorkItem>(num_workers * 2);
-        let (result_tx, mut result_rx) = mpsc::channel::<FetchResult>(num_workers * rpc_batch_size * 2);
+        let (result_tx, mut result_rx) =
+            mpsc::channel::<FetchResult>(num_workers * rpc_batch_size * 2);
 
         // Create HTTP client for batch requests
         let http_client = reqwest::Client::new();
@@ -131,29 +141,21 @@ impl Indexer {
 
             tokio::spawn(async move {
                 tracing::debug!("Worker {} started", worker_id);
-                loop {
-                    // Wait for work (blocks here until work arrives)
-                    match work_rx.recv().await {
-                        Ok(work_item) => {
-                            // Fetch batch of blocks using JSON-RPC batching
-                            let results = fetch_blocks_batch(
-                                &client,
-                                &url,
-                                work_item.start_block,
-                                work_item.count,
-                                &limiter,
-                            ).await;
+                while let Ok(work_item) = work_rx.recv().await {
+                    // Fetch batch of blocks using JSON-RPC batching
+                    let results = fetch_blocks_batch(
+                        &client,
+                        &url,
+                        work_item.start_block,
+                        work_item.count,
+                        &limiter,
+                    )
+                    .await;
 
-                            // Send all results back
-                            for result in results {
-                                if result_tx.send(result).await.is_err() {
-                                    return; // Channel closed
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            // Channel closed, exit worker
-                            break;
+                    // Send all results back
+                    for result in results {
+                        if result_tx.send(result).await.is_err() {
+                            return; // Channel closed
                         }
                     }
                 }
@@ -189,7 +191,12 @@ impl Indexer {
             // Calculate batch end
             let end_block = (current_block + self.config.batch_size - 1).min(head);
             let batch_size = (end_block - current_block + 1) as usize;
-            tracing::debug!("Fetching batch: {} to {} ({} blocks)", current_block, end_block, batch_size);
+            tracing::debug!(
+                "Fetching batch: {} to {} ({} blocks)",
+                current_block,
+                end_block,
+                batch_size
+            );
 
             // Ensure partitions exist for this batch range
             self.ensure_partitions_exist(end_block).await?;
@@ -210,7 +217,11 @@ impl Indexer {
                     }
                     block += count as u64;
                 }
-                tracing::debug!("Sent {} blocks to workers in batches of {}", batch_size, blocks_per_batch);
+                tracing::debug!(
+                    "Sent {} blocks to workers in batches of {}",
+                    batch_size,
+                    blocks_per_batch
+                );
             });
 
             // Collect results with reorder buffer, accumulating into a single
@@ -225,7 +236,7 @@ impl Indexer {
             while blocks_received < batch_size {
                 match result_rx.recv().await {
                     Some(FetchResult::Success(fetched)) => {
-                        buffer.insert(fetched.number, fetched);
+                        buffer.insert(fetched.number, *fetched);
                         blocks_received += 1;
 
                         // Collect consecutive blocks in order (sync, no await)
@@ -269,39 +280,51 @@ impl Indexer {
             // Retry failed blocks if any
             if !failed_blocks.is_empty() {
                 let block_nums: Vec<u64> = failed_blocks.iter().map(|(n, _)| *n).collect();
-                tracing::warn!("Retrying {} failed blocks: {:?}", failed_blocks.len(), block_nums);
+                tracing::warn!(
+                    "Retrying {} failed blocks: {:?}",
+                    failed_blocks.len(),
+                    block_nums
+                );
 
                 // Retry up to 3 times with increasing delay
                 for attempt in 1..=3 {
-                    if failed_blocks.is_empty() { break; }
+                    if failed_blocks.is_empty() {
+                        break;
+                    }
 
                     let delay = Duration::from_secs(attempt * 2); // 2s, 4s, 6s
-                    tracing::info!("Retry attempt {} for {} blocks (waiting {:?})",
-                        attempt, failed_blocks.len(), delay);
+                    tracing::info!(
+                        "Retry attempt {} for {} blocks (waiting {:?})",
+                        attempt,
+                        failed_blocks.len(),
+                        delay
+                    );
                     tokio::time::sleep(delay).await;
 
                     let mut still_failed = Vec::new();
                     for (block_num, last_error) in failed_blocks {
                         // Fetch single block
-                        let results = fetch_blocks_batch(
-                            &http_client,
-                            &rpc_url,
-                            block_num,
-                            1,
-                            &rate_limiter,
-                        ).await;
+                        let results =
+                            fetch_blocks_batch(&http_client, &rpc_url, block_num, 1, &rate_limiter)
+                                .await;
 
                         match results.into_iter().next() {
                             Some(FetchResult::Success(fetched)) => {
                                 // Write retried block immediately
                                 let mut mini_batch = BlockBatch::new();
-                                Self::collect_block(&mut mini_batch, &known_erc20, &known_nft, fetched);
+                                Self::collect_block(
+                                    &mut mini_batch,
+                                    &known_erc20,
+                                    &known_nft,
+                                    *fetched,
+                                );
                                 let new_erc20 = std::mem::take(&mut mini_batch.new_erc20);
                                 let new_nft = std::mem::take(&mut mini_batch.new_nft);
                                 // Don't update the watermark — the main batch already wrote
                                 // a higher last_indexed_block; overwriting it with this
                                 // block's lower number would cause a regression on restart.
-                                self.write_batch(&mut copy_client, mini_batch, false).await?;
+                                self.write_batch(&mut copy_client, mini_batch, false)
+                                    .await?;
                                 known_erc20.extend(new_erc20);
                                 known_nft.extend(new_nft);
                                 tracing::info!("Block {} retry succeeded", block_num);
@@ -369,7 +392,12 @@ impl Indexer {
     // Accumulates all block data into the batch for later bulk insert.
     // -----------------------------------------------------------------------
 
-    fn collect_block(batch: &mut BlockBatch, known_erc20: &HashSet<String>, known_nft: &HashSet<String>, fetched: FetchedBlock) {
+    fn collect_block(
+        batch: &mut BlockBatch,
+        known_erc20: &HashSet<String>,
+        known_nft: &HashSet<String>,
+        fetched: FetchedBlock,
+    ) {
         use alloy::consensus::Transaction as TxTrait;
 
         let block = fetched.block;
@@ -378,7 +406,8 @@ impl Indexer {
         // Build a receipt map keyed by tx hash for O(1) lookup.
         // This lets us merge receipt data (status, gas_used, contract_created)
         // directly into the transaction row, eliminating the UPDATE after INSERT.
-        let receipt_map: HashMap<String, &TransactionReceipt> = fetched.receipts
+        let receipt_map: HashMap<String, &TransactionReceipt> = fetched
+            .receipts
             .iter()
             .map(|r| (format!("{:?}", r.transaction_hash), r))
             .collect();
@@ -387,7 +416,9 @@ impl Indexer {
         let tx_count = block.transactions.len() as i32;
         batch.b_numbers.push(block_num as i64);
         batch.b_hashes.push(format!("{:?}", block.header.hash));
-        batch.b_parent_hashes.push(format!("{:?}", block.header.parent_hash));
+        batch
+            .b_parent_hashes
+            .push(format!("{:?}", block.header.parent_hash));
         batch.b_timestamps.push(block.header.timestamp as i64);
         batch.b_gas_used.push(block.header.gas_used as i64);
         batch.b_gas_limits.push(block.header.gas_limit as i64);
@@ -401,7 +432,8 @@ impl Indexer {
                 let from_str = format!("{:?}", transaction.from);
                 let to_opt = inner.to().map(|a| format!("{:?}", a));
                 let value_str = inner.value().to_string();
-                let gas_price_str = transaction.effective_gas_price
+                let gas_price_str = transaction
+                    .effective_gas_price
                     .map(|gp| gp.to_string())
                     .unwrap_or_else(|| "0".to_string());
                 let input = inner.input().to_vec();
@@ -409,11 +441,13 @@ impl Indexer {
                 // Merge receipt data — no separate UPDATE needed
                 let (status, gas_used, contract_created) = receipt_map
                     .get(&tx_hash_str)
-                    .map(|r| (
-                        r.inner.status(),
-                        r.gas_used as i64,
-                        r.contract_address.map(|a| format!("{:?}", a)),
-                    ))
+                    .map(|r| {
+                        (
+                            r.inner.status(),
+                            r.gas_used as i64,
+                            r.contract_address.map(|a| format!("{:?}", a)),
+                        )
+                    })
                     .unwrap_or((false, 0, None));
 
                 batch.t_hashes.push(tx_hash_str.clone());
@@ -454,13 +488,23 @@ impl Indexer {
                 };
                 let emitter = format!("{:?}", log.address());
 
-                batch.el_tx_hashes.push(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default());
+                batch.el_tx_hashes.push(
+                    log.transaction_hash
+                        .map(|h| format!("{:?}", h))
+                        .unwrap_or_default(),
+                );
                 batch.el_log_indices.push(log.log_index.unwrap_or(0) as i32);
                 batch.el_addresses.push(emitter.clone());
                 batch.el_topic0s.push(topic0.clone());
-                batch.el_topic1s.push(topics.get(1).map(|t| format!("{:?}", t)));
-                batch.el_topic2s.push(topics.get(2).map(|t| format!("{:?}", t)));
-                batch.el_topic3s.push(topics.get(3).map(|t| format!("{:?}", t)));
+                batch
+                    .el_topic1s
+                    .push(topics.get(1).map(|t| format!("{:?}", t)));
+                batch
+                    .el_topic2s
+                    .push(topics.get(2).map(|t| format!("{:?}", t)));
+                batch
+                    .el_topic3s
+                    .push(topics.get(3).map(|t| format!("{:?}", t)));
                 batch.el_datas.push(log.data().data.to_vec());
                 batch.el_block_numbers.push(block_num as i64);
 
@@ -479,13 +523,18 @@ impl Indexer {
                         let to = format!("0x{}", hex::encode(&topics[2].as_slice()[12..]));
                         let token_id_str = U256::from_be_slice(topics[3].as_slice()).to_string();
 
-                        if !known_nft.contains(&contract) && batch.new_nft.insert(contract.clone()) {
+                        if !known_nft.contains(&contract) && batch.new_nft.insert(contract.clone())
+                        {
                             batch.nft_contract_addrs.push(contract.clone());
                             batch.nft_contract_first_seen.push(block_num as i64);
                             batch.touch_addr(contract.clone(), block_num as i64, true, 0);
                         }
 
-                        batch.nt_tx_hashes.push(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default());
+                        batch.nt_tx_hashes.push(
+                            log.transaction_hash
+                                .map(|h| format!("{:?}", h))
+                                .unwrap_or_default(),
+                        );
                         batch.nt_log_indices.push(log.log_index.unwrap_or(0) as i32);
                         batch.nt_contracts.push(contract.clone());
                         batch.nt_token_ids.push(token_id_str.clone());
@@ -497,7 +546,10 @@ impl Indexer {
                         // Keep only the latest state per token (last transfer wins)
                         batch.nft_token_map.insert(
                             (contract, token_id_str),
-                            NftTokenState { owner: to, last_transfer_block: block_num as i64 },
+                            NftTokenState {
+                                owner: to,
+                                last_transfer_block: block_num as i64,
+                            },
                         );
                     }
                     // ERC-20: Transfer(address indexed from, address indexed to, uint256 value)
@@ -506,18 +558,25 @@ impl Indexer {
                         let from = format!("0x{}", hex::encode(&topics[1].as_slice()[12..]));
                         let to = format!("0x{}", hex::encode(&topics[2].as_slice()[12..]));
                         let value = BigDecimal::from_str(
-                            &U256::from_be_slice(&log.data().data[..32]).to_string()
-                        ).unwrap_or_default();
+                            &U256::from_be_slice(&log.data().data[..32]).to_string(),
+                        )
+                        .unwrap_or_default();
 
                         // Register new contract without blocking RPC calls —
                         // the metadata fetcher will fill in name/symbol/decimals.
-                        if !known_erc20.contains(&contract) && batch.new_erc20.insert(contract.clone()) {
+                        if !known_erc20.contains(&contract)
+                            && batch.new_erc20.insert(contract.clone())
+                        {
                             batch.ec_addresses.push(contract.clone());
                             batch.ec_first_seen_blocks.push(block_num as i64);
                             batch.touch_addr(contract.clone(), block_num as i64, true, 0);
                         }
 
-                        batch.et_tx_hashes.push(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default());
+                        batch.et_tx_hashes.push(
+                            log.transaction_hash
+                                .map(|h| format!("{:?}", h))
+                                .unwrap_or_default(),
+                        );
                         batch.et_log_indices.push(log.log_index.unwrap_or(0) as i32);
                         batch.et_contracts.push(contract.clone());
                         batch.et_froms.push(from.clone());
@@ -530,10 +589,20 @@ impl Indexer {
                         // for the same (address, contract) pair are summed in Rust,
                         // so we only need one DB upsert per unique pair.
                         if from != ZERO_ADDRESS {
-                            batch.apply_balance_delta(from, contract.clone(), -value.clone(), block_num as i64);
+                            batch.apply_balance_delta(
+                                from,
+                                contract.clone(),
+                                -value.clone(),
+                                block_num as i64,
+                            );
                         }
                         if to != ZERO_ADDRESS {
-                            batch.apply_balance_delta(to, contract.clone(), value, block_num as i64);
+                            batch.apply_balance_delta(
+                                to,
+                                contract.clone(),
+                                value,
+                                block_num as i64,
+                            );
                         }
                     }
                     _ => {}
@@ -549,7 +618,12 @@ impl Indexer {
     // For a batch of N blocks this is ~11 round-trips regardless of N.
     // -----------------------------------------------------------------------
 
-    async fn write_batch(&self, copy_client: &mut Client, batch: BlockBatch, update_watermark: bool) -> Result<()> {
+    async fn write_batch(
+        &self,
+        copy_client: &mut Client,
+        batch: BlockBatch,
+        update_watermark: bool,
+    ) -> Result<()> {
         if batch.b_numbers.is_empty() {
             return Ok(());
         }
@@ -578,13 +652,14 @@ impl Indexer {
 
         if !tl_hashes.is_empty() {
             let params: [&(dyn ToSql + Sync); 2] = [&tl_hashes, &tl_block_numbers];
-            pg_tx.execute(
-                "INSERT INTO tx_hash_lookup (hash, block_number)
+            pg_tx
+                .execute(
+                    "INSERT INTO tx_hash_lookup (hash, block_number)
                  SELECT * FROM unnest($1::text[], $2::bigint[]) AS t(hash, block_number)
                  ON CONFLICT (hash) DO NOTHING",
-                &params,
-            )
-            .await?;
+                    &params,
+                )
+                .await?;
         }
 
         if !addr_map.is_empty() {
@@ -599,7 +674,8 @@ impl Indexer {
                 a_tx_counts.push(state.tx_count_delta);
             }
 
-            let params: [&(dyn ToSql + Sync); 4] = [&a_addrs, &a_contracts, &a_first_seen, &a_tx_counts];
+            let params: [&(dyn ToSql + Sync); 4] =
+                [&a_addrs, &a_contracts, &a_first_seen, &a_tx_counts];
             pg_tx.execute(
                 "INSERT INTO addresses (address, is_contract, first_seen_block, tx_count)
                  SELECT * FROM unnest($1::text[], $2::bool[], $3::bigint[], $4::bigint[])
@@ -615,13 +691,14 @@ impl Indexer {
 
         if !nft_contract_addrs.is_empty() {
             let params: [&(dyn ToSql + Sync); 2] = [&nft_contract_addrs, &nft_contract_first_seen];
-            pg_tx.execute(
-                "INSERT INTO nft_contracts (address, first_seen_block)
+            pg_tx
+                .execute(
+                    "INSERT INTO nft_contracts (address, first_seen_block)
                  SELECT * FROM unnest($1::text[], $2::bigint[]) AS t(address, first_seen_block)
                  ON CONFLICT (address) DO NOTHING",
-                &params,
-            )
-            .await?;
+                    &params,
+                )
+                .await?;
         }
 
         if !nft_token_map.is_empty() {
@@ -636,7 +713,8 @@ impl Indexer {
                 tok_last_blocks.push(state.last_transfer_block);
             }
 
-            let params: [&(dyn ToSql + Sync); 4] = [&tok_contracts, &tok_ids, &tok_owners, &tok_last_blocks];
+            let params: [&(dyn ToSql + Sync); 4] =
+                [&tok_contracts, &tok_ids, &tok_owners, &tok_last_blocks];
             pg_tx.execute(
                 "INSERT INTO nft_tokens (contract_address, token_id, owner, metadata_fetched, last_transfer_block)
                  SELECT contract_address, token_id::numeric, owner, false, last_transfer_block
@@ -656,14 +734,15 @@ impl Indexer {
 
         if !ec_addresses.is_empty() {
             let params: [&(dyn ToSql + Sync); 2] = [&ec_addresses, &ec_first_seen_blocks];
-            pg_tx.execute(
-                "INSERT INTO erc20_contracts (address, decimals, first_seen_block)
+            pg_tx
+                .execute(
+                    "INSERT INTO erc20_contracts (address, decimals, first_seen_block)
                  SELECT address, 18, first_seen_block
                  FROM unnest($1::text[], $2::bigint[]) AS t(address, first_seen_block)
                  ON CONFLICT (address) DO NOTHING",
-                &params,
-            )
-            .await?;
+                    &params,
+                )
+                .await?;
         }
 
         if !balance_map.is_empty() {
@@ -679,7 +758,8 @@ impl Indexer {
             }
 
             let bal_delta_strs: Vec<String> = bal_deltas.iter().map(|d| d.to_string()).collect();
-            let params: [&(dyn ToSql + Sync); 4] = [&bal_addrs, &bal_contracts, &bal_delta_strs, &bal_blocks];
+            let params: [&(dyn ToSql + Sync); 4] =
+                [&bal_addrs, &bal_contracts, &bal_delta_strs, &bal_blocks];
             pg_tx.execute(
                 "INSERT INTO erc20_balances (address, contract_address, balance, last_updated_block)
                  SELECT address, contract_address, balance::numeric, last_updated_block
@@ -695,13 +775,14 @@ impl Indexer {
 
         if update_watermark {
             let last_value = last_block.to_string();
-            pg_tx.execute(
-                "INSERT INTO indexer_state (key, value, updated_at)
+            pg_tx
+                .execute(
+                    "INSERT INTO indexer_state (key, value, updated_at)
                  VALUES ('last_indexed_block', $1, NOW())
                  ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
-                &[&last_value],
-            )
-            .await?;
+                    &[&last_value],
+                )
+                .await?;
         }
 
         pg_tx.commit().await?;
@@ -727,11 +808,10 @@ impl Indexer {
     }
 
     async fn get_start_block(&self) -> Result<u64> {
-        let result: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM indexer_state WHERE key = 'last_indexed_block'"
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let result: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM indexer_state WHERE key = 'last_indexed_block'")
+                .fetch_optional(&self.pool)
+                .await?;
 
         if let Some((value,)) = result {
             let last_block: u64 = value.parse()?;
@@ -758,14 +838,15 @@ impl Indexer {
             // First run - check what partitions exist
             let existing: Option<(i64,)> = sqlx::query_as(
                 "SELECT MAX(CAST(SUBSTRING(relname FROM 'blocks_p(\\d+)') AS BIGINT))
-                 FROM pg_class WHERE relname ~ '^blocks_p\\d+$'"
+                 FROM pg_class WHERE relname ~ '^blocks_p\\d+$'",
             )
             .fetch_optional(&self.pool)
             .await?;
 
             match existing {
                 Some((max,)) => {
-                    self.current_max_partition.store(max as u64, Ordering::Relaxed);
+                    self.current_max_partition
+                        .store(max as u64, Ordering::Relaxed);
                     if partition_num <= max as u64 {
                         return Ok(());
                     }
@@ -804,14 +885,13 @@ impl Indexer {
                     table, p, table, partition_start, partition_end
                 );
 
-                sqlx::query(&create_sql)
-                    .execute(&self.pool)
-                    .await?;
+                sqlx::query(&create_sql).execute(&self.pool).await?;
             }
         }
 
         // Update our tracked max
-        self.current_max_partition.store(partition_num, Ordering::Relaxed);
+        self.current_max_partition
+            .store(partition_num, Ordering::Relaxed);
         tracing::info!("Partitions up to p{} ready", partition_num);
         Ok(())
     }

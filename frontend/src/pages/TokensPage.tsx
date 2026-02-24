@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTokens } from '../hooks';
 import { Pagination, Loading } from '../components';
@@ -8,10 +8,7 @@ export default function TokensPage() {
   const [page, setPage] = useState(1);
   const { tokens, pagination, loading } = useTokens({ page, limit: 20 });
   const navigate = useNavigate();
-  const [hasLoaded, setHasLoaded] = useState(false);
-  useEffect(() => {
-    if (!loading) setHasLoaded(true);
-  }, [loading]);
+  const hasLoaded = !loading || pagination !== null;
 
   const [sort, setSort] = useState<{ key: 'name' | 'first_seen_block' | 'decimals' | null; direction: 'asc' | 'desc'; }>({ key: 'first_seen_block', direction: 'desc' });
   const handleSort = (key: 'name' | 'first_seen_block' | 'decimals') => {

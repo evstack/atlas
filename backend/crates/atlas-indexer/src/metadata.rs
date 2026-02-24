@@ -52,11 +52,19 @@ impl MetadataFetcher {
 
         let provider = Arc::new(ProviderBuilder::new().on_http(config.rpc_url.parse()?));
 
-        Ok(Self { pool, config, client, provider })
+        Ok(Self {
+            pool,
+            config,
+            client,
+            provider,
+        })
     }
 
     pub async fn run(&self) -> Result<()> {
-        tracing::info!("Starting metadata fetcher with {} workers", self.config.metadata_fetch_workers);
+        tracing::info!(
+            "Starting metadata fetcher with {} workers",
+            self.config.metadata_fetch_workers
+        );
 
         loop {
             let mut did_work = false;
@@ -80,7 +88,7 @@ impl MetadataFetcher {
     /// Fetch metadata for NFT contracts (name, symbol, totalSupply)
     async fn fetch_nft_contract_metadata(&self) -> Result<bool> {
         let contracts: Vec<(String,)> = sqlx::query_as(
-            "SELECT address FROM nft_contracts WHERE metadata_fetched = false LIMIT $1"
+            "SELECT address FROM nft_contracts WHERE metadata_fetched = false LIMIT $1",
         )
         .bind(self.config.metadata_fetch_workers as i32 * 5)
         .fetch_all(&self.pool)
@@ -99,12 +107,18 @@ impl MetadataFetcher {
 
             handles.push(tokio::spawn(async move {
                 if let Err(e) = fetch_nft_contract_metadata(&pool, &provider, &address).await {
-                    tracing::debug!("Failed to fetch NFT contract metadata for {}: {}", address, e);
+                    tracing::debug!(
+                        "Failed to fetch NFT contract metadata for {}: {}",
+                        address,
+                        e
+                    );
                     // Mark as fetched to avoid infinite retries
-                    let _ = sqlx::query("UPDATE nft_contracts SET metadata_fetched = true WHERE address = $1")
-                        .bind(&address)
-                        .execute(&pool)
-                        .await;
+                    let _ = sqlx::query(
+                        "UPDATE nft_contracts SET metadata_fetched = true WHERE address = $1",
+                    )
+                    .bind(&address)
+                    .execute(&pool)
+                    .await;
                 }
             }));
 
@@ -125,7 +139,7 @@ impl MetadataFetcher {
     /// Fetch metadata for ERC-20 contracts (name, symbol, decimals, totalSupply)
     async fn fetch_erc20_contract_metadata(&self) -> Result<bool> {
         let contracts: Vec<(String,)> = sqlx::query_as(
-            "SELECT address FROM erc20_contracts WHERE metadata_fetched = false LIMIT $1"
+            "SELECT address FROM erc20_contracts WHERE metadata_fetched = false LIMIT $1",
         )
         .bind(self.config.metadata_fetch_workers as i32 * 5)
         .fetch_all(&self.pool)
@@ -144,12 +158,18 @@ impl MetadataFetcher {
 
             handles.push(tokio::spawn(async move {
                 if let Err(e) = fetch_erc20_contract_metadata(&pool, &provider, &address).await {
-                    tracing::debug!("Failed to fetch ERC-20 contract metadata for {}: {}", address, e);
+                    tracing::debug!(
+                        "Failed to fetch ERC-20 contract metadata for {}: {}",
+                        address,
+                        e
+                    );
                     // Mark as fetched to avoid infinite retries
-                    let _ = sqlx::query("UPDATE erc20_contracts SET metadata_fetched = true WHERE address = $1")
-                        .bind(&address)
-                        .execute(&pool)
-                        .await;
+                    let _ = sqlx::query(
+                        "UPDATE erc20_contracts SET metadata_fetched = true WHERE address = $1",
+                    )
+                    .bind(&address)
+                    .execute(&pool)
+                    .await;
                 }
             }));
 
@@ -173,7 +193,7 @@ impl MetadataFetcher {
             "SELECT contract_address, token_id::text, token_uri
              FROM nft_tokens
              WHERE metadata_fetched = false
-             LIMIT $1"
+             LIMIT $1",
         )
         .bind(self.config.metadata_fetch_workers as i32 * 10)
         .fetch_all(&self.pool)
@@ -196,10 +216,15 @@ impl MetadataFetcher {
             handles.push(tokio::spawn(async move {
                 // Errors are logged inside fetch_and_store_token_metadata at debug level
                 let _ = fetch_and_store_token_metadata(
-                    &pool, &client, &provider, &ipfs_gateway,
-                    &contract_address, &token_id, token_uri.as_deref(),
-                    retry_attempts
-                ).await;
+                    &pool,
+                    &client,
+                    &provider,
+                    &ipfs_gateway,
+                    (&contract_address, &token_id),
+                    token_uri.as_deref(),
+                    retry_attempts,
+                )
+                .await;
             }));
 
             if handles.len() >= self.config.metadata_fetch_workers as usize {
@@ -233,7 +258,12 @@ async fn fetch_nft_contract_metadata(
     let symbol = contract.symbol().call().await.ok().map(|r| r._0);
 
     // Fetch totalSupply (optional - ERC-721 doesn't require it)
-    let total_supply = contract.totalSupply().call().await.ok().map(|r| r._0.try_into().unwrap_or(0i64));
+    let total_supply = contract
+        .totalSupply()
+        .call()
+        .await
+        .ok()
+        .map(|r| r._0.try_into().unwrap_or(0i64));
 
     sqlx::query(
         "UPDATE nft_contracts SET
@@ -241,7 +271,7 @@ async fn fetch_nft_contract_metadata(
             symbol = COALESCE($3, symbol),
             total_supply = COALESCE($4, total_supply),
             metadata_fetched = true
-         WHERE address = $1"
+         WHERE address = $1",
     )
     .bind(contract_address)
     .bind(name)
@@ -273,9 +303,12 @@ async fn fetch_erc20_contract_metadata(
     let decimals = contract.decimals().call().await.ok().map(|r| r._0 as i16);
 
     // Fetch totalSupply
-    let total_supply = contract.totalSupply().call().await.ok().map(|r| {
-        BigDecimal::from_str(&r._0.to_string()).unwrap_or_default()
-    });
+    let total_supply = contract
+        .totalSupply()
+        .call()
+        .await
+        .ok()
+        .map(|r| BigDecimal::from_str(&r._0.to_string()).unwrap_or_default());
 
     sqlx::query(
         "UPDATE erc20_contracts SET
@@ -284,7 +317,7 @@ async fn fetch_erc20_contract_metadata(
             decimals = COALESCE($4, decimals),
             total_supply = COALESCE($5, total_supply),
             metadata_fetched = true
-         WHERE address = $1"
+         WHERE address = $1",
     )
     .bind(contract_address)
     .bind(name)
@@ -303,11 +336,12 @@ async fn fetch_and_store_token_metadata(
     client: &reqwest::Client,
     provider: &HttpProvider,
     ipfs_gateway: &str,
-    contract_address: &str,
-    token_id: &str,
+    token_key: (&str, &str),
     token_uri: Option<&str>,
     retry_attempts: u32,
 ) -> Result<()> {
+    let (contract_address, token_id) = token_key;
+
     // If no token_uri, fetch it from the contract
     let uri = match token_uri {
         Some(uri) if !uri.is_empty() => uri.to_string(),
@@ -318,7 +352,7 @@ async fn fetch_and_store_token_metadata(
                     // Store the URI in the database for future reference
                     sqlx::query(
                         "UPDATE nft_tokens SET token_uri = $3
-                         WHERE contract_address = $1 AND token_id = $2::numeric"
+                         WHERE contract_address = $1 AND token_id = $2::numeric",
                     )
                     .bind(contract_address)
                     .bind(token_id)
@@ -328,11 +362,16 @@ async fn fetch_and_store_token_metadata(
                     uri
                 }
                 Err(e) => {
-                    tracing::debug!("Failed to fetch tokenURI for {}:{}: {}", contract_address, token_id, e);
+                    tracing::debug!(
+                        "Failed to fetch tokenURI for {}:{}: {}",
+                        contract_address,
+                        token_id,
+                        e
+                    );
                     // Mark as fetched to avoid retrying forever
                     sqlx::query(
                         "UPDATE nft_tokens SET metadata_fetched = true
-                         WHERE contract_address = $1 AND token_id = $2::numeric"
+                         WHERE contract_address = $1 AND token_id = $2::numeric",
                     )
                     .bind(contract_address)
                     .bind(token_id)
@@ -348,7 +387,7 @@ async fn fetch_and_store_token_metadata(
     if uri.is_empty() {
         sqlx::query(
             "UPDATE nft_tokens SET metadata_fetched = true
-             WHERE contract_address = $1 AND token_id = $2::numeric"
+             WHERE contract_address = $1 AND token_id = $2::numeric",
         )
         .bind(contract_address)
         .bind(token_id)
@@ -379,7 +418,7 @@ async fn fetch_and_store_token_metadata(
                             "UPDATE nft_tokens SET
                                 metadata_fetched = true,
                                 image_url = $3
-                             WHERE contract_address = $1 AND token_id = $2::numeric"
+                             WHERE contract_address = $1 AND token_id = $2::numeric",
                         )
                         .bind(contract_address)
                         .bind(token_id)
@@ -389,7 +428,9 @@ async fn fetch_and_store_token_metadata(
 
                         tracing::debug!(
                             "NFT {}:{} has direct image URI ({})",
-                            contract_address, token_id, content_type
+                            contract_address,
+                            token_id,
+                            content_type
                         );
                         return Ok(());
                     }
@@ -399,7 +440,8 @@ async fn fetch_and_store_token_metadata(
                         Ok(metadata) => {
                             // Extract common fields
                             let name = metadata.get("name").and_then(|v| v.as_str());
-                            let image = metadata.get("image")
+                            let image = metadata
+                                .get("image")
                                 .or_else(|| metadata.get("image_url"))
                                 .and_then(|v| v.as_str());
 
@@ -412,7 +454,7 @@ async fn fetch_and_store_token_metadata(
                                     metadata = $3,
                                     name = $4,
                                     image_url = $5
-                                 WHERE contract_address = $1 AND token_id = $2::numeric"
+                                 WHERE contract_address = $1 AND token_id = $2::numeric",
                             )
                             .bind(contract_address)
                             .bind(token_id)
@@ -446,7 +488,7 @@ async fn fetch_and_store_token_metadata(
     // Mark as fetched even on failure (to avoid infinite retries)
     sqlx::query(
         "UPDATE nft_tokens SET metadata_fetched = true
-         WHERE contract_address = $1 AND token_id = $2::numeric"
+         WHERE contract_address = $1 AND token_id = $2::numeric",
     )
     .bind(contract_address)
     .bind(token_id)
@@ -456,10 +498,14 @@ async fn fetch_and_store_token_metadata(
     // Log at debug level since this is often expected (non-standard NFTs)
     tracing::debug!(
         "Failed to fetch metadata for {}:{}: {}",
-        contract_address, token_id, last_error.as_deref().unwrap_or("Unknown error")
+        contract_address,
+        token_id,
+        last_error.as_deref().unwrap_or("Unknown error")
     );
 
-    Err(anyhow::anyhow!(last_error.unwrap_or_else(|| "Unknown error".to_string())))
+    Err(anyhow::anyhow!(
+        last_error.unwrap_or_else(|| "Unknown error".to_string())
+    ))
 }
 
 /// Call tokenURI on an NFT contract
@@ -479,10 +525,10 @@ async fn fetch_token_uri(
 
 /// Resolve IPFS, Arweave, and other URI schemes to HTTP URLs
 fn resolve_uri(uri: &str, ipfs_gateway: &str) -> String {
-    if uri.starts_with("ipfs://") {
-        format!("{}{}", ipfs_gateway, &uri[7..])
-    } else if uri.starts_with("ar://") {
-        format!("https://arweave.net/{}", &uri[5..])
+    if let Some(stripped) = uri.strip_prefix("ipfs://") {
+        format!("{}{}", ipfs_gateway, stripped)
+    } else if let Some(stripped) = uri.strip_prefix("ar://") {
+        format!("https://arweave.net/{}", stripped)
     } else if uri.starts_with("data:") {
         // Data URIs are already complete
         uri.to_string()

@@ -2,7 +2,45 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { search as apiSearch } from '../api/search';
-import type { AnySearchResult } from '../types';
+import type { AnySearchResult, BlockSearchResult, TransactionSearchResult } from '../types';
+
+function isBlockResult(result: AnySearchResult): result is BlockSearchResult {
+  return result.type === 'block';
+}
+
+function isTransactionResult(result: AnySearchResult): result is TransactionSearchResult {
+  return result.type === 'transaction';
+}
+
+function getPrimaryText(result: AnySearchResult): string {
+  switch (result.type) {
+    case 'block':
+      return `Block #${result.number}`;
+    case 'transaction':
+      return `Tx ${result.hash}`;
+    case 'address':
+      return `Address ${result.address}`;
+    case 'nft':
+      return `NFT ${result.contract_address} #${result.token_id}`;
+    case 'nft_collection':
+      return `NFT Collection ${result.name || ''}`;
+  }
+}
+
+function getSecondaryText(result: AnySearchResult): string {
+  switch (result.type) {
+    case 'block':
+      return `Hash ${result.hash}`;
+    case 'transaction':
+      return `Block ${result.block_number}`;
+    case 'address':
+      return (result.is_contract || ('address_type' in result && result.address_type === 'contract') ? 'Contract' : 'EOA');
+    case 'nft':
+      return result.name || 'NFT';
+    case 'nft_collection':
+      return result.address;
+  }
+}
 
 export default function SearchBar() {
   const [query, setQuery] = useState('');
@@ -41,9 +79,9 @@ export default function SearchBar() {
       // 32-byte hash: could be block or transaction. Prefer block if present.
       try {
         const res = await apiSearch(trimmedQuery);
-        const block = res.results.find(r => r.type === 'block') as any;
+        const block = res.results.find(isBlockResult);
         if (block) { navigate(`/blocks/${block.number}`); return; }
-        const tx = res.results.find(r => r.type === 'transaction') as any;
+        const tx = res.results.find(isTransactionResult);
         if (tx) { navigate(`/tx/${tx.hash}`); return; }
         navigate(`/search?q=${encodeURIComponent(trimmedQuery)}`);
       } catch {
@@ -84,7 +122,7 @@ export default function SearchBar() {
         navigate(`/nfts/${r.contract_address}/${r.token_id}`);
         break;
       case 'nft_collection':
-        navigate(`/nfts/${(r as any).address}`);
+        navigate(`/nfts/${r.address}`);
         break;
       default:
         break;
@@ -198,18 +236,10 @@ export default function SearchBar() {
                   <TypeIcon type={r.type} />
                   <div className="min-w-0">
                     <div className="text-sm text-white truncate">
-                      {r.type === 'block' && `Block #${(r as any).number}`}
-                      {r.type === 'transaction' && `Tx ${(r as any).hash}`}
-                      {r.type === 'address' && `Address ${(r as any).address}`}
-                      {r.type === 'nft' && `NFT ${(r as any).contract_address} #${(r as any).token_id}`}
-                      {r.type === 'nft_collection' && `NFT Collection ${(r as any).name || ''}`}
+                      {getPrimaryText(r)}
                     </div>
                     <div className="text-xs text-gray-500 truncate">
-                      {r.type === 'block' && `Hash ${(r as any).hash}`}
-                      {r.type === 'transaction' && `Block ${(r as any).block_number}`}
-                      {r.type === 'address' && (((r as any).is_contract || (r as any).address_type === 'contract') ? 'Contract' : 'EOA')}
-                      {r.type === 'nft' && ((r as any).name || 'NFT')}
-                      {r.type === 'nft_collection' && (r as any).address}
+                      {getSecondaryText(r)}
                     </div>
                   </div>
                 </li>
