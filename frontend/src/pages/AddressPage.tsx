@@ -68,7 +68,7 @@ export default function AddressPage() {
     return (
       <div>
         <div className="flex flex-col gap-2 mb-6">
-          <h1 className="text-2xl font-bold text-white">Address</h1>
+          <h1 className="text-2xl font-bold text-fg">Address</h1>
           {addressParam && (
             <div className="flex items-center space-x-2 bg-dark-700 px-3 py-1 w-fit">
               <span className="hash text-gray-300 text-sm">{addressParam}</span>
@@ -92,7 +92,7 @@ export default function AddressPage() {
       {/* Header with Label */}
       <div className="flex flex-col gap-2 mb-6">
         <div className="flex items-center space-x-3">
-          <h1 className="text-2xl font-bold text-white">
+          <h1 className="text-2xl font-bold text-fg">
             {address?.address_type === 'erc20'
               ? 'Token Contract'
               : address?.address_type === 'nft'
@@ -127,19 +127,19 @@ export default function AddressPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <div className="card">
           <p className="text-gray-400 text-sm mb-1">Transactions</p>
-          <p className="text-xl font-semibold text-white">{address ? formatNumber(address.tx_count) : '---'}</p>
+          <p className="text-xl font-semibold text-fg">{address ? formatNumber(address.tx_count) : '---'}</p>
         </div>
         <div className="card">
           <p className="text-gray-400 text-sm mb-1">First Seen Block</p>
-          <p className="text-xl font-semibold text-white">{address ? formatNumber(address.first_seen_block) : '---'}</p>
+          <p className="text-xl font-semibold text-fg">{address ? formatNumber(address.first_seen_block) : '---'}</p>
         </div>
         <div className="card">
           <p className="text-gray-400 text-sm mb-1">ETH Balance</p>
-          <p className="text-xl font-semibold text-white">{balanceWei ? `${formatEtherExact(balanceWei)} ETH` : '---'}</p>
+          <p className="text-xl font-semibold text-fg">{balanceWei ? `${formatEtherExact(balanceWei)} ETH` : '---'}</p>
         </div>
         <div className="card">
           <p className="text-gray-400 text-sm mb-1">Address Type</p>
-          <div className="text-white font-semibold">
+          <div className="text-fg font-semibold">
             {address?.address_type === 'erc20'
               ? 'ERC-20 Token'
               : address?.address_type === 'nft'
@@ -208,7 +208,7 @@ export default function AddressPage() {
                   const self = addressParam?.toLowerCase();
                   const isSender = tx.from_address.toLowerCase() === self;
                   const badge = (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full border text-xs font-medium bg-dark-600 text-white border-dark-500">
+                    <span className="badge-chip text-[0.7rem]">
                       {isSender ? 'Sent to' : 'Received from'}
                     </span>
                   );
@@ -277,7 +277,7 @@ export default function AddressPage() {
                     <td className="table-cell">
                       <Link to={`/tokens/${balance.contract_address}`} className="hover:underline">
                         <div className="flex flex-col">
-                          <span className="text-white font-medium">{balance.name || 'Unknown Token'}</span>
+                          <span className="text-fg font-medium">{balance.name || 'Unknown Token'}</span>
                           <span className="text-gray-500 text-sm">{balance.symbol || '---'}</span>
                         </div>
                       </Link>
@@ -324,7 +324,7 @@ export default function AddressPage() {
                         )}
                       </div>
                       <div className="mt-2">
-                        <div className="text-white text-sm truncate">{displayName}</div>
+                        <div className="text-fg text-sm truncate">{displayName}</div>
                         <div className="text-gray-500 text-xs truncate">{t.contract_address}</div>
                       </div>
                     </Link>
@@ -388,7 +388,7 @@ export default function AddressPage() {
                         <td className="table-cell text-xs text-gray-200 uppercase">{isErc20 ? 'ERC-20' : 'NFT'}</td>
                         <td className="table-cell">
                           <div className="flex flex-col">
-                            <span className="text-white text-sm">{t.token_name || (isErc20 ? 'ERC-20' : 'NFT')}</span>
+                            <span className="text-fg text-sm">{t.token_name || (isErc20 ? 'ERC-20' : 'NFT')}</span>
                             <span className="text-gray-500 text-xs">{t.token_symbol || ''}</span>
                           </div>
                         </td>

@@ -63,7 +63,7 @@ export default function Pagination({ currentPage, totalPages, onPageChange }: Pa
             page === currentPage
               ? 'btn-primary'
               : page === '...'
-              ? 'bg-transparent cursor-default text-gray-500'
+              ? 'bg-transparent cursor-default text-fg-subtle'
               : 'btn-secondary'
           }`}
         >

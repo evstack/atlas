@@ -50,7 +50,7 @@ function LogCard({ log, showTxHash, showAddress }: { log: EventLog | DecodedEven
         <div className="flex items-center gap-4">
           <span className="text-gray-500 text-sm">#{log.log_index}</span>
           {decoded?.event_name ? (
-            <span className="text-white text-sm font-medium">
+            <span className="text-fg text-sm font-medium">
               {decoded.event_name}
             </span>
           ) : (
@@ -61,7 +61,7 @@ function LogCard({ log, showTxHash, showAddress }: { log: EventLog | DecodedEven
         </div>
         <button
           onClick={() => setExpanded(!expanded)}
-          className="text-gray-400 hover:text-white text-sm transition-colors"
+          className="text-gray-400 hover:text-fg text-sm transition-colors"
         >
           {expanded ? 'Collapse' : 'Expand'}
         </button>

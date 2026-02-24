@@ -9,7 +9,7 @@ export default function useEthPrice({ refreshMs = 60000 }: UseEthPriceOptions = 
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadFromCache = () => {
+  const loadFromCache = useCallback(() => {
     try {
       const raw = localStorage.getItem('price:eth_usd');
       if (!raw) return null;
@@ -19,7 +19,7 @@ export default function useEthPrice({ refreshMs = 60000 }: UseEthPriceOptions = 
     } catch {
       return null;
     }
-  };
+  }, [refreshMs]);
 
   const saveToCache = (v: number) => {
     try {
@@ -76,7 +76,7 @@ export default function useEthPrice({ refreshMs = 60000 }: UseEthPriceOptions = 
     } finally {
       setLoading(false);
     }
-  }, [refreshMs]);
+  }, [loadFromCache]);
 
   useEffect(() => {
     fetchPrice();

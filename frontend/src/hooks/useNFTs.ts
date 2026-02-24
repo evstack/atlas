@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { NftContract, NftToken, ApiError } from '../types';
 import { getNftContracts, getNftContract, getNftTokens, getNftToken, getAddressNfts, getNftTransfers, getNftTokenTransfers } from '../api/nfts';
 import type { GetNftContractsParams, GetNftTokensParams, GetAddressNftsParams, GetNftTransfersParams } from '../api/nfts';
@@ -16,12 +16,18 @@ export function useNftContracts(params: GetNftContractsParams = {}): UseNftContr
   const [pagination, setPagination] = useState<{ page: number; limit: number; total: number; total_pages: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
+  const paramsRef = useRef(params);
+  const paramsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
 
   const fetchContracts = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await getNftContracts(params);
+      const response = await getNftContracts(paramsRef.current);
       setContracts(response.data);
       setPagination({
         page: response.page,
@@ -34,11 +40,11 @@ export function useNftContracts(params: GetNftContractsParams = {}): UseNftContr
     } finally {
       setLoading(false);
     }
-  }, [params.page, params.limit]);
+  }, []);
 
   useEffect(() => {
     fetchContracts();
-  }, [fetchContracts]);
+  }, [fetchContracts, paramsKey]);
 
   return { contracts, pagination, loading, error, refetch: fetchContracts };
 }
@@ -94,6 +100,13 @@ export function useNftTokens(contractAddress: string | undefined, params: GetNft
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const paramsRef = useRef(params);
+  const tokenParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
+
   const fetchTokens = useCallback(async () => {
     if (!contractAddress) {
       setLoading(false);
@@ -103,7 +116,7 @@ export function useNftTokens(contractAddress: string | undefined, params: GetNft
     setLoading(true);
     setError(null);
     try {
-      const response = await getNftTokens(contractAddress, params);
+      const response = await getNftTokens(contractAddress, paramsRef.current);
       setTokens(response.data);
       setPagination({
         page: response.page,
@@ -116,11 +129,11 @@ export function useNftTokens(contractAddress: string | undefined, params: GetNft
     } finally {
       setLoading(false);
     }
-  }, [contractAddress, params.page, params.limit, params.owner]);
+  }, [contractAddress]);
 
   useEffect(() => {
     fetchTokens();
-  }, [fetchTokens]);
+  }, [fetchTokens, tokenParamsKey]);
 
   return { tokens, pagination, loading, error, refetch: fetchTokens };
 }
@@ -176,12 +189,19 @@ export function useNftTokenTransfers(contractAddress: string | undefined, tokenI
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const paramsRef = useRef(params);
+  const transferParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
+
   const fetchTransfers = useCallback(async () => {
     if (!contractAddress || !tokenId) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
-      const response = await getNftTokenTransfers(contractAddress, tokenId, params);
+      const response = await getNftTokenTransfers(contractAddress, tokenId, paramsRef.current);
       setTransfers(response.data);
       setPagination({ page: response.page, limit: response.limit, total: response.total, total_pages: response.total_pages });
     } catch (err) {
@@ -189,9 +209,9 @@ export function useNftTokenTransfers(contractAddress: string | undefined, tokenI
     } finally {
       setLoading(false);
     }
-  }, [contractAddress, tokenId, params.page, params.limit]);
+  }, [contractAddress, tokenId]);
 
-  useEffect(() => { fetchTransfers(); }, [fetchTransfers]);
+  useEffect(() => { fetchTransfers(); }, [fetchTransfers, transferParamsKey]);
 
   return { transfers, pagination, loading, error, refetch: fetchTransfers };
 }
@@ -210,12 +230,19 @@ export function useNftCollectionTransfers(contractAddress: string | undefined, p
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const paramsRef = useRef(params);
+  const collectionParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
+
   const fetchTransfers = useCallback(async () => {
     if (!contractAddress) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
-      const response = await getNftTransfers(contractAddress, params);
+      const response = await getNftTransfers(contractAddress, paramsRef.current);
       setTransfers(response.data);
       setPagination({ page: response.page, limit: response.limit, total: response.total, total_pages: response.total_pages });
     } catch (err) {
@@ -223,9 +250,9 @@ export function useNftCollectionTransfers(contractAddress: string | undefined, p
     } finally {
       setLoading(false);
     }
-  }, [contractAddress, params.page, params.limit]);
+  }, [contractAddress]);
 
-  useEffect(() => { fetchTransfers(); }, [fetchTransfers]);
+  useEffect(() => { fetchTransfers(); }, [fetchTransfers, collectionParamsKey]);
 
   return { transfers, pagination, loading, error, refetch: fetchTransfers };
 }
@@ -244,12 +271,19 @@ export function useAddressNfts(address: string | undefined, params: GetAddressNf
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const paramsRef = useRef(params);
+  const addressParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
+
   const fetchTokens = useCallback(async () => {
     if (!address) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
-      const response = await getAddressNfts(address, params);
+      const response = await getAddressNfts(address, paramsRef.current);
       setTokens(response.data);
       setPagination({ page: response.page, limit: response.limit, total: response.total, total_pages: response.total_pages });
     } catch (err) {
@@ -257,9 +291,9 @@ export function useAddressNfts(address: string | undefined, params: GetAddressNf
     } finally {
       setLoading(false);
     }
-  }, [address, params.page, params.limit]);
+  }, [address]);
 
-  useEffect(() => { fetchTokens(); }, [fetchTokens]);
+  useEffect(() => { fetchTokens(); }, [fetchTokens, addressParamsKey]);
 
   return { tokens, pagination, loading, error, refetch: fetchTokens };
 }

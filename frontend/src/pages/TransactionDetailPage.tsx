@@ -133,13 +133,13 @@ export default function TransactionDetailPage() {
         </div>
       )}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Transaction</h1>
+        <h1 className="text-2xl font-bold text-fg">Transaction</h1>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <aside className="lg:col-span-3">
           <div className="card p-3">
-            <h2 className="text-base font-semibold text-white mb-3">Overview</h2>
+            <h2 className="text-base font-semibold text-fg mb-3">Overview</h2>
             <dl className="space-y-2">
               {details.map(({ label, value, stacked }) => (
                 <div key={label} className={`flex flex-col ${stacked ? '' : 'sm:flex-row sm:items-start'} leading-tight`}>
@@ -155,13 +155,13 @@ export default function TransactionDetailPage() {
           <div className="card p-3">
             <div className="flex items-center justify-between mb-3">
               <div className="flex gap-2">
-                <button className={`px-3 py-1.5 rounded-full text-sm ${subTab === 'tokens' ? 'bg-dark-700/70 text-white' : 'text-gray-400 hover:text-white hover:bg-dark-700/40'}`} onClick={() => setSubTab('tokens')}>
+                <button className={`px-3 py-1.5 rounded-full text-sm ${subTab === 'tokens' ? 'bg-dark-700/70 text-fg' : 'text-gray-400 hover:text-fg hover:bg-dark-700/40'}`} onClick={() => setSubTab('tokens')}>
                   Tokens <span className="text-gray-400">({formatNumber(tokensCount)})</span>
                 </button>
-                <button className={`px-3 py-1.5 rounded-full text-sm ${subTab === 'nfts' ? 'bg-dark-700/70 text-white' : 'text-gray-400 hover:text-white hover:bg-dark-700/40'}`} onClick={() => setSubTab('nfts')}>
+                <button className={`px-3 py-1.5 rounded-full text-sm ${subTab === 'nfts' ? 'bg-dark-700/70 text-fg' : 'text-gray-400 hover:text-fg hover:bg-dark-700/40'}`} onClick={() => setSubTab('nfts')}>
                   NFTs <span className="text-gray-400">({formatNumber(nftsCount)})</span>
                 </button>
-                <button className={`px-3 py-1.5 rounded-full text-sm ${subTab === 'logs' ? 'bg-dark-700/70 text-white' : 'text-gray-400 hover:text-white hover:bg-dark-700/40'}`} onClick={() => setSubTab('logs')}>
+                <button className={`px-3 py-1.5 rounded-full text-sm ${subTab === 'logs' ? 'bg-dark-700/70 text-fg' : 'text-gray-400 hover:text-fg hover:bg-dark-700/40'}`} onClick={() => setSubTab('logs')}>
                   Logs <span className="text-gray-400">({formatNumber(logsCount)})</span>
                 </button>
               </div>
@@ -203,7 +203,7 @@ export default function TransactionDetailPage() {
                         const symbol = meta?.symbol ?? '';
                         return (
                           <tr key={`${t.contract_address}-${idx}`} className="hover:bg-dark-700/50 transition-colors">
-                            <td className="table-cell text-white text-sm">{symbol || 'ERC-20'}</td>
+                            <td className="table-cell text-fg text-sm">{symbol || 'ERC-20'}</td>
                             <td className="table-cell"><AddressLink address={t.contract_address} /></td>
                             <td className="table-cell"><AddressLink address={t.from_address} /></td>
                             <td className="table-cell"><AddressLink address={t.to_address} /></td>
@@ -252,7 +252,7 @@ export default function TransactionDetailPage() {
           {transaction?.input_data && transaction.input_data !== '0x' && (
             <div className="card p-3">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="text-base font-semibold text-white">Input Data</h2>
+                <h2 className="text-base font-semibold text-fg">Input Data</h2>
                 <button
                   className="btn btn-secondary text-xs"
                   onClick={() => setShowInput((v) => !v)}

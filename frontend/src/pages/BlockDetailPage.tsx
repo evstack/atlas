@@ -57,7 +57,7 @@ export default function BlockDetailPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Block {blockNumber !== undefined ? `#${formatNumber(blockNumber)}` : ''}</h1>
+        <h1 className="text-2xl font-bold text-fg">Block {blockNumber !== undefined ? `#${formatNumber(blockNumber)}` : ''}</h1>
         <div className="flex space-x-2">
           {blockNumber !== undefined && blockNumber > 0 && (
             <Link to={`/blocks/${blockNumber - 1}`} className="btn btn-secondary text-sm" aria-label="Previous block" title="Previous block">
@@ -86,7 +86,7 @@ export default function BlockDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <aside className="lg:col-span-3">
           <div className="card p-3">
-            <h2 className="text-base font-semibold text-white mb-3">Overview</h2>
+            <h2 className="text-base font-semibold text-fg mb-3">Overview</h2>
             <dl className="space-y-2">
               {details.map(({ label, value, stacked }) => (
                 <div key={label} className={`flex flex-col ${stacked ? '' : 'sm:flex-row sm:items-start'} leading-tight`}>

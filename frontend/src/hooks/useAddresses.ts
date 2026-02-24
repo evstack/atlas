@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Address, ApiError, PaginatedResponse } from '../types';
 import { getAddresses, type GetAddressesParams } from '../api/addresses';
 
@@ -15,12 +15,18 @@ export function useAddresses(params: GetAddressesParams = {}): UseAddressesResul
   const [pagination, setPagination] = useState<PaginatedResponse<Address> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
+  const paramsRef = useRef(params);
+  const paramsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
 
   const fetchAddresses = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await getAddresses(params);
+      const response = await getAddresses(paramsRef.current);
       setAddresses(response.data);
       setPagination(response);
     } catch (err) {
@@ -28,11 +34,11 @@ export function useAddresses(params: GetAddressesParams = {}): UseAddressesResul
     } finally {
       setLoading(false);
     }
-  }, [params.page, params.limit, params.address_type, params.from_block, params.to_block]);
+  }, []);
 
   useEffect(() => {
     fetchAddresses();
-  }, [fetchAddresses]);
+  }, [fetchAddresses, paramsKey]);
 
   return { addresses, pagination, loading, error, refetch: fetchAddresses };
 }

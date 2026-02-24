@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Block, Transaction, PaginatedResponse, ApiError } from '../types';
 import { getBlocks, getBlockByNumber, getBlockTransactions } from '../api/blocks';
 import type { GetBlocksParams } from '../api/blocks';
@@ -16,12 +16,18 @@ export function useBlocks(params: GetBlocksParams = {}): UseBlocksResult {
   const [pagination, setPagination] = useState<PaginatedResponse<Block> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
+  const paramsRef = useRef(params);
+  const paramsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
 
   const fetchBlocks = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await getBlocks(params);
+      const response = await getBlocks(paramsRef.current);
       setBlocks(response.data);
       setPagination(response);
     } catch (err) {
@@ -29,11 +35,11 @@ export function useBlocks(params: GetBlocksParams = {}): UseBlocksResult {
     } finally {
       setLoading(false);
     }
-  }, [params.page, params.limit]);
+  }, []);
 
   useEffect(() => {
     fetchBlocks();
-  }, [fetchBlocks]);
+  }, [fetchBlocks, paramsKey]);
 
   return { blocks, pagination, loading, error, refetch: fetchBlocks };
 }
@@ -92,6 +98,13 @@ export function useBlockTransactions(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const paramsRef = useRef(params);
+  const txParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
+
   const fetchTransactions = useCallback(async () => {
     if (blockNumber === undefined) {
       setLoading(false);
@@ -101,7 +114,7 @@ export function useBlockTransactions(
     setLoading(true);
     setError(null);
     try {
-      const response = await getBlockTransactions(blockNumber, params);
+      const response = await getBlockTransactions(blockNumber, paramsRef.current);
       setTransactions(response.data);
       setPagination(response);
     } catch (err) {
@@ -109,11 +122,11 @@ export function useBlockTransactions(
     } finally {
       setLoading(false);
     }
-  }, [blockNumber, params.page, params.limit]);
+  }, [blockNumber]);
 
   useEffect(() => {
     fetchTransactions();
-  }, [fetchTransactions]);
+  }, [fetchTransactions, txParamsKey]);
 
   return { transactions, pagination, loading, error, refetch: fetchTransactions };
 }

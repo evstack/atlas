@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Transaction, ApiError } from '../types';
 import { getTransactions, getTransactionByHash, getTransactionsByAddress } from '../api/transactions';
 import type { GetTransactionsParams } from '../api/transactions';
@@ -17,11 +17,18 @@ export function useTransactions(params: GetTransactionsParams = {}): UseTransact
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const paramsRef = useRef(params);
+  const paramsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
+
   const fetchTransactions = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await getTransactions(params);
+      const response = await getTransactions(paramsRef.current);
       setTransactions(response.data);
       setPagination({
         page: response.page,
@@ -34,11 +41,11 @@ export function useTransactions(params: GetTransactionsParams = {}): UseTransact
     } finally {
       setLoading(false);
     }
-  }, [params.page, params.limit, params.block_number, params.address]);
+  }, []);
 
   useEffect(() => {
     fetchTransactions();
-  }, [fetchTransactions]);
+  }, [fetchTransactions, paramsKey]);
 
   return { transactions, pagination, loading, error, refetch: fetchTransactions };
 }
@@ -49,6 +56,13 @@ export function useAddressTransactions(address: string | undefined, params: { pa
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const addressParamsRef = useRef(params);
+  const addressParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    addressParamsRef.current = params;
+  }, [params]);
+
   const fetchTransactions = useCallback(async () => {
     if (!address) {
       setLoading(false);
@@ -58,7 +72,7 @@ export function useAddressTransactions(address: string | undefined, params: { pa
     setLoading(true);
     setError(null);
     try {
-      const response = await getTransactionsByAddress(address, params);
+      const response = await getTransactionsByAddress(address, addressParamsRef.current);
       setTransactions(response.data);
       setPagination({
         page: response.page,
@@ -71,11 +85,11 @@ export function useAddressTransactions(address: string | undefined, params: { pa
     } finally {
       setLoading(false);
     }
-  }, [address, params.page, params.limit]);
+  }, [address]);
 
   useEffect(() => {
     fetchTransactions();
-  }, [fetchTransactions]);
+  }, [fetchTransactions, addressParamsKey]);
 
   return { transactions, pagination, loading, error, refetch: fetchTransactions };
 }

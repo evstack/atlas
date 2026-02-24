@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { EventLog, DecodedEventLog, ApiError } from '../types';
 import {
   getTransactionLogs,
@@ -21,6 +21,13 @@ export function useTransactionLogs(txHash: string | undefined, params: GetTransa
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const paramsRef = useRef(params);
+  const txLogsParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    paramsRef.current = params;
+  }, [params]);
+
   const fetchLogs = useCallback(async () => {
     if (!txHash) {
       setLoading(false);
@@ -30,7 +37,7 @@ export function useTransactionLogs(txHash: string | undefined, params: GetTransa
     setLoading(true);
     setError(null);
     try {
-      const response = await getTransactionLogs(txHash, params);
+      const response = await getTransactionLogs(txHash, paramsRef.current);
       setLogs(response.data);
       setPagination({
         page: response.page,
@@ -43,11 +50,11 @@ export function useTransactionLogs(txHash: string | undefined, params: GetTransa
     } finally {
       setLoading(false);
     }
-  }, [txHash, params.page, params.limit]);
+  }, [txHash]);
 
   useEffect(() => {
     fetchLogs();
-  }, [fetchLogs]);
+  }, [fetchLogs, txLogsParamsKey]);
 
   return { logs, pagination, loading, error, refetch: fetchLogs };
 }
@@ -66,6 +73,13 @@ export function useTransactionDecodedLogs(txHash: string | undefined, params: Ge
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const decodedParamsRef = useRef(params);
+  const decodedParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    decodedParamsRef.current = params;
+  }, [params]);
+
   const fetchLogs = useCallback(async () => {
     if (!txHash) {
       setLoading(false);
@@ -75,7 +89,7 @@ export function useTransactionDecodedLogs(txHash: string | undefined, params: Ge
     setLoading(true);
     setError(null);
     try {
-      const response = await getTransactionDecodedLogs(txHash, params);
+      const response = await getTransactionDecodedLogs(txHash, decodedParamsRef.current);
       setLogs(response.data);
       setPagination({
         page: response.page,
@@ -88,11 +102,11 @@ export function useTransactionDecodedLogs(txHash: string | undefined, params: Ge
     } finally {
       setLoading(false);
     }
-  }, [txHash, params.page, params.limit]);
+  }, [txHash]);
 
   useEffect(() => {
     fetchLogs();
-  }, [fetchLogs]);
+  }, [fetchLogs, decodedParamsKey]);
 
   return { logs, pagination, loading, error, refetch: fetchLogs };
 }
@@ -111,6 +125,13 @@ export function useAddressLogs(address: string | undefined, params: GetAddressLo
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const addressParamsRef = useRef(params);
+  const addressParamsKey = JSON.stringify(params);
+
+  useEffect(() => {
+    addressParamsRef.current = params;
+  }, [params]);
+
   const fetchLogs = useCallback(async () => {
     if (!address) {
       setLoading(false);
@@ -120,7 +141,7 @@ export function useAddressLogs(address: string | undefined, params: GetAddressLo
     setLoading(true);
     setError(null);
     try {
-      const response = await getAddressLogs(address, params);
+      const response = await getAddressLogs(address, addressParamsRef.current);
       setLogs(response.data);
       setPagination({
         page: response.page,
@@ -133,11 +154,11 @@ export function useAddressLogs(address: string | undefined, params: GetAddressLo
     } finally {
       setLoading(false);
     }
-  }, [address, params.page, params.limit]);
+  }, [address]);
 
   useEffect(() => {
     fetchLogs();
-  }, [fetchLogs]);
+  }, [fetchLogs, addressParamsKey]);
 
   return { logs, pagination, loading, error, refetch: fetchLogs };
 }

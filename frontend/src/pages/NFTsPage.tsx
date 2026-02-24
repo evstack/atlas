@@ -12,7 +12,7 @@ export default function NFTsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">NFT Collections</h1>
+        <h1 className="text-2xl font-bold text-fg">NFT Collections</h1>
         {pagination && pagination.total > 0 && (
           <p className="text-gray-400 text-sm">
             Total: {formatNumber(pagination.total)} collections
@@ -31,7 +31,7 @@ export default function NFTsPage() {
             >
               <div className="flex items-start justify-between mb-3">
                 <div>
-                  <h3 className="text-white font-semibold">
+                  <h3 className="text-fg font-semibold">
                     {contract.name || 'Unknown Collection'}
                   </h3>
                   <p className="text-gray-500 text-sm">{contract.symbol || '---'}</p>

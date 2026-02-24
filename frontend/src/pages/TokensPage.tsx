@@ -41,7 +41,7 @@ export default function TokensPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">ERC-20 Tokens</h1>
+        <h1 className="text-2xl font-bold text-fg">ERC-20 Tokens</h1>
         {pagination && pagination.total > 0 && (
           <p className="text-gray-400 text-sm">
             Total: {formatNumber(pagination.total)} tokens
@@ -58,7 +58,7 @@ export default function TokensPage() {
               <thead>
                 <tr className="bg-dark-700">
                   <th className="table-cell text-left table-header text-xs">
-                    <button className="flex items-center gap-1 hover:text-white" onClick={() => handleSort('name')}>
+                    <button className="flex items-center gap-1 hover:text-fg" onClick={() => handleSort('name')}>
                       Token
                       {sort.key === 'name' && (
                         <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -73,7 +73,7 @@ export default function TokensPage() {
                   </th>
                   <th className="table-cell text-left table-header text-xs">Contract</th>
                   <th className="table-cell text-right table-header text-xs">
-                    <button className="flex items-center gap-1 ml-auto hover:text-white" onClick={() => handleSort('decimals')}>
+                    <button className="flex items-center gap-1 ml-auto hover:text-fg" onClick={() => handleSort('decimals')}>
                       Decimals
                       {sort.key === 'decimals' && (
                         <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -87,7 +87,7 @@ export default function TokensPage() {
                     </button>
                   </th>
                   <th className="table-cell text-right table-header text-xs">
-                    <button className="flex items-center gap-1 ml-auto hover:text-white" onClick={() => handleSort('first_seen_block')}>
+                    <button className="flex items-center gap-1 ml-auto hover:text-fg" onClick={() => handleSort('first_seen_block')}>
                       First Seen Block
                       {sort.key === 'first_seen_block' && (
                         <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -114,8 +114,8 @@ export default function TokensPage() {
                   >
                     <td className="table-cell py-1">
                       <Link to={`/tokens/${token.address}`} className="flex items-center gap-2 hover:underline">
-                        <span className="text-white font-medium truncate">{token.name || 'Unknown Token'}</span>
-                        <span className="inline-flex items-center px-1.5 py-0 rounded-full border border-dark-500 bg-dark-600 text-[10px] text-gray-300 uppercase tracking-wide">
+                        <span className="text-fg font-medium truncate">{token.name || 'Unknown Token'}</span>
+                        <span className="badge-chip uppercase tracking-wide text-[0.65rem]">
                           {token.symbol || '—'}
                         </span>
                       </Link>
