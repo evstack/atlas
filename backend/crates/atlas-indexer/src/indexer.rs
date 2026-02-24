@@ -1,54 +1,32 @@
-use alloy::network::Ethereum;
-use alloy::primitives::{Address, U256};
-use alloy::providers::{Provider, ProviderBuilder, RootProvider};
-use alloy::rpc::types::{Block, Log, TransactionReceipt};
-use alloy::transports::http::{Client, Http};
+use alloy::primitives::U256;
+use alloy::providers::ProviderBuilder;
+use alloy::rpc::types::TransactionReceipt;
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use governor::{Quota, RateLimiter};
 use sqlx::PgPool;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio_postgres::{types::ToSql, Client, NoTls};
+use tokio_postgres_rustls::MakeRustlsConnect;
 
+use crate::batch::{BlockBatch, NftTokenState};
 use crate::config::Config;
-
-/// Retry delays for RPC calls (in seconds)
-const RPC_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30];
-const RPC_MAX_RETRIES: usize = 10;
+use crate::copy::{copy_blocks, copy_erc20_transfers, copy_event_logs, copy_nft_transfers, copy_transactions};
+use crate::fetcher::{fetch_blocks_batch, get_block_number_with_retry, FetchResult, FetchedBlock, SharedRateLimiter, WorkItem};
 
 /// Partition size: 10 million blocks per partition
 const PARTITION_SIZE: u64 = 10_000_000;
-
-/// Work item for a worker - a range of blocks to fetch
-#[derive(Debug, Clone)]
-struct WorkItem {
-    start_block: u64,
-    count: usize,
-}
 
 /// ERC-20/721 Transfer event signature: Transfer(address,address,uint256)
 const TRANSFER_TOPIC: &str =
     "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
-type HttpProvider = RootProvider<Http<Client>, Ethereum>;
-type SharedRateLimiter = Arc<RateLimiter<governor::state::NotKeyed, governor::state::InMemoryState, governor::clock::DefaultClock>>;
-
-/// Result of fetching a block from RPC
-enum FetchResult {
-    Success(FetchedBlock),
-    Error { block_num: u64, error: String },
-}
-
-/// Data fetched from RPC for a single block
-struct FetchedBlock {
-    number: u64,
-    block: Block,
-    receipts: Vec<TransactionReceipt>,
-}
+const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 pub struct Indexer {
     pool: PgPool,
@@ -68,8 +46,45 @@ impl Indexer {
         }
     }
 
+    /// Open a tokio-postgres connection for binary COPY, using TLS when sslmode
+    /// requires it (require / verify-ca / verify-full) and plain TCP otherwise.
+    async fn connect_copy_client(database_url: &str) -> Result<Client> {
+        let needs_tls = database_url.contains("sslmode=require")
+            || database_url.contains("sslmode=verify-ca")
+            || database_url.contains("sslmode=verify-full");
+
+        if needs_tls {
+            let mut root_store = rustls::RootCertStore::empty();
+            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            let tls_config = rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+            let tls = MakeRustlsConnect::new(tls_config);
+            let (client, connection) = tokio_postgres::connect(database_url, tls).await?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    tracing::error!("copy connection error: {}", e);
+                }
+            });
+            Ok(client)
+        } else {
+            let (client, connection) = tokio_postgres::connect(database_url, NoTls).await?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    tracing::error!("copy connection error: {}", e);
+                }
+            });
+            Ok(client)
+        }
+    }
+
     pub async fn run(&self) -> Result<()> {
         let provider = Arc::new(ProviderBuilder::new().on_http(self.config.rpc_url.parse()?));
+
+        // Dedicated connection for binary COPY — kept separate from the sqlx pool
+        // because COPY IN requires exclusive use of the connection during the transfer.
+        // TLS is used when sslmode=require/verify-ca/verify-full is set in DATABASE_URL.
+        let mut copy_client = Self::connect_copy_client(&self.config.database_url).await?;
 
         // Create rate limiter for RPC requests
         let rps = NonZeroU32::new(self.config.rpc_requests_per_second).unwrap_or(NonZeroU32::new(100).unwrap());
@@ -86,13 +101,19 @@ impl Indexer {
         let start_block = self.get_start_block().await?;
         tracing::info!("Starting indexing from block {}", start_block);
 
+        // Load known contracts into memory to avoid a SELECT per transfer
+        let mut known_erc20: HashSet<String> = self.load_known_erc20().await?;
+        tracing::info!("Loaded {} known ERC-20 contracts", known_erc20.len());
+        let mut known_nft: HashSet<String> = self.load_known_nft().await?;
+        tracing::info!("Loaded {} known NFT contracts", known_nft.len());
+
         let num_workers = self.config.fetch_workers as usize;
         let rpc_batch_size = self.config.rpc_batch_size as usize;
         tracing::info!("Starting {} fetch workers with {} blocks per RPC batch", num_workers, rpc_batch_size);
 
         // Channels for work distribution and results
-        // work_tx: send WorkItems (block ranges) to fetch
-        // result_tx: workers send fetched blocks back
+        // work_tx: send WorkItems (block ranges) to fetch workers
+        // result_tx: workers send fetched blocks back to main loop
         let (work_tx, work_rx) = async_channel::bounded::<WorkItem>(num_workers * 2);
         let (result_tx, mut result_rx) = mpsc::channel::<FetchResult>(num_workers * rpc_batch_size * 2);
 
@@ -115,7 +136,7 @@ impl Indexer {
                     match work_rx.recv().await {
                         Ok(work_item) => {
                             // Fetch batch of blocks using JSON-RPC batching
-                            let results = Self::fetch_blocks_batch(
+                            let results = fetch_blocks_batch(
                                 &client,
                                 &url,
                                 work_item.start_block,
@@ -140,7 +161,7 @@ impl Indexer {
             });
         }
 
-        // Drop our copy of result_tx so channel closes when all workers done
+        // Drop our copy of result_tx so channel closes when all workers are done
         drop(result_tx);
 
         // Main indexing loop
@@ -149,7 +170,7 @@ impl Indexer {
 
         loop {
             // Get chain head with retry
-            let head = match self.get_block_number_with_retry(&provider).await {
+            let head = match get_block_number_with_retry(&provider).await {
                 Ok(h) => h,
                 Err(e) => {
                     // This should only happen after all retries exhausted (very unlikely)
@@ -192,11 +213,13 @@ impl Indexer {
                 tracing::debug!("Sent {} blocks to workers in batches of {}", batch_size, blocks_per_batch);
             });
 
-            // Collect results with reorder buffer
+            // Collect results with reorder buffer, accumulating into a single
+            // BlockBatch in order — no DB calls yet.
             let mut buffer: BTreeMap<u64, FetchedBlock> = BTreeMap::new();
             let mut next_to_process = current_block;
             let mut blocks_received = 0;
             let mut failed_blocks: Vec<(u64, String)> = Vec::new();
+            let mut batch = BlockBatch::new();
 
             // Receive all blocks for this batch
             while blocks_received < batch_size {
@@ -205,9 +228,9 @@ impl Indexer {
                         buffer.insert(fetched.number, fetched);
                         blocks_received += 1;
 
-                        // Process all consecutive blocks we have in order
+                        // Collect consecutive blocks in order (sync, no await)
                         while let Some(data) = buffer.remove(&next_to_process) {
-                            self.process_block(&provider, data).await?;
+                            Self::collect_block(&mut batch, &known_erc20, &known_nft, data);
                             next_to_process += 1;
                         }
                     }
@@ -227,6 +250,19 @@ impl Indexer {
                 }
             }
 
+            // Extract newly discovered contracts before consuming the batch.
+            // We only merge them into the persistent sets after a successful write —
+            // if write_batch fails, the sets stay consistent with the DB.
+            let new_erc20 = std::mem::take(&mut batch.new_erc20);
+            let new_nft = std::mem::take(&mut batch.new_nft);
+
+            // One DB transaction for the entire batch
+            self.write_batch(&mut copy_client, batch, true).await?;
+
+            // Write succeeded — now safe to update the persistent in-memory sets
+            known_erc20.extend(new_erc20);
+            known_nft.extend(new_nft);
+
             // Wait for send task to complete
             let _ = send_task.await;
 
@@ -237,9 +273,7 @@ impl Indexer {
 
                 // Retry up to 3 times with increasing delay
                 for attempt in 1..=3 {
-                    if failed_blocks.is_empty() {
-                        break;
-                    }
+                    if failed_blocks.is_empty() { break; }
 
                     let delay = Duration::from_secs(attempt * 2); // 2s, 4s, 6s
                     tracing::info!("Retry attempt {} for {} blocks (waiting {:?})",
@@ -249,7 +283,7 @@ impl Indexer {
                     let mut still_failed = Vec::new();
                     for (block_num, last_error) in failed_blocks {
                         // Fetch single block
-                        let results = Self::fetch_blocks_batch(
+                        let results = fetch_blocks_batch(
                             &http_client,
                             &rpc_url,
                             block_num,
@@ -259,8 +293,17 @@ impl Indexer {
 
                         match results.into_iter().next() {
                             Some(FetchResult::Success(fetched)) => {
-                                // Process the retried block
-                                self.process_block(&provider, fetched).await?;
+                                // Write retried block immediately
+                                let mut mini_batch = BlockBatch::new();
+                                Self::collect_block(&mut mini_batch, &known_erc20, &known_nft, fetched);
+                                let new_erc20 = std::mem::take(&mut mini_batch.new_erc20);
+                                let new_nft = std::mem::take(&mut mini_batch.new_nft);
+                                // Don't update the watermark — the main batch already wrote
+                                // a higher last_indexed_block; overwriting it with this
+                                // block's lower number would cause a regression on restart.
+                                self.write_batch(&mut copy_client, mini_batch, false).await?;
+                                known_erc20.extend(new_erc20);
+                                known_nft.extend(new_nft);
                                 tracing::info!("Block {} retry succeeded", block_num);
                             }
                             Some(FetchResult::Error { error, .. }) => {
@@ -321,329 +364,369 @@ impl Indexer {
         }
     }
 
-    /// Fetch multiple blocks using JSON-RPC batch request
-    async fn fetch_blocks_batch(
-        client: &reqwest::Client,
-        rpc_url: &str,
-        start_block: u64,
-        count: usize,
-        rate_limiter: &SharedRateLimiter,
-    ) -> Vec<FetchResult> {
-        tracing::debug!("Fetching batch: blocks {} to {}", start_block, start_block + count as u64 - 1);
+    // -----------------------------------------------------------------------
+    // collect_block — pure sync, no DB, no async.
+    // Accumulates all block data into the batch for later bulk insert.
+    // -----------------------------------------------------------------------
 
-        // Wait for rate limiter - we're making 2*count RPC calls in one HTTP request
-        for _ in 0..(count * 2) {
-            rate_limiter.until_ready().await;
-        }
+    fn collect_block(batch: &mut BlockBatch, known_erc20: &HashSet<String>, known_nft: &HashSet<String>, fetched: FetchedBlock) {
+        use alloy::consensus::Transaction as TxTrait;
 
-        // Build batch request
-        let mut batch_request = Vec::with_capacity(count * 2);
-        for i in 0..count {
-            let block_num = start_block + i as u64;
-            let block_hex = format!("0x{:x}", block_num);
-
-            // eth_getBlockByNumber with full transactions
-            batch_request.push(serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "eth_getBlockByNumber",
-                "params": [block_hex, true],
-                "id": i * 2
-            }));
-
-            // eth_getBlockReceipts
-            batch_request.push(serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "eth_getBlockReceipts",
-                "params": [block_hex],
-                "id": i * 2 + 1
-            }));
-        }
-
-        // Send batch request with retry for network errors
-        let mut batch_response: Option<Vec<serde_json::Value>> = None;
-        let mut last_error: Option<String> = None;
-
-        for attempt in 0..RPC_MAX_RETRIES {
-            // Send request
-            let response = match client
-                .post(rpc_url)
-                .json(&batch_request)
-                .send()
-                .await
-            {
-                Ok(resp) => resp,
-                Err(e) => {
-                    let delay = RPC_RETRY_DELAYS
-                        .get(attempt)
-                        .copied()
-                        .unwrap_or(*RPC_RETRY_DELAYS.last().unwrap_or(&30));
-
-                    tracing::warn!(
-                        "RPC batch request failed (attempt {}/{}): {}. Retrying in {}s...",
-                        attempt + 1,
-                        RPC_MAX_RETRIES,
-                        e,
-                        delay
-                    );
-
-                    last_error = Some(format!("HTTP request failed: {}", e));
-                    tokio::time::sleep(Duration::from_secs(delay)).await;
-                    continue;
-                }
-            };
-
-            // Parse response
-            match response.json::<Vec<serde_json::Value>>().await {
-                Ok(resp) => {
-                    if attempt > 0 {
-                        tracing::info!(
-                            "RPC batch request succeeded after {} retries (blocks {} to {})",
-                            attempt,
-                            start_block,
-                            start_block + count as u64 - 1
-                        );
-                    }
-                    batch_response = Some(resp);
-                    break;
-                }
-                Err(e) => {
-                    let delay = RPC_RETRY_DELAYS
-                        .get(attempt)
-                        .copied()
-                        .unwrap_or(*RPC_RETRY_DELAYS.last().unwrap_or(&30));
-
-                    tracing::warn!(
-                        "Failed to parse RPC response (attempt {}/{}): {}. Retrying in {}s...",
-                        attempt + 1,
-                        RPC_MAX_RETRIES,
-                        e,
-                        delay
-                    );
-
-                    last_error = Some(format!("Failed to parse response: {}", e));
-                    tokio::time::sleep(Duration::from_secs(delay)).await;
-                }
-            }
-        }
-
-        // If all retries failed, return errors for all blocks
-        let batch_response = match batch_response {
-            Some(resp) => resp,
-            None => {
-                let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
-                return (0..count)
-                    .map(|i| FetchResult::Error {
-                        block_num: start_block + i as u64,
-                        error: error_msg.clone(),
-                    })
-                    .collect();
-            }
-        };
-
-        // Process responses - they should be in order by ID
-        let mut results = Vec::with_capacity(count);
-        let mut response_map: BTreeMap<u64, &serde_json::Value> = BTreeMap::new();
-
-        for resp in &batch_response {
-            if let Some(id) = resp.get("id").and_then(|v| v.as_u64()) {
-                response_map.insert(id, resp);
-            }
-        }
-
-        for i in 0..count {
-            let block_num = start_block + i as u64;
-            let block_id = (i * 2) as u64;
-            let receipts_id = (i * 2 + 1) as u64;
-
-            // Get block response
-            let block_result = match response_map.get(&block_id) {
-                Some(resp) => {
-                    if let Some(error) = resp.get("error") {
-                        Err(format!("RPC error: {}", error))
-                    } else if let Some(result) = resp.get("result") {
-                        if result.is_null() {
-                            Err(format!("Block {} not found", block_num))
-                        } else {
-                            serde_json::from_value::<Block>(result.clone())
-                                .map_err(|e| format!("Failed to parse block: {}", e))
-                        }
-                    } else {
-                        Err("No result in response".to_string())
-                    }
-                }
-                None => Err(format!("Missing response for block {}", block_num)),
-            };
-
-            // Get receipts response
-            let receipts_result = match response_map.get(&receipts_id) {
-                Some(resp) => {
-                    if let Some(error) = resp.get("error") {
-                        Err(format!("RPC error: {}", error))
-                    } else if let Some(result) = resp.get("result") {
-                        if result.is_null() {
-                            Ok(Vec::new())
-                        } else {
-                            serde_json::from_value::<Vec<TransactionReceipt>>(result.clone())
-                                .map_err(|e| format!("Failed to parse receipts: {}", e))
-                        }
-                    } else {
-                        Ok(Vec::new())
-                    }
-                }
-                None => Ok(Vec::new()),
-            };
-
-            // Combine results
-            match (block_result, receipts_result) {
-                (Ok(block), Ok(receipts)) => {
-                    tracing::debug!("Block {} complete ({} receipts)", block_num, receipts.len());
-                    results.push(FetchResult::Success(FetchedBlock {
-                        number: block_num,
-                        block,
-                        receipts,
-                    }));
-                }
-                (Err(e), _) => {
-                    tracing::warn!("Failed to fetch block {}: {}", block_num, e);
-                    results.push(FetchResult::Error {
-                        block_num,
-                        error: e,
-                    });
-                }
-                (_, Err(e)) => {
-                    tracing::warn!("Failed to fetch receipts for block {}: {}", block_num, e);
-                    results.push(FetchResult::Error {
-                        block_num,
-                        error: e,
-                    });
-                }
-            }
-        }
-
-        results
-    }
-
-    /// Process a fetched block (runs sequentially in main loop)
-    async fn process_block(&self, provider: &HttpProvider, fetched: FetchedBlock) -> Result<()> {
         let block = fetched.block;
         let block_num = fetched.number;
 
-        let mut tx = self.pool.begin().await?;
+        // Build a receipt map keyed by tx hash for O(1) lookup.
+        // This lets us merge receipt data (status, gas_used, contract_created)
+        // directly into the transaction row, eliminating the UPDATE after INSERT.
+        let receipt_map: HashMap<String, &TransactionReceipt> = fetched.receipts
+            .iter()
+            .map(|r| (format!("{:?}", r.transaction_hash), r))
+            .collect();
 
-        // Insert block
+        // --- Block ---
         let tx_count = block.transactions.len() as i32;
+        batch.b_numbers.push(block_num as i64);
+        batch.b_hashes.push(format!("{:?}", block.header.hash));
+        batch.b_parent_hashes.push(format!("{:?}", block.header.parent_hash));
+        batch.b_timestamps.push(block.header.timestamp as i64);
+        batch.b_gas_used.push(block.header.gas_used as i64);
+        batch.b_gas_limits.push(block.header.gas_limit as i64);
+        batch.b_tx_counts.push(tx_count);
 
-        sqlx::query(
-            "INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-             ON CONFLICT (number) DO UPDATE SET
-                hash = $2, parent_hash = $3, timestamp = $4, gas_used = $5, gas_limit = $6,
-                transaction_count = $7, indexed_at = NOW()"
-        )
-        .bind(block.header.number as i64)
-        .bind(format!("{:?}", block.header.hash))
-        .bind(format!("{:?}", block.header.parent_hash))
-        .bind(block.header.timestamp as i64)
-        .bind(block.header.gas_used as i64)
-        .bind(block.header.gas_limit as i64)
-        .bind(tx_count)
-        .execute(&mut *tx)
-        .await?;
-
-        // Process transactions
+        // --- Transactions ---
         if let Some(txs) = block.transactions.as_transactions() {
             for (idx, transaction) in txs.iter().enumerate() {
-                self.insert_transaction(&mut tx, transaction, block_num, idx as i32, block.header.timestamp).await?;
+                let inner = &transaction.inner;
+                let tx_hash_str = format!("{:?}", inner.tx_hash());
+                let from_str = format!("{:?}", transaction.from);
+                let to_opt = inner.to().map(|a| format!("{:?}", a));
+                let value_str = inner.value().to_string();
+                let gas_price_str = transaction.effective_gas_price
+                    .map(|gp| gp.to_string())
+                    .unwrap_or_else(|| "0".to_string());
+                let input = inner.input().to_vec();
+
+                // Merge receipt data — no separate UPDATE needed
+                let (status, gas_used, contract_created) = receipt_map
+                    .get(&tx_hash_str)
+                    .map(|r| (
+                        r.inner.status(),
+                        r.gas_used as i64,
+                        r.contract_address.map(|a| format!("{:?}", a)),
+                    ))
+                    .unwrap_or((false, 0, None));
+
+                batch.t_hashes.push(tx_hash_str.clone());
+                batch.t_block_numbers.push(block_num as i64);
+                batch.t_block_indices.push(idx as i32);
+                batch.t_froms.push(from_str.clone());
+                batch.t_tos.push(to_opt.clone());
+                batch.t_values.push(value_str);
+                batch.t_gas_prices.push(gas_price_str);
+                batch.t_gas_used.push(gas_used);
+                batch.t_input_data.push(input);
+                batch.t_statuses.push(status);
+                batch.t_timestamps.push(block.header.timestamp as i64);
+                batch.t_contracts_created.push(contract_created.clone());
+
+                batch.tl_hashes.push(tx_hash_str);
+                batch.tl_block_numbers.push(block_num as i64);
+
+                // Sender and receiver each get +1 tx_count.
+                // Newly created contracts are registered as contracts but don't get a tx_count increment.
+                batch.touch_addr(from_str, block_num as i64, false, 1);
+                if let Some(to) = to_opt {
+                    batch.touch_addr(to, block_num as i64, false, 1);
+                }
+                if let Some(addr) = contract_created {
+                    batch.touch_addr(addr, block_num as i64, true, 0);
+                }
             }
         }
 
-        // Process receipts and logs
-        for receipt in fetched.receipts {
-            // Update the transaction row with accurate receipt data
-            {
-                // Extract tx hash (field on TransactionReceipt)
-                let tx_hash_str = format!("{:?}", receipt.transaction_hash);
-
-                // Status from inner receipt (via TxReceipt trait)
-                let status_flag: bool = receipt.inner.status();
-
-                // Gas used (field on TransactionReceipt)
-                let gas_used_i64: i64 = receipt.gas_used as i64;
-
-                // Contract address (if contract creation)
-                let created_addr: Option<String> = receipt
-                    .contract_address
-                    .map(|a| format!("{:?}", a));
-
-                sqlx::query(
-                    "UPDATE transactions SET status = $1, gas_used = $2, contract_created = $3
-                     WHERE hash = $4 AND block_number = $5"
-                )
-                .bind(status_flag)
-                .bind(gas_used_i64)
-                .bind(&created_addr)
-                .bind(&tx_hash_str)
-                .bind(block_num as i64)
-                .execute(&mut *tx)
-                .await?;
-
-                // Mark newly created contract as contract address
-                if let Some(ref addr) = &created_addr {
-                    self.mark_address_as_contract(&mut tx, addr, block_num).await?;
-                }
-            }
-
+        // --- Logs ---
+        for receipt in &fetched.receipts {
             for log in receipt.inner.logs() {
-                // Store all event logs
-                self.insert_event_log(&mut tx, log, block_num).await?;
+                let topics = log.topics();
+                let topic0 = match topics.first().map(|t| format!("{:?}", t)) {
+                    Some(t) => t,
+                    None => continue, // skip logs with no topic0
+                };
+                let emitter = format!("{:?}", log.address());
 
-                // Process Transfer events
-                if self.is_transfer_event(log) {
-                    if self.is_erc721_transfer(log) {
-                        self.process_nft_transfer(&mut tx, log, block_num, block.header.timestamp).await?;
-                    } else if self.is_erc20_transfer(log) {
-                        self.process_erc20_transfer(&mut tx, provider, log, block_num, block.header.timestamp).await?;
+                batch.el_tx_hashes.push(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default());
+                batch.el_log_indices.push(log.log_index.unwrap_or(0) as i32);
+                batch.el_addresses.push(emitter.clone());
+                batch.el_topic0s.push(topic0.clone());
+                batch.el_topic1s.push(topics.get(1).map(|t| format!("{:?}", t)));
+                batch.el_topic2s.push(topics.get(2).map(|t| format!("{:?}", t)));
+                batch.el_topic3s.push(topics.get(3).map(|t| format!("{:?}", t)));
+                batch.el_datas.push(log.data().data.to_vec());
+                batch.el_block_numbers.push(block_num as i64);
+
+                // Any address that emits logs is a contract
+                batch.touch_addr(emitter.clone(), block_num as i64, true, 0);
+
+                if topic0 != TRANSFER_TOPIC {
+                    continue;
+                }
+
+                match topics.len() {
+                    // ERC-721: Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+                    4 => {
+                        let contract = emitter.clone();
+                        let from = format!("0x{}", hex::encode(&topics[1].as_slice()[12..]));
+                        let to = format!("0x{}", hex::encode(&topics[2].as_slice()[12..]));
+                        let token_id_str = U256::from_be_slice(topics[3].as_slice()).to_string();
+
+                        if !known_nft.contains(&contract) && batch.new_nft.insert(contract.clone()) {
+                            batch.nft_contract_addrs.push(contract.clone());
+                            batch.nft_contract_first_seen.push(block_num as i64);
+                            batch.touch_addr(contract.clone(), block_num as i64, true, 0);
+                        }
+
+                        batch.nt_tx_hashes.push(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default());
+                        batch.nt_log_indices.push(log.log_index.unwrap_or(0) as i32);
+                        batch.nt_contracts.push(contract.clone());
+                        batch.nt_token_ids.push(token_id_str.clone());
+                        batch.nt_froms.push(from);
+                        batch.nt_tos.push(to.clone());
+                        batch.nt_block_numbers.push(block_num as i64);
+                        batch.nt_timestamps.push(block.header.timestamp as i64);
+
+                        // Keep only the latest state per token (last transfer wins)
+                        batch.nft_token_map.insert(
+                            (contract, token_id_str),
+                            NftTokenState { owner: to, last_transfer_block: block_num as i64 },
+                        );
                     }
+                    // ERC-20: Transfer(address indexed from, address indexed to, uint256 value)
+                    3 if log.data().data.len() >= 32 => {
+                        let contract = emitter.clone();
+                        let from = format!("0x{}", hex::encode(&topics[1].as_slice()[12..]));
+                        let to = format!("0x{}", hex::encode(&topics[2].as_slice()[12..]));
+                        let value = BigDecimal::from_str(
+                            &U256::from_be_slice(&log.data().data[..32]).to_string()
+                        ).unwrap_or_default();
+
+                        // Register new contract without blocking RPC calls —
+                        // the metadata fetcher will fill in name/symbol/decimals.
+                        if !known_erc20.contains(&contract) && batch.new_erc20.insert(contract.clone()) {
+                            batch.ec_addresses.push(contract.clone());
+                            batch.ec_first_seen_blocks.push(block_num as i64);
+                            batch.touch_addr(contract.clone(), block_num as i64, true, 0);
+                        }
+
+                        batch.et_tx_hashes.push(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default());
+                        batch.et_log_indices.push(log.log_index.unwrap_or(0) as i32);
+                        batch.et_contracts.push(contract.clone());
+                        batch.et_froms.push(from.clone());
+                        batch.et_tos.push(to.clone());
+                        batch.et_values.push(value.to_string());
+                        batch.et_block_numbers.push(block_num as i64);
+                        batch.et_timestamps.push(block.header.timestamp as i64);
+
+                        // Aggregate balance deltas — multiple transfers in the same batch
+                        // for the same (address, contract) pair are summed in Rust,
+                        // so we only need one DB upsert per unique pair.
+                        if from != ZERO_ADDRESS {
+                            batch.apply_balance_delta(from, contract.clone(), -value.clone(), block_num as i64);
+                        }
+                        if to != ZERO_ADDRESS {
+                            batch.apply_balance_delta(to, contract.clone(), value, block_num as i64);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
 
-        // Update indexer state
-        sqlx::query(
-            "INSERT INTO indexer_state (key, value, updated_at)
-             VALUES ('last_indexed_block', $1, NOW())
-             ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
-        )
-        .bind(block_num.to_string())
-        .execute(&mut *tx)
-        .await?;
+        batch.last_block = block_num;
+    }
 
-        tx.commit().await?;
+    // -----------------------------------------------------------------------
+    // write_batch — one DB transaction, one UNNEST query per table.
+    // For a batch of N blocks this is ~11 round-trips regardless of N.
+    // -----------------------------------------------------------------------
+
+    async fn write_batch(&self, copy_client: &mut Client, batch: BlockBatch, update_watermark: bool) -> Result<()> {
+        if batch.b_numbers.is_empty() {
+            return Ok(());
+        }
+
+        let mut pg_tx = copy_client.transaction().await?;
+
+        copy_blocks(&mut pg_tx, &batch).await?;
+        copy_transactions(&mut pg_tx, &batch).await?;
+        copy_event_logs(&mut pg_tx, &batch).await?;
+        copy_nft_transfers(&mut pg_tx, &batch).await?;
+        copy_erc20_transfers(&mut pg_tx, &batch).await?;
+
+        let BlockBatch {
+            tl_hashes,
+            tl_block_numbers,
+            addr_map,
+            nft_contract_addrs,
+            nft_contract_first_seen,
+            nft_token_map,
+            ec_addresses,
+            ec_first_seen_blocks,
+            balance_map,
+            last_block,
+            ..
+        } = batch;
+
+        if !tl_hashes.is_empty() {
+            let params: [&(dyn ToSql + Sync); 2] = [&tl_hashes, &tl_block_numbers];
+            pg_tx.execute(
+                "INSERT INTO tx_hash_lookup (hash, block_number)
+                 SELECT * FROM unnest($1::text[], $2::bigint[]) AS t(hash, block_number)
+                 ON CONFLICT (hash) DO NOTHING",
+                &params,
+            )
+            .await?;
+        }
+
+        if !addr_map.is_empty() {
+            let mut a_addrs = Vec::with_capacity(addr_map.len());
+            let mut a_contracts = Vec::with_capacity(addr_map.len());
+            let mut a_first_seen = Vec::with_capacity(addr_map.len());
+            let mut a_tx_counts = Vec::with_capacity(addr_map.len());
+            for (addr, state) in addr_map {
+                a_addrs.push(addr);
+                a_contracts.push(state.is_contract);
+                a_first_seen.push(state.first_seen_block);
+                a_tx_counts.push(state.tx_count_delta);
+            }
+
+            let params: [&(dyn ToSql + Sync); 4] = [&a_addrs, &a_contracts, &a_first_seen, &a_tx_counts];
+            pg_tx.execute(
+                "INSERT INTO addresses (address, is_contract, first_seen_block, tx_count)
+                 SELECT * FROM unnest($1::text[], $2::bool[], $3::bigint[], $4::bigint[])
+                    AS t(address, is_contract, first_seen_block, tx_count)
+                 ON CONFLICT (address) DO UPDATE SET
+                    tx_count = addresses.tx_count + EXCLUDED.tx_count,
+                    is_contract = addresses.is_contract OR EXCLUDED.is_contract,
+                    first_seen_block = LEAST(addresses.first_seen_block, EXCLUDED.first_seen_block)",
+                &params,
+            )
+            .await?;
+        }
+
+        if !nft_contract_addrs.is_empty() {
+            let params: [&(dyn ToSql + Sync); 2] = [&nft_contract_addrs, &nft_contract_first_seen];
+            pg_tx.execute(
+                "INSERT INTO nft_contracts (address, first_seen_block)
+                 SELECT * FROM unnest($1::text[], $2::bigint[]) AS t(address, first_seen_block)
+                 ON CONFLICT (address) DO NOTHING",
+                &params,
+            )
+            .await?;
+        }
+
+        if !nft_token_map.is_empty() {
+            let mut tok_contracts = Vec::with_capacity(nft_token_map.len());
+            let mut tok_ids = Vec::with_capacity(nft_token_map.len());
+            let mut tok_owners = Vec::with_capacity(nft_token_map.len());
+            let mut tok_last_blocks = Vec::with_capacity(nft_token_map.len());
+            for ((contract, token_id), state) in nft_token_map {
+                tok_contracts.push(contract);
+                tok_ids.push(token_id);
+                tok_owners.push(state.owner);
+                tok_last_blocks.push(state.last_transfer_block);
+            }
+
+            let params: [&(dyn ToSql + Sync); 4] = [&tok_contracts, &tok_ids, &tok_owners, &tok_last_blocks];
+            pg_tx.execute(
+                "INSERT INTO nft_tokens (contract_address, token_id, owner, metadata_fetched, last_transfer_block)
+                 SELECT contract_address, token_id::numeric, owner, false, last_transfer_block
+                 FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[])
+                    AS t(contract_address, token_id, owner, last_transfer_block)
+                 ON CONFLICT (contract_address, token_id) DO UPDATE SET
+                    owner = CASE
+                        WHEN EXCLUDED.last_transfer_block >= nft_tokens.last_transfer_block
+                        THEN EXCLUDED.owner
+                        ELSE nft_tokens.owner
+                    END,
+                    last_transfer_block = GREATEST(nft_tokens.last_transfer_block, EXCLUDED.last_transfer_block)",
+                &params,
+            )
+            .await?;
+        }
+
+        if !ec_addresses.is_empty() {
+            let params: [&(dyn ToSql + Sync); 2] = [&ec_addresses, &ec_first_seen_blocks];
+            pg_tx.execute(
+                "INSERT INTO erc20_contracts (address, decimals, first_seen_block)
+                 SELECT address, 18, first_seen_block
+                 FROM unnest($1::text[], $2::bigint[]) AS t(address, first_seen_block)
+                 ON CONFLICT (address) DO NOTHING",
+                &params,
+            )
+            .await?;
+        }
+
+        if !balance_map.is_empty() {
+            let mut bal_addrs = Vec::with_capacity(balance_map.len());
+            let mut bal_contracts = Vec::with_capacity(balance_map.len());
+            let mut bal_deltas = Vec::with_capacity(balance_map.len());
+            let mut bal_blocks = Vec::with_capacity(balance_map.len());
+            for ((addr, contract), delta) in balance_map {
+                bal_addrs.push(addr);
+                bal_contracts.push(contract);
+                bal_deltas.push(delta.delta);
+                bal_blocks.push(delta.last_block);
+            }
+
+            let bal_delta_strs: Vec<String> = bal_deltas.iter().map(|d| d.to_string()).collect();
+            let params: [&(dyn ToSql + Sync); 4] = [&bal_addrs, &bal_contracts, &bal_delta_strs, &bal_blocks];
+            pg_tx.execute(
+                "INSERT INTO erc20_balances (address, contract_address, balance, last_updated_block)
+                 SELECT address, contract_address, balance::numeric, last_updated_block
+                 FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[])
+                    AS t(address, contract_address, balance, last_updated_block)
+                 ON CONFLICT (address, contract_address) DO UPDATE SET
+                    balance = erc20_balances.balance + EXCLUDED.balance,
+                    last_updated_block = GREATEST(erc20_balances.last_updated_block, EXCLUDED.last_updated_block)",
+                &params,
+            )
+            .await?;
+        }
+
+        if update_watermark {
+            let last_value = last_block.to_string();
+            pg_tx.execute(
+                "INSERT INTO indexer_state (key, value, updated_at)
+                 VALUES ('last_indexed_block', $1, NOW())
+                 ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+                &[&last_value],
+            )
+            .await?;
+        }
+
+        pg_tx.commit().await?;
         Ok(())
     }
 
-    async fn mark_address_as_contract(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        address_str: &str,
-        first_seen_block: u64,
-    ) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO addresses (address, is_contract, first_seen_block, tx_count)
-             VALUES ($1, true, $2, 0)
-             ON CONFLICT (address) DO UPDATE SET
-                is_contract = true,
-                first_seen_block = LEAST(addresses.first_seen_block, $2)"
-        )
-        .bind(address_str)
-        .bind(first_seen_block as i64)
-        .execute(&mut **tx)
-        .await?;
-        Ok(())
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    async fn load_known_erc20(&self) -> Result<HashSet<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT address FROM erc20_contracts")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(|(a,)| a).collect())
+    }
+
+    async fn load_known_nft(&self) -> Result<HashSet<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT address FROM nft_contracts")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(|(a,)| a).collect())
     }
 
     async fn get_start_block(&self) -> Result<u64> {
-        // Check for last indexed block
         let result: Option<(String,)> = sqlx::query_as(
             "SELECT value FROM indexer_state WHERE key = 'last_indexed_block'"
         )
@@ -658,8 +741,6 @@ impl Indexer {
         }
     }
 
-    /// Ensure partitions exist for all partitioned tables up to the given block number
-    /// Uses in-memory tracking to avoid database queries on every batch
     async fn ensure_partitions_exist(&self, block_number: u64) -> Result<()> {
         use std::sync::atomic::Ordering;
 
@@ -735,45 +816,6 @@ impl Indexer {
         Ok(())
     }
 
-    /// Get block number with internal retry logic for network failures
-    async fn get_block_number_with_retry(&self, provider: &HttpProvider) -> Result<u64> {
-        let mut last_error = None;
-
-        for attempt in 0..RPC_MAX_RETRIES {
-            match provider.get_block_number().await {
-                Ok(block_num) => {
-                    if attempt > 0 {
-                        tracing::info!("RPC connection restored after {} retries", attempt);
-                    }
-                    return Ok(block_num);
-                }
-                Err(e) => {
-                    let delay = RPC_RETRY_DELAYS
-                        .get(attempt)
-                        .copied()
-                        .unwrap_or(*RPC_RETRY_DELAYS.last().unwrap_or(&30));
-
-                    tracing::warn!(
-                        "RPC request failed (attempt {}/{}): {}. Retrying in {}s...",
-                        attempt + 1,
-                        RPC_MAX_RETRIES,
-                        e,
-                        delay
-                    );
-
-                    last_error = Some(e);
-                    tokio::time::sleep(Duration::from_secs(delay)).await;
-                }
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "RPC connection failed after {} retries: {:?}",
-            RPC_MAX_RETRIES,
-            last_error
-        ))
-    }
-
     async fn truncate_tables(&self) -> Result<()> {
         sqlx::query(
             "TRUNCATE blocks, transactions, addresses, nft_contracts, nft_tokens, nft_transfers,
@@ -782,456 +824,5 @@ impl Indexer {
             .execute(&self.pool)
             .await?;
         Ok(())
-    }
-
-    async fn insert_transaction(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        transaction: &alloy::rpc::types::Transaction,
-        block_number: u64,
-        block_index: i32,
-        timestamp: u64,
-    ) -> Result<()> {
-        use alloy::consensus::Transaction as TxTrait;
-
-        // Access transaction fields through inner
-        let inner = &transaction.inner;
-        let tx_hash = inner.tx_hash();
-        let value = inner.value();
-        let gas_limit = inner.gas_limit();
-        let to_addr = inner.to();
-        let input = inner.input();
-        let from_addr = transaction.from;
-
-        let value_decimal = BigDecimal::from_str(&value.to_string())?;
-        let gas_price = transaction.effective_gas_price
-            .map(|gp| BigDecimal::from_str(&gp.to_string()))
-            .transpose()?
-            .unwrap_or_else(|| BigDecimal::from(0));
-
-        let tx_hash_str = format!("{:?}", tx_hash);
-
-        sqlx::query(
-            "INSERT INTO transactions (hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used, input_data, status, timestamp)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-             ON CONFLICT (hash, block_number) DO NOTHING"
-        )
-        .bind(&tx_hash_str)
-        .bind(block_number as i64)
-        .bind(block_index)
-        .bind(format!("{:?}", from_addr))
-        .bind(to_addr.map(|a| format!("{:?}", a)))
-        .bind(value_decimal)
-        .bind(gas_price)
-        .bind(0i64) // gas_used default; updated later from receipt
-        .bind(input.to_vec())
-        .bind(false) // status default; updated later from receipt
-        .bind(timestamp as i64)
-        .execute(&mut **tx)
-        .await?;
-
-        // Insert into hash lookup table for fast search
-        sqlx::query(
-            "INSERT INTO tx_hash_lookup (hash, block_number)
-             VALUES ($1, $2)
-             ON CONFLICT (hash) DO NOTHING"
-        )
-        .bind(&tx_hash_str)
-        .bind(block_number as i64)
-        .execute(&mut **tx)
-        .await?;
-
-        // Upsert addresses
-        self.upsert_address(tx, from_addr, block_number, false).await?;
-        if let Some(to) = to_addr {
-            // Do not infer contract status from calldata; just upsert address and tx_count
-            self.upsert_address(tx, to, block_number, false).await?;
-        }
-
-        Ok(())
-    }
-
-    async fn upsert_address(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        address: Address,
-        block_number: u64,
-        is_contract: bool,
-    ) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO addresses (address, is_contract, first_seen_block, tx_count)
-             VALUES ($1, $2, $3, 1)
-             ON CONFLICT (address) DO UPDATE SET
-                tx_count = addresses.tx_count + 1,
-                is_contract = addresses.is_contract OR $2"
-        )
-        .bind(format!("{:?}", address))
-        .bind(is_contract)
-        .bind(block_number as i64)
-        .execute(&mut **tx)
-        .await?;
-
-        Ok(())
-    }
-
-    fn is_transfer_event(&self, log: &Log) -> bool {
-        if log.topics().is_empty() {
-            return false;
-        }
-        let topic0 = format!("{:?}", log.topics()[0]);
-        topic0 == TRANSFER_TOPIC
-    }
-
-    fn is_erc721_transfer(&self, log: &Log) -> bool {
-        // ERC-721: 4 topics (signature + from + to + tokenId)
-        if log.topics().len() != 4 {
-            return false;
-        }
-        let topic0 = format!("{:?}", log.topics()[0]);
-        topic0 == TRANSFER_TOPIC
-    }
-
-    fn is_erc20_transfer(&self, log: &Log) -> bool {
-        // ERC-20: 3 topics (signature + from + to) with value in data
-        if log.topics().len() != 3 {
-            return false;
-        }
-        let topic0 = format!("{:?}", log.topics()[0]);
-        topic0 == TRANSFER_TOPIC && log.data().data.len() >= 32
-    }
-
-    async fn process_nft_transfer(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        log: &Log,
-        block_number: u64,
-        timestamp: u64,
-    ) -> Result<()> {
-        let contract_address = format!("{:?}", log.address());
-        let from_address = format!("0x{}", hex::encode(&log.topics()[1].as_slice()[12..]));
-        let to_address = format!("0x{}", hex::encode(&log.topics()[2].as_slice()[12..]));
-        let token_id = U256::from_be_slice(log.topics()[3].as_slice());
-        let token_id_decimal = BigDecimal::from_str(&token_id.to_string())?;
-
-        // Upsert NFT contract
-        sqlx::query(
-            "INSERT INTO nft_contracts (address, first_seen_block)
-             VALUES ($1, $2)
-             ON CONFLICT (address) DO NOTHING"
-        )
-        .bind(&contract_address)
-        .bind(block_number as i64)
-        .execute(&mut **tx)
-        .await?;
-
-        // Mark as contract
-        self.mark_address_as_contract(tx, &contract_address, block_number).await?;
-
-        // Insert transfer record
-        sqlx::query(
-            "INSERT INTO nft_transfers (tx_hash, log_index, contract_address, token_id, from_address, to_address, block_number, timestamp)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
-        )
-        .bind(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default())
-        .bind(log.log_index.unwrap_or(0) as i32)
-        .bind(&contract_address)
-        .bind(&token_id_decimal)
-        .bind(&from_address)
-        .bind(&to_address)
-        .bind(block_number as i64)
-        .bind(timestamp as i64)
-        .execute(&mut **tx)
-        .await?;
-
-        // Upsert NFT token (update owner)
-        sqlx::query(
-            "INSERT INTO nft_tokens (contract_address, token_id, owner, metadata_fetched, last_transfer_block)
-             VALUES ($1, $2, $3, false, $4)
-             ON CONFLICT (contract_address, token_id) DO UPDATE SET
-                owner = $3,
-                last_transfer_block = $4"
-        )
-        .bind(&contract_address)
-        .bind(&token_id_decimal)
-        .bind(&to_address)
-        .bind(block_number as i64)
-        .execute(&mut **tx)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Insert event log into database
-    async fn insert_event_log(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        log: &Log,
-        block_number: u64,
-    ) -> Result<()> {
-        let topics = log.topics();
-        let topic0 = topics.first().map(|t| format!("{:?}", t));
-        let topic1 = topics.get(1).map(|t| format!("{:?}", t));
-        let topic2 = topics.get(2).map(|t| format!("{:?}", t));
-        let topic3 = topics.get(3).map(|t| format!("{:?}", t));
-
-        // Skip if no topic0 (invalid log)
-        let topic0 = match topic0 {
-            Some(t) => t,
-            None => return Ok(()),
-        };
-
-        sqlx::query(
-            "INSERT INTO event_logs (tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (tx_hash, log_index, block_number) DO NOTHING"
-        )
-        .bind(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default())
-        .bind(log.log_index.unwrap_or(0) as i32)
-        .bind(format!("{:?}", log.address()))
-        .bind(&topic0)
-        .bind(topic1)
-        .bind(topic2)
-        .bind(topic3)
-        .bind(log.data().data.to_vec())
-        .bind(block_number as i64)
-        .execute(&mut **tx)
-        .await?;
-
-        // Any address that emits logs is necessarily a contract
-        let emitter = format!("{:?}", log.address());
-        self.mark_address_as_contract(tx, &emitter, block_number).await?;
-
-        Ok(())
-    }
-
-    /// Process ERC-20 Transfer event
-    async fn process_erc20_transfer(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        provider: &HttpProvider,
-        log: &Log,
-        block_number: u64,
-        timestamp: u64,
-    ) -> Result<()> {
-        let contract_address = format!("{:?}", log.address());
-        let from_address = format!("0x{}", hex::encode(&log.topics()[1].as_slice()[12..]));
-        let to_address = format!("0x{}", hex::encode(&log.topics()[2].as_slice()[12..]));
-
-        // Parse value from data (first 32 bytes)
-        let log_data = log.data();
-        let value = if log_data.data.len() >= 32 {
-            U256::from_be_slice(&log_data.data[..32])
-        } else {
-            U256::ZERO
-        };
-        let value_decimal = BigDecimal::from_str(&value.to_string())?;
-
-        // Check if contract exists, if not fetch metadata
-        let exists: Option<(i32,)> = sqlx::query_as(
-            "SELECT 1 FROM erc20_contracts WHERE LOWER(address) = LOWER($1)"
-        )
-        .bind(&contract_address)
-        .fetch_optional(&mut **tx)
-        .await?;
-
-        if exists.is_none() {
-            // Fetch ERC-20 metadata from contract
-            let (name, symbol, decimals, total_supply) = self.fetch_erc20_metadata(provider, log.address()).await;
-
-            sqlx::query(
-                "INSERT INTO erc20_contracts (address, name, symbol, decimals, total_supply, first_seen_block)
-                 VALUES ($1, $2, $3, $4, $5, $6)
-                 ON CONFLICT (address) DO NOTHING"
-            )
-            .bind(&contract_address)
-            .bind(name)
-            .bind(symbol)
-            .bind(decimals)
-            .bind(total_supply)
-            .bind(block_number as i64)
-            .execute(&mut **tx)
-            .await?;
-
-            // Mark as contract
-            self.mark_address_as_contract(tx, &contract_address, block_number).await?;
-        }
-
-        // Insert transfer record
-        sqlx::query(
-            "INSERT INTO erc20_transfers (tx_hash, log_index, contract_address, from_address, to_address, value, block_number, timestamp)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (tx_hash, log_index, block_number) DO NOTHING"
-        )
-        .bind(log.transaction_hash.map(|h| format!("{:?}", h)).unwrap_or_default())
-        .bind(log.log_index.unwrap_or(0) as i32)
-        .bind(&contract_address)
-        .bind(&from_address)
-        .bind(&to_address)
-        .bind(&value_decimal)
-        .bind(block_number as i64)
-        .bind(timestamp as i64)
-        .execute(&mut **tx)
-        .await?;
-
-        // Update balances
-        // Decrease from_address balance (if not zero address)
-        if from_address != "0x0000000000000000000000000000000000000000" {
-            sqlx::query(
-                "INSERT INTO erc20_balances (address, contract_address, balance, last_updated_block)
-                 VALUES ($1, $2, -$3, $4)
-                 ON CONFLICT (address, contract_address) DO UPDATE SET
-                    balance = erc20_balances.balance - $3,
-                    last_updated_block = $4"
-            )
-            .bind(&from_address)
-            .bind(&contract_address)
-            .bind(&value_decimal)
-            .bind(block_number as i64)
-            .execute(&mut **tx)
-            .await?;
-        }
-
-        // Increase to_address balance (if not zero address)
-        if to_address != "0x0000000000000000000000000000000000000000" {
-            sqlx::query(
-                "INSERT INTO erc20_balances (address, contract_address, balance, last_updated_block)
-                 VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (address, contract_address) DO UPDATE SET
-                    balance = erc20_balances.balance + $3,
-                    last_updated_block = $4"
-            )
-            .bind(&to_address)
-            .bind(&contract_address)
-            .bind(&value_decimal)
-            .bind(block_number as i64)
-            .execute(&mut **tx)
-            .await?;
-        }
-
-        // Update totalSupply if this is a mint or burn
-        let is_mint = from_address == "0x0000000000000000000000000000000000000000";
-        let is_burn = to_address == "0x0000000000000000000000000000000000000000";
-
-        if is_mint || is_burn {
-            // Re-fetch totalSupply from the contract
-            const TOTAL_SUPPLY_SELECTOR: [u8; 4] = [0x18, 0x16, 0x0d, 0xdd];
-            let new_supply = self.call_uint256_method(provider, log.address(), &TOTAL_SUPPLY_SELECTOR).await;
-
-            sqlx::query(
-                "UPDATE erc20_contracts SET total_supply = $1 WHERE LOWER(address) = LOWER($2)"
-            )
-            .bind(new_supply)
-            .bind(&contract_address)
-            .execute(&mut **tx)
-            .await?;
-        }
-
-        Ok(())
-    }
-
-    /// Fetch ERC-20 metadata (name, symbol, decimals) from contract
-    async fn fetch_erc20_metadata(
-        &self,
-        provider: &HttpProvider,
-        address: Address,
-    ) -> (Option<String>, Option<String>, i16, Option<bigdecimal::BigDecimal>) {
-        // Function selectors
-        const NAME_SELECTOR: [u8; 4] = [0x06, 0xfd, 0xde, 0x03]; // name()
-        const SYMBOL_SELECTOR: [u8; 4] = [0x95, 0xd8, 0x9b, 0x41]; // symbol()
-        const DECIMALS_SELECTOR: [u8; 4] = [0x31, 0x3c, 0xe5, 0x67]; // decimals()
-        const TOTAL_SUPPLY_SELECTOR: [u8; 4] = [0x18, 0x16, 0x0d, 0xdd]; // totalSupply()
-
-        let name = self.call_string_method(provider, address, &NAME_SELECTOR).await;
-        let symbol = self.call_string_method(provider, address, &SYMBOL_SELECTOR).await;
-        let decimals = self.call_uint8_method(provider, address, &DECIMALS_SELECTOR).await.unwrap_or(18);
-        let total_supply = self.call_uint256_method(provider, address, &TOTAL_SUPPLY_SELECTOR).await;
-
-        (name, symbol, decimals as i16, total_supply)
-    }
-
-    /// Call a method that returns a string
-    async fn call_string_method(
-        &self,
-        provider: &HttpProvider,
-        address: Address,
-        selector: &[u8; 4],
-    ) -> Option<String> {
-        use alloy::rpc::types::TransactionRequest;
-
-        let tx = TransactionRequest::default()
-            .to(address)
-            .input(alloy::primitives::Bytes::from(selector.to_vec()).into());
-
-        let result = provider.call(&tx).await.ok()?;
-
-        // Decode string from ABI encoding
-        if result.len() < 64 {
-            return None;
-        }
-
-        // Offset is at bytes 0-32
-        let offset = U256::from_be_slice(&result[0..32]).to::<usize>();
-        if offset + 32 > result.len() {
-            return None;
-        }
-
-        // Length is at offset position
-        let length = U256::from_be_slice(&result[offset..offset + 32]).to::<usize>();
-        if offset + 32 + length > result.len() {
-            return None;
-        }
-
-        // String data follows
-        let string_data = &result[offset + 32..offset + 32 + length];
-        String::from_utf8(string_data.to_vec()).ok()
-    }
-
-    /// Call a method that returns a uint8
-    async fn call_uint8_method(
-        &self,
-        provider: &HttpProvider,
-        address: Address,
-        selector: &[u8; 4],
-    ) -> Option<u8> {
-        use alloy::rpc::types::TransactionRequest;
-
-        let tx = TransactionRequest::default()
-            .to(address)
-            .input(alloy::primitives::Bytes::from(selector.to_vec()).into());
-
-        let result = provider.call(&tx).await.ok()?;
-
-        if result.len() < 32 {
-            return None;
-        }
-
-        // uint8 is right-padded in 32 bytes
-        Some(result[31])
-    }
-
-    /// Call a method that returns a uint256
-    async fn call_uint256_method(
-        &self,
-        provider: &HttpProvider,
-        address: Address,
-        selector: &[u8; 4],
-    ) -> Option<bigdecimal::BigDecimal> {
-        use alloy::rpc::types::TransactionRequest;
-        use bigdecimal::BigDecimal;
-        use num_bigint::BigInt;
-
-        let tx = TransactionRequest::default()
-            .to(address)
-            .input(alloy::primitives::Bytes::from(selector.to_vec()).into());
-
-        let result = provider.call(&tx).await.ok()?;
-
-        if result.len() < 32 {
-            return None;
-        }
-
-        // uint256 is a 32-byte big-endian value
-        let value = BigInt::from_bytes_be(num_bigint::Sign::Plus, &result[0..32]);
-        Some(BigDecimal::from(value))
     }
 }
