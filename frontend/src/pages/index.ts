@@ -13,3 +13,4 @@ export { default as NotFoundPage } from './NotFoundPage';
 export { default as WelcomePage } from './WelcomePage';
 export { default as SearchResultsPage } from './SearchResultsPage';
 export { default as AddressesPage } from './AddressesPage';
+export { default as StatusPage } from './StatusPage';
