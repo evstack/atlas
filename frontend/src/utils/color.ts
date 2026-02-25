@@ -95,10 +95,6 @@ function rgbTriplet(rgb: RGB): string {
   return `${rgb.r} ${rgb.g} ${rgb.b}`;
 }
 
-function rgbToHex({ r, g, b }: RGB): string {
-  return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
-}
-
 function adjustLightness(hsl: HSL, delta: number): RGB {
   return hslToRgb({ ...hsl, l: Math.min(100, Math.max(0, hsl.l + delta)) });
 }
@@ -159,7 +155,7 @@ export function deriveSurfaceShades(baseHex: string, mode: 'dark' | 'light'): De
 /**
  * Apply a derived palette to the document root as CSS custom properties.
  */
-export function applyPalette(palette: DerivedPalette, mode: 'dark' | 'light') {
+export function applyPalette(palette: DerivedPalette) {
   const root = document.documentElement;
 
   // For dark mode, set on :root directly.

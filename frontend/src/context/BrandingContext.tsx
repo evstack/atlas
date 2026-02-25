@@ -1,24 +1,11 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useContext, type ReactNode } from 'react';
 import { getConfig, type BrandingConfig } from '../api/config';
 import { deriveSurfaceShades, applyPalette } from '../utils/color';
 import { ThemeContext } from './theme-context';
-
-interface BrandingContextValue {
-  chainName: string;
-  logoUrl: string | null;
-  loaded: boolean;
-}
-
-const defaults: BrandingContextValue = {
-  chainName: 'Atlas',
-  logoUrl: null,
-  loaded: false,
-};
-
-const BrandingContext = createContext<BrandingContextValue>(defaults);
+import { BrandingContext, brandingDefaults } from './branding-context';
 
 export function BrandingProvider({ children }: { children: ReactNode }) {
-  const [branding, setBranding] = useState<BrandingContextValue>(defaults);
+  const [branding, setBranding] = useState(brandingDefaults);
   const [config, setConfig] = useState<BrandingConfig | null>(null);
   const themeCtx = useContext(ThemeContext);
   const theme = themeCtx?.theme ?? 'dark';
@@ -46,7 +33,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
         }
       })
       .catch(() => {
-        setBranding({ ...defaults, loaded: true });
+        setBranding({ ...brandingDefaults, loaded: true });
       });
   }, []);
 
@@ -72,10 +59,10 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
 
     if (theme === 'dark' && config.background_color_dark) {
       const palette = deriveSurfaceShades(config.background_color_dark, 'dark');
-      applyPalette(palette, 'dark');
+      applyPalette(palette);
     } else if (theme === 'light' && config.background_color_light) {
       const palette = deriveSurfaceShades(config.background_color_light, 'light');
-      applyPalette(palette, 'light');
+      applyPalette(palette);
     } else {
       // Remove any inline overrides so the CSS defaults take effect
       const root = document.documentElement;
@@ -95,8 +82,4 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
       {children}
     </BrandingContext.Provider>
   );
-}
-
-export function useBranding() {
-  return useContext(BrandingContext);
 }

@@ -49,11 +49,19 @@ async fn main() -> Result<()> {
     let solc_path = std::env::var("SOLC_PATH").unwrap_or_else(|_| "solc".to_string());
     let admin_api_key = std::env::var("ADMIN_API_KEY").ok();
     let chain_name = std::env::var("CHAIN_NAME").unwrap_or_else(|_| "Atlas".to_string());
-    let chain_logo_url = std::env::var("CHAIN_LOGO_URL").ok().filter(|s| !s.is_empty());
+    let chain_logo_url = std::env::var("CHAIN_LOGO_URL")
+        .ok()
+        .filter(|s| !s.is_empty());
     let accent_color = std::env::var("ACCENT_COLOR").ok().filter(|s| !s.is_empty());
-    let background_color_dark = std::env::var("BACKGROUND_COLOR_DARK").ok().filter(|s| !s.is_empty());
-    let background_color_light = std::env::var("BACKGROUND_COLOR_LIGHT").ok().filter(|s| !s.is_empty());
-    let success_color = std::env::var("SUCCESS_COLOR").ok().filter(|s| !s.is_empty());
+    let background_color_dark = std::env::var("BACKGROUND_COLOR_DARK")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let background_color_light = std::env::var("BACKGROUND_COLOR_LIGHT")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let success_color = std::env::var("SUCCESS_COLOR")
+        .ok()
+        .filter(|s| !s.is_empty());
     let error_color = std::env::var("ERROR_COLOR").ok().filter(|s| !s.is_empty());
     let host = std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = std::env::var("API_PORT")

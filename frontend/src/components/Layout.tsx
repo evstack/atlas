@@ -6,7 +6,7 @@ import SmoothCounter from './SmoothCounter';
 import defaultLogoImg from '../assets/logo.png';
 import { BlockStatsContext } from '../context/BlockStatsContext';
 import { useTheme } from '../hooks/useTheme';
-import { useBranding } from '../context/BrandingContext';
+import { useBranding } from '../hooks/useBranding';
 
 export default function Layout() {
   const location = useLocation();

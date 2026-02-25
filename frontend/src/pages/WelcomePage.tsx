@@ -4,7 +4,7 @@ import useStats from '../hooks/useStats';
 import { formatNumber } from '../utils';
 import { useContext, useMemo } from 'react';
 import { BlockStatsContext } from '../context/BlockStatsContext';
-import { useBranding } from '../context/BrandingContext';
+import { useBranding } from '../hooks/useBranding';
 
 export default function WelcomePage() {
   const { totals, dailyTx, avgBlockTimeSec, loading } = useStats();
