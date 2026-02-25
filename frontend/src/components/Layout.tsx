@@ -3,9 +3,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import SearchBar from './SearchBar';
 import useLatestBlockHeight from '../hooks/useLatestBlockHeight';
 import SmoothCounter from './SmoothCounter';
-import logoImg from '../assets/logo.png';
+import defaultLogoImg from '../assets/logo.png';
 import { BlockStatsContext } from '../context/BlockStatsContext';
 import { useTheme } from '../hooks/useTheme';
+import { useBranding } from '../context/BrandingContext';
 
 export default function Layout() {
   const location = useLocation();
@@ -103,6 +104,8 @@ export default function Layout() {
     }`;
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
+  const { chainName, logoUrl } = useBranding();
+  const logoSrc = logoUrl || defaultLogoImg;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -112,8 +115,8 @@ export default function Layout() {
           <div className="grid grid-cols-3 items-center h-16">
             {/* Logo */}
             <div className="flex md:justify-start justify-center">
-              <Link to="/" className="flex items-center" aria-label="Atlas Home">
-                <img src={logoImg} alt="Atlas" className="h-12 w-auto rounded-lg" />
+              <Link to="/" className="flex items-center" aria-label={`${chainName} Home`}>
+                <img src={logoSrc} alt={chainName} className="h-12 w-auto rounded-lg" />
               </Link>
             </div>
 
@@ -175,7 +178,7 @@ export default function Layout() {
               </button>
               <div className="flex items-center gap-3 text-sm text-gray-300">
                 <span
-                  className={`inline-block w-2.5 h-2.5 rounded-full ${recentlyUpdated ? 'bg-red-500 live-dot' : 'bg-gray-600'}`}
+                  className={`inline-block w-2.5 h-2.5 rounded-full ${recentlyUpdated ? 'bg-accent-primary live-dot' : 'bg-gray-600'}`}
                   title={recentlyUpdated ? 'Live updates' : 'Idle'}
                 />
                 <SmoothCounter value={displayedHeight} />

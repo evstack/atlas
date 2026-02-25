@@ -19,6 +19,14 @@ pub struct AppState {
     pub rpc_url: String,
     pub solc_path: String,
     pub admin_api_key: Option<String>,
+    // White-label branding
+    pub chain_name: String,
+    pub chain_logo_url: Option<String>,
+    pub accent_color: Option<String>,
+    pub background_color_dark: Option<String>,
+    pub background_color_light: Option<String>,
+    pub success_color: Option<String>,
+    pub error_color: Option<String>,
 }
 
 #[tokio::main]
@@ -40,6 +48,13 @@ async fn main() -> Result<()> {
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set");
     let solc_path = std::env::var("SOLC_PATH").unwrap_or_else(|_| "solc".to_string());
     let admin_api_key = std::env::var("ADMIN_API_KEY").ok();
+    let chain_name = std::env::var("CHAIN_NAME").unwrap_or_else(|_| "Atlas".to_string());
+    let chain_logo_url = std::env::var("CHAIN_LOGO_URL").ok().filter(|s| !s.is_empty());
+    let accent_color = std::env::var("ACCENT_COLOR").ok().filter(|s| !s.is_empty());
+    let background_color_dark = std::env::var("BACKGROUND_COLOR_DARK").ok().filter(|s| !s.is_empty());
+    let background_color_light = std::env::var("BACKGROUND_COLOR_LIGHT").ok().filter(|s| !s.is_empty());
+    let success_color = std::env::var("SUCCESS_COLOR").ok().filter(|s| !s.is_empty());
+    let error_color = std::env::var("ERROR_COLOR").ok().filter(|s| !s.is_empty());
     let host = std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = std::env::var("API_PORT")
         .unwrap_or_else(|_| "3000".to_string())
@@ -58,6 +73,13 @@ async fn main() -> Result<()> {
         rpc_url,
         solc_path,
         admin_api_key,
+        chain_name,
+        chain_logo_url,
+        accent_color,
+        background_color_dark,
+        background_color_light,
+        success_color,
+        error_color,
     });
 
     // Build router
@@ -209,6 +231,8 @@ async fn main() -> Result<()> {
         .route("/api/search", get(handlers::search::search))
         // Status
         .route("/api/status", get(handlers::status::get_status))
+        // Config (white-label branding)
+        .route("/api/config", get(handlers::config::get_config))
         // Health
         .route("/health", get(|| async { "OK" }))
         .layer(TimeoutLayer::with_status_code(

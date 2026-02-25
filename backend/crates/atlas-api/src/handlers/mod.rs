@@ -1,6 +1,7 @@
 pub mod addresses;
 pub mod auth;
 pub mod blocks;
+pub mod config;
 pub mod contracts;
 pub mod etherscan;
 pub mod labels;
