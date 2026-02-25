@@ -17,7 +17,16 @@ pub async fn create_pool(database_url: &str, max_connections: u32) -> Result<PgP
         .await
 }
 
-/// Run database migrations
-pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
-    sqlx::migrate!("../../migrations").run(pool).await
+/// Run database migrations using a dedicated connection without statement_timeout,
+/// since migrations (index builds, bulk inserts) can legitimately exceed 10s.
+pub async fn run_migrations(database_url: &str) -> Result<(), sqlx::Error> {
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    sqlx::migrate!("../../migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| sqlx::Error::Migrate(Box::new(e)))?;
+    Ok(())
 }

@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
 
     // Run migrations
     tracing::info!("Running database migrations");
-    atlas_common::db::run_migrations(&pool).await?;
+    atlas_common::db::run_migrations(&database_url).await?;
 
     let state = Arc::new(AppState {
         pool,
