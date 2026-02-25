@@ -13,6 +13,32 @@ mod indexer;
 const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
 const MAX_RETRY_DELAY: u64 = 60;
 
+fn parse_chain_id(hex: &str) -> Option<u64> {
+    u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
+}
+
+async fn fetch_chain_id(rpc_url: &str) -> Result<u64> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_chainId",
+            "params": [],
+            "id": 1
+        }))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let json: serde_json::Value = resp.json().await?;
+    let hex = json["result"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("eth_chainId result missing"))?;
+    parse_chain_id(hex).ok_or_else(|| anyhow::anyhow!("invalid eth_chainId hex"))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -29,6 +55,10 @@ async fn main() -> Result<()> {
     // Load configuration
     dotenvy::dotenv().ok();
     let config = config::Config::from_env()?;
+
+    tracing::info!("Fetching chain ID from RPC");
+    let chain_id = fetch_chain_id(&config.rpc_url).await?;
+    tracing::info!("Chain ID: {}", chain_id);
 
     // Run migrations once (dedicated pool, no statement_timeout)
     tracing::info!("Running database migrations");
@@ -55,6 +85,8 @@ async fn main() -> Result<()> {
         block_events_tx: block_events_tx.clone(),
         head_tracker: head_tracker.clone(),
         rpc_url: config.rpc_url.clone(),
+        chain_id,
+        chain_name: config.chain_name.clone(),
     });
 
     // Spawn indexer task with retry logic
@@ -180,8 +212,32 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::wait_for_shutdown_signal;
-    use tokio::sync::oneshot;
+    use super::*;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        sync::oneshot,
+    };
+
+    async fn serve_json_once(body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0_u8; 1024];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        format!("http://{}", addr)
+    }
 
     #[tokio::test]
     async fn wait_for_shutdown_signal_returns_on_ctrl_c_future() {
@@ -217,5 +273,28 @@ mod tests {
 
         term_tx.send(()).unwrap();
         shutdown.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetch_chain_id_reads_hex_result_from_rpc_response() {
+        let url = serve_json_once(r#"{"jsonrpc":"2.0","id":1,"result":"0xa4b1"}"#).await;
+        assert_eq!(fetch_chain_id(&url).await.unwrap(), 42161);
+    }
+
+    #[tokio::test]
+    async fn fetch_chain_id_returns_error_for_invalid_result() {
+        let url = serve_json_once(r#"{"jsonrpc":"2.0","id":1,"result":"not_hex"}"#).await;
+        let err = fetch_chain_id(&url).await.unwrap_err();
+        assert!(err.to_string().contains("invalid eth_chainId hex"));
+    }
+
+    #[tokio::test]
+    async fn fetch_chain_id_returns_error_for_http_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let url = format!("http://{}", addr);
+        assert!(fetch_chain_id(&url).await.is_err());
     }
 }
