@@ -16,6 +16,7 @@ import {
   WelcomePage,
   SearchResultsPage,
   AddressesPage,
+  StatusPage,
 } from './pages';
 import { ThemeProvider } from './context/ThemeContext';
 
@@ -34,10 +35,11 @@ export default function App() {
             <Route path="addresses" element={<AddressesPage />} />
             <Route path="tx/:hash" element={<TransactionDetailPage />} />
             <Route path="address/:address" element={<AddressPage />} />
-            <Route path="nfts" element={<NFTsPage />} />
-            <Route path="nfts/:contract" element={<NFTContractPage />} />
-            <Route path="nfts/:contract/:tokenId" element={<NFTTokenPage />} />
-            <Route path="tokens" element={<TokensPage />} />
+          <Route path="nfts" element={<NFTsPage />} />
+          <Route path="nfts/:contract" element={<NFTContractPage />} />
+          <Route path="nfts/:contract/:tokenId" element={<NFTTokenPage />} />
+          <Route path="status" element={<StatusPage />} />
+          <Route path="tokens" element={<TokensPage />} />
             <Route path="tokens/:address" element={<TokenDetailPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
