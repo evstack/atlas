@@ -23,7 +23,7 @@ pub async fn list_blocks(
     // Blocks are sequential so: cursor = max_block - (page - 1) * limit
     // WHERE number <= cursor is O(log N) via primary key; OFFSET was O(N).
     let limit = pagination.limit();
-    let cursor = (total_count - 1) - pagination.offset();
+    let cursor = (total_count - 1) - (pagination.page.saturating_sub(1) as i64) * limit;
 
     let blocks: Vec<Block> = sqlx::query_as(
         "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
