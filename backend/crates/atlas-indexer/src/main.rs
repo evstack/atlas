@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
 
     // Run migrations
     tracing::info!("Running database migrations");
-    atlas_common::db::run_migrations(&pool).await?;
+    atlas_common::db::run_migrations(&config.database_url).await?;
 
     // Start indexer
     let indexer = indexer::Indexer::new(pool.clone(), config.clone());

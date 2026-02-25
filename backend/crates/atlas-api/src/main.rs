@@ -5,7 +5,9 @@ use axum::{
 };
 use sqlx::PgPool;
 use std::sync::Arc;
+use std::time::Duration;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -49,7 +51,7 @@ async fn main() -> Result<()> {
 
     // Run migrations
     tracing::info!("Running database migrations");
-    atlas_common::db::run_migrations(&pool).await?;
+    atlas_common::db::run_migrations(&database_url).await?;
 
     let state = Arc::new(AppState {
         pool,
@@ -209,6 +211,10 @@ async fn main() -> Result<()> {
         .route("/api/status", get(handlers::status::get_status))
         // Health
         .route("/health", get(|| async { "OK" }))
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(10),
+        ))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

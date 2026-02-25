@@ -19,14 +19,21 @@ pub async fn list_blocks(
         .await?;
     let total_count = total.0.unwrap_or(0);
 
+    // Convert page-based navigation to a keyset cursor using block numbers.
+    // Blocks are sequential so: cursor = max_block - (page - 1) * limit
+    // WHERE number <= cursor is O(log N) via primary key; OFFSET was O(N).
+    let limit = pagination.limit();
+    let cursor = (total_count - 1) - (pagination.page.saturating_sub(1) as i64) * limit;
+
     let blocks: Vec<Block> = sqlx::query_as(
         "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
          FROM blocks
+         WHERE number <= $2
          ORDER BY number DESC
-         LIMIT $1 OFFSET $2"
+         LIMIT $1"
     )
-    .bind(pagination.limit())
-    .bind(pagination.offset())
+    .bind(limit)
+    .bind(cursor)
     .fetch_all(&state.pool)
     .await?;
 
