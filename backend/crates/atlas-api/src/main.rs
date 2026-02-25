@@ -14,11 +14,40 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod error;
 mod handlers;
 
+async fn fetch_chain_id(rpc_url: &str) -> u64 {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_chainId",
+            "params": [],
+            "id": 1
+        }))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) => {
+            let json: serde_json::Value = r.json().await.unwrap_or_default();
+            let hex = json["result"].as_str().unwrap_or("0x0");
+            u64::from_str_radix(hex.trim_start_matches("0x"), 16).unwrap_or(0)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to fetch chain ID from RPC: {}", e);
+            0
+        }
+    }
+}
+
 pub struct AppState {
     pub pool: PgPool,
     pub rpc_url: String,
     pub solc_path: String,
     pub admin_api_key: Option<String>,
+    pub chain_id: u64,
+    pub chain_name: String,
 }
 
 #[tokio::main]
@@ -40,11 +69,17 @@ async fn main() -> Result<()> {
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set");
     let solc_path = std::env::var("SOLC_PATH").unwrap_or_else(|_| "solc".to_string());
     let admin_api_key = std::env::var("ADMIN_API_KEY").ok();
+    let chain_name = std::env::var("CHAIN_NAME").unwrap_or_else(|_| "Unknown".to_string());
     let host = std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = std::env::var("API_PORT")
         .unwrap_or_else(|_| "3000".to_string())
         .parse()
         .expect("Invalid API_PORT");
+
+    // Fetch chain ID once at startup — it never changes
+    tracing::info!("Fetching chain ID from RPC");
+    let chain_id = fetch_chain_id(&rpc_url).await;
+    tracing::info!("Chain ID: {}", chain_id);
 
     // Create database pool
     let pool = atlas_common::db::create_pool(&database_url, 20).await?;
@@ -58,6 +93,8 @@ async fn main() -> Result<()> {
         rpc_url,
         solc_path,
         admin_api_key,
+        chain_id,
+        chain_name,
     });
 
     // Build router
@@ -208,6 +245,7 @@ async fn main() -> Result<()> {
         // Search
         .route("/api/search", get(handlers::search::search))
         // Status
+        .route("/api/height", get(handlers::status::get_height))
         .route("/api/status", get(handlers::status::get_status))
         // Health
         .route("/health", get(|| async { "OK" }))
