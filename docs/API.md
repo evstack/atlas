@@ -29,8 +29,22 @@ Response format:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/status` | Current block height and indexer timestamp |
+| GET | `/api/height` | Current block height and indexer timestamp (lightweight, safe to poll frequently) |
+| GET | `/api/status` | Full chain status: chain ID, chain name, block height, total transactions, total addresses |
 | GET | `/health` | Health check (returns "OK") |
+
+**`/api/status` response:**
+```json
+{
+  "chain_id": 1,
+  "chain_name": "My Chain",
+  "block_height": 1000000,
+  "total_transactions": 5000000,
+  "total_addresses": 200000,
+  "indexed_at": "2026-01-01T00:00:00+00:00"
+}
+```
+`chain_name` is set via the `CHAIN_NAME` environment variable.
 
 ### Blocks
 
