@@ -20,6 +20,8 @@ export default function BlocksPage() {
   const { latestBlockEvent, sseConnected } = useContext(BlockStatsContext);
   const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
   const lastSseBlockRef = useRef<number | null>(null);
+  const ssePrependRafRef = useRef<number | null>(null);
+  const sseFilterRafRef = useRef<number | null>(null);
 
   // Prepend new blocks from SSE on page 1 with auto-refresh
   useEffect(() => {
@@ -27,10 +29,13 @@ export default function BlocksPage() {
     const block = latestBlockEvent.block;
     if (lastSseBlockRef.current != null && block.number <= lastSseBlockRef.current) return;
     lastSseBlockRef.current = block.number;
-    setSseBlocks((prev) => {
-      // Avoid duplicates with fetched blocks
-      if (prev.some((b) => b.number === block.number)) return prev;
-      return [block, ...prev].slice(0, 20);
+    if (ssePrependRafRef.current !== null) cancelAnimationFrame(ssePrependRafRef.current);
+    ssePrependRafRef.current = window.requestAnimationFrame(() => {
+      setSseBlocks((prev) => {
+        if (prev.some((b) => b.number === block.number)) return prev;
+        return [block, ...prev].slice(0, 20);
+      });
+      ssePrependRafRef.current = null;
     });
   }, [latestBlockEvent, page, autoRefresh]);
 
@@ -39,7 +44,11 @@ export default function BlocksPage() {
   useEffect(() => {
     if (!fetchedBlocks.length) return;
     const fetched = new Set(fetchedBlocks.map((b) => b.number));
-    setSseBlocks((prev) => prev.filter((b) => !fetched.has(b.number)));
+    if (sseFilterRafRef.current !== null) cancelAnimationFrame(sseFilterRafRef.current);
+    sseFilterRafRef.current = window.requestAnimationFrame(() => {
+      setSseBlocks((prev) => prev.filter((b) => !fetched.has(b.number)));
+      sseFilterRafRef.current = null;
+    });
   }, [fetchedBlocks]);
 
   // Merge: SSE blocks prepended, deduped, trimmed to page size
@@ -162,6 +171,14 @@ export default function BlocksPage() {
       if (highlightRafRef.current !== null) {
         window.cancelAnimationFrame(highlightRafRef.current);
         highlightRafRef.current = null;
+      }
+      if (ssePrependRafRef.current !== null) {
+        cancelAnimationFrame(ssePrependRafRef.current);
+        ssePrependRafRef.current = null;
+      }
+      if (sseFilterRafRef.current !== null) {
+        cancelAnimationFrame(sseFilterRafRef.current);
+        sseFilterRafRef.current = null;
       }
       for (const [, t] of activeTimeouts) clearTimeout(t);
       activeTimeouts.clear();

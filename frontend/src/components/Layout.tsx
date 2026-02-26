@@ -56,10 +56,11 @@ export default function Layout() {
       });
     }
 
-    // When SSE is connected, just track the real height directly — no prediction
+    // When SSE is connected, just track the real height directly — no prediction.
+    // The initialization block above already scheduled a RAF to call setDisplayedHeight
+    // whenever height changes, so no synchronous setState needed here.
     if (sse.connected) {
       displayedRef.current = height;
-      setDisplayedHeight(height);
       return;
     }
 
