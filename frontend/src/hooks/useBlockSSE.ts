@@ -48,7 +48,7 @@ export default function useBlockSSE(): BlockSSEState {
   // Cached drain interval in ms, derived from chain block timestamps
   const drainIntervalRef = useRef<number>(90); // initial guess ~11 bps
 
-  const connect = useCallback(() => {
+  const connect = useCallback(function connectSSE() {
     if (esRef.current) {
       esRef.current.close();
     }
@@ -125,7 +125,7 @@ export default function useBlockSSE(): BlockSSEState {
 
       reconnectTimeoutRef.current = window.setTimeout(() => {
         reconnectTimeoutRef.current = null;
-        connect();
+        connectSSE();
       }, 2000);
     };
   }, []);

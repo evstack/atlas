@@ -34,9 +34,12 @@ export default function BlocksPage() {
     });
   }, [latestBlockEvent, page, autoRefresh]);
 
-  // Reset SSE buffer when fetched blocks update (they'll include the SSE blocks now)
+  // Drop SSE blocks that are now present in fetchedBlocks to avoid duplicates,
+  // but keep any that haven't been fetched yet.
   useEffect(() => {
-    setSseBlocks([]);
+    if (!fetchedBlocks.length) return;
+    const fetched = new Set(fetchedBlocks.map((b) => b.number));
+    setSseBlocks((prev) => prev.filter((b) => !fetched.has(b.number)));
   }, [fetchedBlocks]);
 
   // Merge: SSE blocks prepended, deduped, trimmed to page size

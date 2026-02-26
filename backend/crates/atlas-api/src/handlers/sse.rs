@@ -11,6 +11,7 @@ use tokio::time::interval;
 
 use crate::AppState;
 use atlas_common::Block;
+use tracing::warn;
 
 #[derive(Serialize)]
 struct NewBlockEvent {
@@ -34,24 +35,28 @@ pub async fn block_events(
 
             // On first tick, seed with the latest block number
             if last_block_number.is_none() {
-                let latest: Option<i64> = sqlx::query_scalar("SELECT MAX(number) FROM blocks")
+                let latest: Option<i64> = match sqlx::query_scalar("SELECT MAX(number) FROM blocks")
                     .fetch_one(&state.pool)
                     .await
-                    .ok()
-                    .flatten();
+                {
+                    Ok(v) => v,
+                    Err(e) => { warn!(error = ?e, "sse: failed to query latest block number"); continue; }
+                };
 
                 if let Some(max_num) = latest {
                     last_block_number = Some(max_num);
                     // Emit the current latest block as the initial event
-                    let block: Option<Block> = sqlx::query_as(
+                    let block: Option<Block> = match sqlx::query_as(
                         "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
                          FROM blocks WHERE number = $1"
                     )
                     .bind(max_num)
                     .fetch_optional(&state.pool)
                     .await
-                    .ok()
-                    .flatten();
+                    {
+                        Ok(v) => v,
+                        Err(e) => { warn!(error = ?e, "sse: failed to fetch initial block"); continue; }
+                    };
 
                     if let Some(block) = block {
                         let event = NewBlockEvent { block };
@@ -67,14 +72,17 @@ pub async fn block_events(
             let cursor = last_block_number.unwrap();
 
             // Fetch ALL new blocks since last sent, in ascending order
-            let new_blocks: Vec<Block> = sqlx::query_as(
+            let new_blocks: Vec<Block> = match sqlx::query_as(
                 "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
                  FROM blocks WHERE number > $1 ORDER BY number ASC"
             )
             .bind(cursor)
             .fetch_all(&state.pool)
             .await
-            .unwrap_or_default();
+            {
+                Ok(rows) => rows,
+                Err(e) => { warn!(error = ?e, cursor, "sse: failed to fetch new blocks"); continue; }
+            };
 
             if !new_blocks.is_empty() {
                 ping_counter = 0;
