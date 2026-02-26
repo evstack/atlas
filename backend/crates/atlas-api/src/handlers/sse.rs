@@ -34,15 +34,13 @@ pub async fn block_events(
 
             // On first tick, seed with the latest block number
             if last_block_number.is_none() {
-                let latest: Option<(i64,)> = sqlx::query_as(
-                    "SELECT MAX(number) FROM blocks"
-                )
-                .fetch_optional(&state.pool)
-                .await
-                .ok()
-                .flatten();
+                let latest: Option<i64> = sqlx::query_scalar("SELECT MAX(number) FROM blocks")
+                    .fetch_one(&state.pool)
+                    .await
+                    .ok()
+                    .flatten();
 
-                if let Some((max_num,)) = latest {
+                if let Some(max_num) = latest {
                     last_block_number = Some(max_num);
                     // Emit the current latest block as the initial event
                     let block: Option<Block> = sqlx::query_as(
