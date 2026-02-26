@@ -8,6 +8,7 @@ pub mod logs;
 pub mod nfts;
 pub mod proxy;
 pub mod search;
+pub mod sse;
 pub mod status;
 pub mod tokens;
 pub mod transactions;

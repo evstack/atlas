@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useBlocks } from '../hooks';
 import { CopyButton, Loading } from '../components';
 import { formatNumber, formatTimeAgo, formatGas, truncateHash } from '../utils';
+import { BlockStatsContext } from '../context/BlockStatsContext';
 
 export default function BlocksPage() {
   const [page, setPage] = useState(1);
@@ -14,8 +15,37 @@ export default function BlocksPage() {
       return true;
     }
   });
-  const { blocks, pagination, refetch, loading } = useBlocks({ page, limit: 20 });
+  const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: 20 });
   const hasLoaded = !loading || pagination !== null;
+  const { latestBlockEvent, sseConnected } = useContext(BlockStatsContext);
+  const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
+  const lastSseBlockRef = useRef<number | null>(null);
+
+  // Prepend new blocks from SSE on page 1 with auto-refresh
+  useEffect(() => {
+    if (!latestBlockEvent || page !== 1 || !autoRefresh) return;
+    const block = latestBlockEvent.block;
+    if (lastSseBlockRef.current != null && block.number <= lastSseBlockRef.current) return;
+    lastSseBlockRef.current = block.number;
+    setSseBlocks((prev) => {
+      // Avoid duplicates with fetched blocks
+      if (prev.some((b) => b.number === block.number)) return prev;
+      return [block, ...prev].slice(0, 20);
+    });
+  }, [latestBlockEvent, page, autoRefresh]);
+
+  // Reset SSE buffer when fetched blocks update (they'll include the SSE blocks now)
+  useEffect(() => {
+    setSseBlocks([]);
+  }, [fetchedBlocks]);
+
+  // Merge: SSE blocks prepended, deduped, trimmed to page size
+  const blocks = useMemo(() => {
+    if (!sseBlocks.length) return fetchedBlocks;
+    const seen = new Set(fetchedBlocks.map((b) => b.number));
+    const unique = sseBlocks.filter((b) => !seen.has(b.number));
+    return [...unique, ...fetchedBlocks].slice(0, 20);
+  }, [fetchedBlocks, sseBlocks]);
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
   const seenBlocksRef = useRef<Set<number>>(new Set());
@@ -51,13 +81,16 @@ export default function BlocksPage() {
 
   useEffect(() => {
     if (!autoRefresh) return;
+    // When SSE is connected, poll less frequently (every 10s as a safety net)
+    // When SSE is disconnected, poll every 1s as before
+    const interval = sseConnected ? 10000 : 1000;
     const id = setInterval(() => {
       if (!loading) {
         void refetch();
       }
-    }, 1000);
+    }, interval);
     return () => clearInterval(id);
-  }, [autoRefresh, refetch, loading]);
+  }, [autoRefresh, refetch, loading, sseConnected]);
 
   // Keep relative timestamps (Age) updating even when auto refresh is paused
   useEffect(() => {
