@@ -91,18 +91,24 @@ export default function BlocksPage() {
     });
   }, [blocks, sort]);
 
+  // No polling while SSE is connected — periodic refetches disrupt the smooth live flow.
+  // Fall back to 1s polling only when SSE is disconnected.
   useEffect(() => {
-    if (!autoRefresh) return;
-    // When SSE is connected, poll less frequently (every 10s as a safety net)
-    // When SSE is disconnected, poll every 1s as before
-    const interval = sseConnected ? 10000 : 1000;
+    if (!autoRefresh || sseConnected) return;
     const id = setInterval(() => {
-      if (!loading) {
-        void refetch();
-      }
-    }, interval);
+      if (!loading) void refetch();
+    }, 1000);
     return () => clearInterval(id);
   }, [autoRefresh, refetch, loading, sseConnected]);
+
+  // When SSE drops, immediately refetch to catch any blocks missed during the gap.
+  const prevSseConnectedRef = useRef(sseConnected);
+  useEffect(() => {
+    if (prevSseConnectedRef.current && !sseConnected && autoRefresh) {
+      void refetch();
+    }
+    prevSseConnectedRef.current = sseConnected;
+  }, [sseConnected, refetch, autoRefresh]);
 
   // Keep relative timestamps (Age) updating even when auto refresh is paused
   useEffect(() => {
