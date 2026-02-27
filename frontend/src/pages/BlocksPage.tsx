@@ -51,13 +51,14 @@ export default function BlocksPage() {
     });
   }, [fetchedBlocks]);
 
-  // Merge: SSE blocks prepended, deduped, trimmed to page size
+  // Merge: SSE blocks prepended, deduped, trimmed to page size.
+  // Only prepend on page 1 with auto-refresh — other pages show fetched data only.
   const blocks = useMemo(() => {
-    if (!sseBlocks.length) return fetchedBlocks;
+    if (page !== 1 || !autoRefresh || !sseBlocks.length) return fetchedBlocks;
     const seen = new Set(fetchedBlocks.map((b) => b.number));
     const unique = sseBlocks.filter((b) => !seen.has(b.number));
     return [...unique, ...fetchedBlocks].slice(0, 20);
-  }, [fetchedBlocks, sseBlocks]);
+  }, [fetchedBlocks, sseBlocks, page, autoRefresh]);
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
   const seenBlocksRef = useRef<Set<number>>(new Set());

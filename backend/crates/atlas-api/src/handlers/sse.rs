@@ -44,8 +44,9 @@ pub async fn block_events(
                 };
 
                 if let Some(max_num) = latest {
-                    last_block_number = Some(max_num);
-                    // Emit the current latest block as the initial event
+                    // Emit the current latest block as the initial event.
+                    // Only advance the cursor after a successful fetch-and-emit so the
+                    // block is not skipped if the fetch fails.
                     let block: Option<Block> = match sqlx::query_as(
                         "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
                          FROM blocks WHERE number = $1"
@@ -59,12 +60,13 @@ pub async fn block_events(
                     };
 
                     if let Some(block) = block {
+                        last_block_number = Some(block.number);
                         let event = NewBlockEvent { block };
                         if let Ok(json) = serde_json::to_string(&event) {
                             yield Ok(Event::default().event("new_block").data(json));
                         }
+                        ping_counter = 0;
                     }
-                    ping_counter = 0;
                 }
                 continue;
             }
