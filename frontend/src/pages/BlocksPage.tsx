@@ -21,19 +21,27 @@ export default function BlocksPage() {
   const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
   const lastSseBlockRef = useRef<number | null>(null);
   const ssePrependRafRef = useRef<number | null>(null);
+  const pendingSseBlocksRef = useRef<typeof fetchedBlocks>([]);
   const sseFilterRafRef = useRef<number | null>(null);
 
-  // Prepend new blocks from SSE on page 1 with auto-refresh
+  // Prepend new blocks from SSE on page 1 with auto-refresh.
+  // Buffer pending blocks so that burst arrivals (e.g. 100, 101, 102 before the
+  // next frame) are all flushed in a single RAF rather than cancelling each other.
   useEffect(() => {
     if (!latestBlockEvent || page !== 1 || !autoRefresh) return;
     const block = latestBlockEvent.block;
     if (lastSseBlockRef.current != null && block.number <= lastSseBlockRef.current) return;
     lastSseBlockRef.current = block.number;
-    if (ssePrependRafRef.current !== null) cancelAnimationFrame(ssePrependRafRef.current);
+    pendingSseBlocksRef.current.push(block);
+    if (ssePrependRafRef.current !== null) return; // RAF already scheduled; block is buffered
     ssePrependRafRef.current = window.requestAnimationFrame(() => {
+      const pending = pendingSseBlocksRef.current;
+      pendingSseBlocksRef.current = [];
       setSseBlocks((prev) => {
-        if (prev.some((b) => b.number === block.number)) return prev;
-        return [block, ...prev].slice(0, 20);
+        const seen = new Set(prev.map((b) => b.number));
+        // pending is oldest-first; reverse so newest ends up at the top
+        const prepend = pending.filter((b) => !seen.has(b.number)).reverse();
+        return [...prepend, ...prev].slice(0, 20);
       });
       ssePrependRafRef.current = null;
     });
@@ -182,6 +190,7 @@ export default function BlocksPage() {
       if (ssePrependRafRef.current !== null) {
         cancelAnimationFrame(ssePrependRafRef.current);
         ssePrependRafRef.current = null;
+        pendingSseBlocksRef.current = [];
       }
       if (sseFilterRafRef.current !== null) {
         cancelAnimationFrame(sseFilterRafRef.current);
