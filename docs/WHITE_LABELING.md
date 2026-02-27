@@ -2,7 +2,7 @@
 
 Atlas supports white-labeling so each L2 chain can customize the explorer's appearance — name, logo, and color scheme — without rebuilding the frontend.
 
-All branding is configured through environment variables. When none are set, Atlas uses its default branding.
+All branding is configured through environment variables. When none are set, the explorer uses the default ev-node branding.
 
 ## Configuration
 
@@ -11,14 +11,14 @@ Add these variables to your `.env` file alongside `RPC_URL`:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CHAIN_NAME` | Displayed in the navbar, page title, and welcome page | `Atlas` |
-| `CHAIN_LOGO_URL` | URL or path to your logo (e.g. `/branding/logo.svg`) | Bundled Atlas logo |
+| `CHAIN_LOGO_URL` | URL or path to your logo (e.g. `/branding/logo.svg`) | Bundled ev-node logo |
 | `ACCENT_COLOR` | Primary accent hex for links, buttons, active states | `#dc2626` |
 | `BACKGROUND_COLOR_DARK` | Dark mode base background hex | `#050505` |
 | `BACKGROUND_COLOR_LIGHT` | Light mode base background hex | `#f4ede6` |
 | `SUCCESS_COLOR` | Success indicator hex (e.g. confirmed badges) | `#22c55e` |
 | `ERROR_COLOR` | Error indicator hex (e.g. failed badges) | `#dc2626` |
 
-All variables are optional. Unset variables fall back to the Atlas defaults shown above.
+All variables are optional. Unset variables fall back to the default ev-node branding shown above.
 
 ## Custom Logo
 
@@ -114,7 +114,7 @@ ERROR_COLOR=#dc2626
 CHAIN_NAME=MyChain
 ```
 
-Everything else stays default Atlas branding.
+Everything else stays default ev-node branding.
 
 ## How It Works
 
