@@ -47,6 +47,13 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: 3000
       RUST_LOG: atlas_api=info,tower_http=info
+      CHAIN_NAME: ${CHAIN_NAME:-Atlas}
+      CHAIN_LOGO_URL: ${CHAIN_LOGO_URL:-}
+      ACCENT_COLOR: ${ACCENT_COLOR:-}
+      BACKGROUND_COLOR_DARK: ${BACKGROUND_COLOR_DARK:-}
+      BACKGROUND_COLOR_LIGHT: ${BACKGROUND_COLOR_LIGHT:-}
+      SUCCESS_COLOR: ${SUCCESS_COLOR:-}
+      ERROR_COLOR: ${ERROR_COLOR:-}
     ports:
       - "3000:3000"
     depends_on:
@@ -60,6 +67,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "80:8080"
+    volumes:
+      - ${BRANDING_DIR:-./branding}:/usr/share/nginx/html/branding:ro
     depends_on:
       - atlas-api
     restart: unless-stopped

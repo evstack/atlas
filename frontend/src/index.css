@@ -4,6 +4,9 @@
 
 @layer base {
   :root {
+    --color-accent-primary: #dc2626;
+    --color-accent-success: #22c55e;
+    --color-accent-error: #dc2626;
     --color-surface-900: 6 6 8;
     --color-surface-800: 12 12 16;
     --color-surface-700: 20 20 28;
@@ -73,11 +76,12 @@
 
   .btn {
     @apply px-3 py-1.5 font-medium rounded-lg transition-all duration-150;
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/50;
+    @apply focus-visible:outline-none focus-visible:ring-2;
+    --tw-ring-color: color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
   }
 
   .btn-primary {
-    @apply text-white bg-gradient-to-r from-accent-primary to-red-600 hover:to-red-500 shadow-sm shadow-black/20;
+    @apply text-white bg-accent-primary hover:brightness-110 shadow-sm shadow-black/20;
   }
 
   .btn-secondary {
@@ -105,8 +109,8 @@
     border: 1px solid rgb(var(--color-surface-500));
     font-size: 0.65rem;
     font-weight: 600;
-    background-color: rgb(var(--color-dark-600));
-    color: #e2e8f0;
+    background-color: rgb(var(--color-surface-600));
+    color: rgb(var(--color-text-secondary));
   }
 
   .status-badge {
@@ -121,33 +125,33 @@
   }
 
   .status-badge--success {
-    color: #4ade80;
-    border-color: rgba(74, 222, 128, 0.35);
-    background-color: rgba(34, 197, 94, 0.12);
+    color: var(--color-accent-success);
+    border-color: color-mix(in srgb, var(--color-accent-success) 35%, transparent);
+    background-color: color-mix(in srgb, var(--color-accent-success) 12%, transparent);
   }
 
   .status-badge--error {
-    color: #f87171;
-    border-color: rgba(248, 113, 113, 0.4);
-    background-color: rgba(248, 113, 113, 0.12);
+    color: var(--color-accent-error);
+    border-color: color-mix(in srgb, var(--color-accent-error) 40%, transparent);
+    background-color: color-mix(in srgb, var(--color-accent-error) 12%, transparent);
   }
 
   [data-theme='light'] .badge-chip {
-    border-color: #ccbcae;
-    background-color: #ede0d4;
-    color: #2f241b;
+    border-color: rgb(var(--color-surface-500));
+    background-color: rgb(var(--color-surface-600));
+    color: rgb(var(--color-text-primary));
   }
 
   [data-theme='light'] .status-badge--success {
-    color: #166534;
-    border-color: #86efac;
-    background-color: #d1fae5;
+    color: color-mix(in srgb, var(--color-accent-success) 80%, black);
+    border-color: color-mix(in srgb, var(--color-accent-success) 60%, white);
+    background-color: color-mix(in srgb, var(--color-accent-success) 15%, white);
   }
 
   [data-theme='light'] .status-badge--error {
-    color: #7f1d1d;
-    border-color: #fca5a5;
-    background-color: #fee2e2;
+    color: color-mix(in srgb, var(--color-accent-error) 80%, black);
+    border-color: color-mix(in srgb, var(--color-accent-error) 60%, white);
+    background-color: color-mix(in srgb, var(--color-accent-error) 15%, white);
   }
 }
 

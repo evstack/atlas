@@ -72,10 +72,13 @@ Copy `.env.example` to `.env` and set `RPC_URL`. Common options:
 | `IPFS_GATEWAY` | Gateway for NFT metadata | `https://ipfs.io/ipfs/` |
 | `REINDEX` | Wipe and reindex from start | `false` |
 
+See [White Labeling](docs/WHITE_LABELING.md) for branding customization (chain name, logo, colors).
+
 ## Documentation
 
 - [API Reference](docs/API.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [White Labeling](docs/WHITE_LABELING.md)
 - [Product Requirements](docs/PRD.md)
 
 ## License

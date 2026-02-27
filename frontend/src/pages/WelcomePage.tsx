@@ -1,19 +1,22 @@
 import SearchBar from '../components/SearchBar';
-import logoImg from '../assets/logo.png';
+import defaultLogoImg from '../assets/logo.png';
 import useStats from '../hooks/useStats';
 import { formatNumber } from '../utils';
 import { useContext, useMemo } from 'react';
 import { BlockStatsContext } from '../context/BlockStatsContext';
+import { useBranding } from '../hooks/useBranding';
 
 export default function WelcomePage() {
   const { totals, dailyTx, avgBlockTimeSec, loading } = useStats();
   const { bps } = useContext(BlockStatsContext);
   const headerAvgSec = useMemo(() => (bps && bps > 0 ? 1 / bps : null), [bps]);
+  const { chainName, logoUrl } = useBranding();
+  const logoSrc = logoUrl || defaultLogoImg;
   return (
     <div className="min-h-[70vh] flex items-center justify-center">
       <div className="w-full max-w-2xl px-4 text-center">
         <div className="flex justify-center mb-6">
-          <img src={logoImg} alt="Atlas" className="h-40 md:h-56 lg:h-64 w-auto rounded-lg" />
+          <img src={logoSrc} alt={chainName} className="h-40 md:h-56 lg:h-64 w-auto rounded-lg" />
         </div>
         <SearchBar />
         <p className="mt-4 text-fg-subtle text-sm">
