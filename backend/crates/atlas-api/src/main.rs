@@ -48,7 +48,10 @@ async fn main() -> Result<()> {
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set");
     let solc_path = std::env::var("SOLC_PATH").unwrap_or_else(|_| "solc".to_string());
     let admin_api_key = std::env::var("ADMIN_API_KEY").ok();
-    let chain_name = std::env::var("CHAIN_NAME").unwrap_or_else(|_| "Atlas".to_string());
+    let chain_name = std::env::var("CHAIN_NAME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "Atlas".to_string());
     let chain_logo_url = std::env::var("CHAIN_LOGO_URL")
         .ok()
         .filter(|s| !s.is_empty());

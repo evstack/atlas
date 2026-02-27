@@ -32,7 +32,15 @@ interface DerivedPalette {
 }
 
 function hexToRgb(hex: string): RGB {
-  const clean = hex.replace('#', '');
+  const raw = hex.trim().replace(/^#/, '');
+  const clean = raw.length === 3
+    ? raw.split('').map((c) => c + c).join('')
+    : raw;
+
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) {
+    throw new Error(`Invalid hex color: "${hex}"`);
+  }
+
   return {
     r: parseInt(clean.slice(0, 2), 16),
     g: parseInt(clean.slice(2, 4), 16),
