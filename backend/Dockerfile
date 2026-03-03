@@ -1,26 +1,16 @@
-# Compute a dependency recipe from the workspace manifests and lock file
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-alpine AS planner
-WORKDIR /app
-COPY . .
-# Downgrade crates incompatible with Rust 1.85 before preparing the recipe
-RUN cargo update home@0.5.12 --precise 0.5.9 || true
-RUN cargo update wit-bindgen --precise 0.41.0 || true
-RUN cargo update wasip2 --precise 0.1.0 || true
-RUN cargo chef prepare --recipe-path recipe.json
-
-# Build stage — cook dependencies first, then compile app code
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-alpine AS builder
+# Build stage
+FROM rust:1.85-alpine AS builder
 
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
 
 WORKDIR /app
-
-# Cook dependencies (cached until Cargo.toml/Cargo.lock change)
-COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-
-# Copy source and build (only this layer rebuilds on code changes)
 COPY . .
+
+# Downgrade home crate to version compatible with Rust 1.85
+RUN cargo update home@0.5.12 --precise 0.5.9 || true
+RUN cargo update wit-bindgen --precise 0.41.0 || true
+RUN cargo update wasip2 --precise 0.1.0 || true
+
 RUN cargo build --release
 
 # Indexer image
