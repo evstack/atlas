@@ -408,13 +408,19 @@ mod tests {
 
     #[test]
     fn limit_above_max_clamps_to_100() {
-        let p = Pagination { page: 1, limit: 150 };
+        let p = Pagination {
+            page: 1,
+            limit: 150,
+        };
         assert_eq!(p.limit(), 100);
     }
 
     #[test]
     fn limit_at_max_is_unchanged() {
-        let p = Pagination { page: 1, limit: 100 };
+        let p = Pagination {
+            page: 1,
+            limit: 100,
+        };
         assert_eq!(p.limit(), 100);
     }
 
@@ -432,7 +438,10 @@ mod tests {
 
     #[test]
     fn limit_u32_max_clamps_to_100() {
-        let p = Pagination { page: 1, limit: u32::MAX };
+        let p = Pagination {
+            page: 1,
+            limit: u32::MAX,
+        };
         assert_eq!(p.limit(), 100);
     }
 

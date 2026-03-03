@@ -62,7 +62,10 @@ mod tests {
 
     #[test]
     fn invalid_input_returns_400() {
-        assert_eq!(AtlasError::InvalidInput("bad input".into()).status_code(), 400);
+        assert_eq!(
+            AtlasError::InvalidInput("bad input".into()).status_code(),
+            400
+        );
     }
 
     #[test]
@@ -82,7 +85,10 @@ mod tests {
 
     #[test]
     fn metadata_fetch_returns_502() {
-        assert_eq!(AtlasError::MetadataFetch("ipfs down".into()).status_code(), 502);
+        assert_eq!(
+            AtlasError::MetadataFetch("ipfs down".into()).status_code(),
+            502
+        );
     }
 
     #[test]
@@ -92,16 +98,25 @@ mod tests {
 
     #[test]
     fn verification_error_returns_400() {
-        assert_eq!(AtlasError::Verification("bad source".into()).status_code(), 400);
+        assert_eq!(
+            AtlasError::Verification("bad source".into()).status_code(),
+            400
+        );
     }
 
     #[test]
     fn bytecode_mismatch_returns_400() {
-        assert_eq!(AtlasError::BytecodeMismatch("different".into()).status_code(), 400);
+        assert_eq!(
+            AtlasError::BytecodeMismatch("different".into()).status_code(),
+            400
+        );
     }
 
     #[test]
     fn compilation_error_returns_422() {
-        assert_eq!(AtlasError::Compilation("syntax error".into()).status_code(), 422);
+        assert_eq!(
+            AtlasError::Compilation("syntax error".into()).status_code(),
+            422
+        );
     }
 }

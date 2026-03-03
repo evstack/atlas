@@ -945,7 +945,12 @@ mod tests {
         let known_erc20 = HashSet::new();
         let known_nft = HashSet::new();
 
-        Indexer::collect_block(&mut batch, &known_erc20, &known_nft, empty_fetched_block(100));
+        Indexer::collect_block(
+            &mut batch,
+            &known_erc20,
+            &known_nft,
+            empty_fetched_block(100),
+        );
 
         assert_eq!(batch.b_numbers, vec![100i64]);
         assert_eq!(batch.b_tx_counts, vec![0i32]);
@@ -1047,9 +1052,7 @@ mod tests {
         assert_eq!(batch.balance_map.len(), 1);
         let contract = batch.ec_addresses[0].clone();
         let to = "0x2222222222222222222222222222222222222222";
-        assert!(batch
-            .balance_map
-            .contains_key(&(to.to_string(), contract)));
+        assert!(batch.balance_map.contains_key(&(to.to_string(), contract)));
     }
 
     #[test]
