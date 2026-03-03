@@ -1,9 +1,23 @@
-# Build stage
+# Compute a dependency recipe from the workspace manifests and lock file
+FROM rust:1.85-alpine AS planner
+RUN cargo install cargo-chef --locked
+WORKDIR /app
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Build stage — cook dependencies first, then compile app code
 FROM rust:1.85-alpine AS builder
 
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
+RUN cargo install cargo-chef --locked
 
 WORKDIR /app
+
+# Cook dependencies (cached until Cargo.toml/Cargo.lock change)
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Copy source and build (only this layer rebuilds on code changes)
 COPY . .
 
 # Downgrade home crate to version compatible with Rust 1.85
