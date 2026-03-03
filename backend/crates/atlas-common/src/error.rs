@@ -50,3 +50,58 @@ impl AtlasError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn not_found_returns_404() {
+        assert_eq!(AtlasError::NotFound("resource".into()).status_code(), 404);
+    }
+
+    #[test]
+    fn invalid_input_returns_400() {
+        assert_eq!(AtlasError::InvalidInput("bad input".into()).status_code(), 400);
+    }
+
+    #[test]
+    fn unauthorized_returns_401() {
+        assert_eq!(AtlasError::Unauthorized("no key".into()).status_code(), 401);
+    }
+
+    #[test]
+    fn internal_error_returns_500() {
+        assert_eq!(AtlasError::Internal("oops".into()).status_code(), 500);
+    }
+
+    #[test]
+    fn rpc_error_returns_502() {
+        assert_eq!(AtlasError::Rpc("timeout".into()).status_code(), 502);
+    }
+
+    #[test]
+    fn metadata_fetch_returns_502() {
+        assert_eq!(AtlasError::MetadataFetch("ipfs down".into()).status_code(), 502);
+    }
+
+    #[test]
+    fn config_error_returns_500() {
+        assert_eq!(AtlasError::Config("missing env".into()).status_code(), 500);
+    }
+
+    #[test]
+    fn verification_error_returns_400() {
+        assert_eq!(AtlasError::Verification("bad source".into()).status_code(), 400);
+    }
+
+    #[test]
+    fn bytecode_mismatch_returns_400() {
+        assert_eq!(AtlasError::BytecodeMismatch("different".into()).status_code(), 400);
+    }
+
+    #[test]
+    fn compilation_error_returns_422() {
+        assert_eq!(AtlasError::Compilation("syntax error".into()).status_code(), 422);
+    }
+}

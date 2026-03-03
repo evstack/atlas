@@ -536,3 +536,65 @@ fn resolve_uri(uri: &str, ipfs_gateway: &str) -> String {
         uri.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GATEWAY: &str = "https://ipfs.io/ipfs/";
+
+    #[test]
+    fn resolve_ipfs_uri_prefixes_gateway() {
+        assert_eq!(
+            resolve_uri("ipfs://QmXxx123", GATEWAY),
+            "https://ipfs.io/ipfs/QmXxx123"
+        );
+    }
+
+    #[test]
+    fn resolve_ipfs_uri_with_path() {
+        assert_eq!(
+            resolve_uri("ipfs://QmXxx123/metadata/1.json", GATEWAY),
+            "https://ipfs.io/ipfs/QmXxx123/metadata/1.json"
+        );
+    }
+
+    #[test]
+    fn resolve_ipfs_uses_custom_gateway() {
+        assert_eq!(
+            resolve_uri("ipfs://QmXxx123", "https://cloudflare-ipfs.com/ipfs/"),
+            "https://cloudflare-ipfs.com/ipfs/QmXxx123"
+        );
+    }
+
+    #[test]
+    fn resolve_arweave_uri() {
+        assert_eq!(
+            resolve_uri("ar://txid123", GATEWAY),
+            "https://arweave.net/txid123"
+        );
+    }
+
+    #[test]
+    fn resolve_data_uri_is_unchanged() {
+        let data = "data:image/png;base64,abc123==";
+        assert_eq!(resolve_uri(data, GATEWAY), data);
+    }
+
+    #[test]
+    fn resolve_https_uri_is_unchanged() {
+        let url = "https://example.com/metadata/1.json";
+        assert_eq!(resolve_uri(url, GATEWAY), url);
+    }
+
+    #[test]
+    fn resolve_http_uri_is_unchanged() {
+        let url = "http://example.com/metadata/1.json";
+        assert_eq!(resolve_uri(url, GATEWAY), url);
+    }
+
+    #[test]
+    fn resolve_empty_string_is_unchanged() {
+        assert_eq!(resolve_uri("", GATEWAY), "");
+    }
+}

@@ -401,3 +401,81 @@ impl<T> PaginatedResponse<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limit_above_max_clamps_to_100() {
+        let p = Pagination { page: 1, limit: 150 };
+        assert_eq!(p.limit(), 100);
+    }
+
+    #[test]
+    fn limit_at_max_is_unchanged() {
+        let p = Pagination { page: 1, limit: 100 };
+        assert_eq!(p.limit(), 100);
+    }
+
+    #[test]
+    fn limit_below_max_is_unchanged() {
+        let p = Pagination { page: 1, limit: 20 };
+        assert_eq!(p.limit(), 20);
+    }
+
+    #[test]
+    fn limit_zero_is_unchanged() {
+        let p = Pagination { page: 1, limit: 0 };
+        assert_eq!(p.limit(), 0);
+    }
+
+    #[test]
+    fn limit_u32_max_clamps_to_100() {
+        let p = Pagination { page: 1, limit: u32::MAX };
+        assert_eq!(p.limit(), 100);
+    }
+
+    #[test]
+    fn offset_page_zero_saturates_to_zero() {
+        // page=0 → saturating_sub(1)=0 → offset = 0 * limit = 0
+        let p = Pagination { page: 0, limit: 20 };
+        assert_eq!(p.offset(), 0);
+    }
+
+    #[test]
+    fn offset_page_one_is_zero() {
+        let p = Pagination { page: 1, limit: 20 };
+        assert_eq!(p.offset(), 0);
+    }
+
+    #[test]
+    fn offset_page_two() {
+        let p = Pagination { page: 2, limit: 20 };
+        assert_eq!(p.offset(), 20);
+    }
+
+    #[test]
+    fn offset_page_three() {
+        let p = Pagination { page: 3, limit: 10 };
+        assert_eq!(p.offset(), 20);
+    }
+
+    #[test]
+    fn paginated_response_total_pages_rounds_up() {
+        let resp = PaginatedResponse::new(vec![1, 2, 3], 1, 10, 25);
+        assert_eq!(resp.total_pages, 3);
+    }
+
+    #[test]
+    fn paginated_response_exact_division() {
+        let resp = PaginatedResponse::<i32>::new(vec![], 1, 10, 20);
+        assert_eq!(resp.total_pages, 2);
+    }
+
+    #[test]
+    fn paginated_response_zero_total() {
+        let resp = PaginatedResponse::<i32>::new(vec![], 1, 10, 0);
+        assert_eq!(resp.total_pages, 0);
+    }
+}
