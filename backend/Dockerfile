@@ -1,15 +1,13 @@
 # Compute a dependency recipe from the workspace manifests and lock file
-FROM rust:1.85-alpine AS planner
-RUN cargo install cargo-chef --locked
+FROM lukemathwalker/cargo-chef:latest-rust-1.85-alpine AS planner
 WORKDIR /app
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Build stage — cook dependencies first, then compile app code
-FROM rust:1.85-alpine AS builder
+FROM lukemathwalker/cargo-chef:latest-rust-1.85-alpine AS builder
 
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
-RUN cargo install cargo-chef --locked
 
 WORKDIR /app
 
