@@ -1,0 +1,58 @@
+name: Build Docker Images
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        required: true
+        type: string
+        description: "Docker image tag (example: main)"
+      apps:
+        required: true
+        type: string
+        description: "JSON array of apps to build"
+
+jobs:
+  build-images:
+    name: Build ${{ matrix.app.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        app: ${{ fromJson(inputs.apps) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.app.name }} (targeted)
+        if: matrix.app.target != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.app.context }}
+          file: ${{ matrix.app.dockerfile }}
+          target: ${{ matrix.app.target }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.app.name }}:${{ inputs.image-tag }}
+
+      - name: Build and push ${{ matrix.app.name }} (default target)
+        if: matrix.app.target == ''
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.app.context }}
+          file: ${{ matrix.app.dockerfile }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.app.name }}:${{ inputs.image-tag }}

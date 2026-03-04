@@ -63,3 +63,20 @@ jobs:
 
       - name: Build
         run: bun run build
+
+  docker:
+    name: Docker (GHCR)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/docker-build-push.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image-tag: main
+      apps: |
+        [
+          {"name": "atlas-oss-indexer", "context": "backend", "dockerfile": "backend/Dockerfile", "target": "indexer"},
+          {"name": "atlas-oss-api", "context": "backend", "dockerfile": "backend/Dockerfile", "target": "api"},
+          {"name": "atlas-oss-frontend", "context": "frontend", "dockerfile": "frontend/Dockerfile", "target": ""}
+        ]
