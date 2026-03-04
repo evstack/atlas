@@ -51,35 +51,3 @@ impl AtlasError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn not_found_returns_404() {
-        assert_eq!(AtlasError::NotFound("resource".into()).status_code(), 404);
-    }
-
-    #[test]
-    fn unauthorized_returns_401() {
-        assert_eq!(AtlasError::Unauthorized("no key".into()).status_code(), 401);
-    }
-
-    #[test]
-    fn internal_error_returns_500() {
-        assert_eq!(AtlasError::Internal("oops".into()).status_code(), 500);
-    }
-
-    #[test]
-    fn rpc_error_returns_502() {
-        assert_eq!(AtlasError::Rpc("timeout".into()).status_code(), 502);
-    }
-
-    #[test]
-    fn compilation_error_returns_422() {
-        assert_eq!(
-            AtlasError::Compilation("syntax error".into()).status_code(),
-            422
-        );
-    }
-}

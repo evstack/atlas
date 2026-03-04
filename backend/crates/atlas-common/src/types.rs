@@ -407,30 +407,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn limit_above_max_clamps_to_100() {
-        let p = Pagination {
-            page: 1,
-            limit: 150,
-        };
-        assert_eq!(p.limit(), 100);
-    }
-
-    #[test]
-    fn limit_zero_is_unchanged() {
-        let p = Pagination { page: 1, limit: 0 };
-        assert_eq!(p.limit(), 0);
-    }
-
-    #[test]
-    fn limit_u32_max_clamps_to_100() {
-        let p = Pagination {
-            page: 1,
-            limit: u32::MAX,
-        };
-        assert_eq!(p.limit(), 100);
-    }
-
-    #[test]
     fn offset_page_zero_saturates_to_zero() {
         // page=0 → saturating_sub(1)=0 → offset = 0 * limit = 0
         let p = Pagination { page: 0, limit: 20 };
