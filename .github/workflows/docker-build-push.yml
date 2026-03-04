@@ -44,7 +44,7 @@ jobs:
           file: ${{ matrix.app.dockerfile }}
           target: ${{ matrix.app.target }}
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.app.name }}:${{ inputs.image-tag }}
 
       - name: Build and push ${{ matrix.app.name }} (default target)
@@ -54,5 +54,5 @@ jobs:
           context: ${{ matrix.app.context }}
           file: ${{ matrix.app.dockerfile }}
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.app.name }}:${{ inputs.image-tag }}
