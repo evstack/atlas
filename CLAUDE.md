@@ -89,6 +89,7 @@ pub struct AppState {
 - **Migrations**: use `run_migrations(&database_url)` (not `&pool`) to get a timeout-free connection
 - **Frontend**: uses Bun (not npm/yarn). Lockfile is `bun.lock` (text, Bun ≥ 1.2). Build with `bunx vite build` (skips tsc type check).
 - **Docker**: frontend image uses `nginxinc/nginx-unprivileged:alpine` (non-root, port 8080). API/indexer use `alpine` with `ca-certificates`.
+- **Tests**: add unit tests for new logic in a `#[cfg(test)] mod tests` block in the same file. Run with `cargo test --workspace`.
 - **Commits**: authored by the user only — no Claude co-author lines.
 
 ## Environment Variables

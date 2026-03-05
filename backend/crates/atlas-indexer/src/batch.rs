@@ -155,3 +155,79 @@ impl BlockBatch {
         entry.last_block = entry.last_block.max(block);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bigdecimal::BigDecimal;
+
+    // --- touch_addr tests ---
+
+    #[test]
+    fn touch_addr_keeps_minimum_first_seen_block() {
+        let mut batch = BlockBatch::new();
+        batch.touch_addr("0xabc".to_string(), 200, false, 0);
+        batch.touch_addr("0xabc".to_string(), 100, false, 0);
+
+        assert_eq!(batch.addr_map["0xabc"].first_seen_block, 100);
+    }
+
+    #[test]
+    fn touch_addr_is_contract_latches_true() {
+        let mut batch = BlockBatch::new();
+        batch.touch_addr("0xabc".to_string(), 100, false, 0);
+        batch.touch_addr("0xabc".to_string(), 101, true, 0);
+
+        assert!(batch.addr_map["0xabc"].is_contract);
+    }
+
+    // --- apply_balance_delta tests ---
+
+    #[test]
+    fn apply_balance_delta_accumulates_positive() {
+        let mut batch = BlockBatch::new();
+        batch.apply_balance_delta(
+            "0xaddr".to_string(),
+            "0xtoken".to_string(),
+            BigDecimal::from(100),
+            50,
+        );
+        batch.apply_balance_delta(
+            "0xaddr".to_string(),
+            "0xtoken".to_string(),
+            BigDecimal::from(50),
+            60,
+        );
+
+        let entry = batch
+            .balance_map
+            .get(&("0xaddr".to_string(), "0xtoken".to_string()))
+            .unwrap();
+        assert_eq!(entry.delta, BigDecimal::from(150));
+        assert_eq!(entry.last_block, 60);
+    }
+
+    #[test]
+    fn apply_balance_delta_tracks_max_block() {
+        let mut batch = BlockBatch::new();
+        batch.apply_balance_delta(
+            "0xaddr".to_string(),
+            "0xtoken".to_string(),
+            BigDecimal::from(1),
+            100,
+        );
+        // Earlier block — last_block should stay at 100
+        batch.apply_balance_delta(
+            "0xaddr".to_string(),
+            "0xtoken".to_string(),
+            BigDecimal::from(1),
+            50,
+        );
+
+        let entry = batch
+            .balance_map
+            .get(&("0xaddr".to_string(), "0xtoken".to_string()))
+            .unwrap();
+        assert_eq!(entry.last_block, 100);
+    }
+}

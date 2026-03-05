@@ -1,0 +1,71 @@
+name: Docker Build
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-indexer:
+    name: Indexer Docker (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build indexer image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          target: indexer
+          platforms: linux/amd64
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+          outputs: type=cacheonly
+
+  build-api:
+    name: API Docker (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build api image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          target: api
+          platforms: linux/amd64
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+          outputs: type=cacheonly
+
+  build-frontend:
+    name: Frontend Docker (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=cacheonly
