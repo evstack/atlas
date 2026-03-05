@@ -536,3 +536,36 @@ fn resolve_uri(uri: &str, ipfs_gateway: &str) -> String {
         uri.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GATEWAY: &str = "https://ipfs.io/ipfs/";
+
+    #[test]
+    fn resolve_ipfs_uri_prefixes_gateway() {
+        assert_eq!(
+            resolve_uri("ipfs://QmXxx123", GATEWAY),
+            "https://ipfs.io/ipfs/QmXxx123"
+        );
+    }
+
+    #[test]
+    fn resolve_arweave_uri() {
+        assert_eq!(
+            resolve_uri("ar://txid123", GATEWAY),
+            "https://arweave.net/txid123"
+        );
+    }
+
+    #[test]
+    fn non_rewritten_schemes_are_unchanged() {
+        for url in [
+            "data:image/png;base64,abc123==",
+            "https://example.com/metadata/1.json",
+        ] {
+            assert_eq!(resolve_uri(url, GATEWAY), url);
+        }
+    }
+}
