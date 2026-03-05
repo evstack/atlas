@@ -18,10 +18,12 @@ import {
   AddressesPage,
 } from './pages';
 import { ThemeProvider } from './context/ThemeContext';
+import { BrandingProvider } from './context/BrandingContext';
 
 export default function App() {
   return (
     <ThemeProvider>
+      <BrandingProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
@@ -43,6 +45,7 @@ export default function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      </BrandingProvider>
     </ThemeProvider>
   );
 }
