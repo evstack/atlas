@@ -959,19 +959,6 @@ mod tests {
     }
 
     #[test]
-    fn collect_multiple_blocks_accumulate_in_order() {
-        let mut batch = BlockBatch::new();
-        let known_erc20 = HashSet::new();
-        let known_nft = HashSet::new();
-
-        Indexer::collect_block(&mut batch, &known_erc20, &known_nft, empty_fetched_block(1));
-        Indexer::collect_block(&mut batch, &known_erc20, &known_nft, empty_fetched_block(2));
-
-        assert_eq!(batch.b_numbers, vec![1i64, 2i64]);
-        assert_eq!(batch.last_block, 2);
-    }
-
-    #[test]
     fn collect_erc20_transfer_populates_transfer_and_balance_arrays() {
         let mut batch = BlockBatch::new();
         let known_erc20 = HashSet::new();

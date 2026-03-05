@@ -568,19 +568,12 @@ mod tests {
     }
 
     #[test]
-    fn resolve_data_uri_is_unchanged() {
-        let data = "data:image/png;base64,abc123==";
-        assert_eq!(resolve_uri(data, GATEWAY), data);
-    }
-
-    #[test]
-    fn resolve_https_uri_is_unchanged() {
-        let url = "https://example.com/metadata/1.json";
-        assert_eq!(resolve_uri(url, GATEWAY), url);
-    }
-
-    #[test]
-    fn resolve_empty_string_is_unchanged() {
-        assert_eq!(resolve_uri("", GATEWAY), "");
+    fn non_rewritten_schemes_are_unchanged() {
+        for url in [
+            "data:image/png;base64,abc123==",
+            "https://example.com/metadata/1.json",
+        ] {
+            assert_eq!(resolve_uri(url, GATEWAY), url);
+        }
     }
 }

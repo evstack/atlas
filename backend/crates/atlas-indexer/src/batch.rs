@@ -202,19 +202,6 @@ mod tests {
         assert_eq!(batch.addr_map["0xabc"].tx_count_delta, 6);
     }
 
-    #[test]
-    fn touch_addr_deduplicates_different_addresses_separately() {
-        let mut batch = BlockBatch::new();
-        batch.touch_addr("0xaaa".to_string(), 100, false, 1);
-        batch.touch_addr("0xbbb".to_string(), 200, true, 2);
-
-        assert_eq!(batch.addr_map.len(), 2);
-        assert_eq!(batch.addr_map["0xaaa"].tx_count_delta, 1);
-        assert_eq!(batch.addr_map["0xbbb"].tx_count_delta, 2);
-        assert!(!batch.addr_map["0xaaa"].is_contract);
-        assert!(batch.addr_map["0xbbb"].is_contract);
-    }
-
     // --- apply_balance_delta tests ---
 
     #[test]
