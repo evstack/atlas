@@ -24,7 +24,7 @@ All variables are optional. Unset variables use the ev-node defaults shown above
 
 To use a custom logo, place your image file in a `branding/` directory at the project root and set `CHAIN_LOGO_URL` to its path:
 
-```
+```text
 atlas/
 ├── branding/
 │   └── logo.svg      # Your custom logo

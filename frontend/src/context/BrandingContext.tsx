@@ -73,7 +73,9 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
         '--color-text-secondary', '--color-text-muted', '--color-text-subtle',
         '--color-text-faint',
       ];
-      vars.forEach(v => root.style.removeProperty(v));
+      vars.forEach((v) => {
+        root.style.removeProperty(v);
+      });
     }
   }, [config, theme]);
 
