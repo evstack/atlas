@@ -7,7 +7,7 @@ export interface BrandingContextValue {
 }
 
 export const brandingDefaults: BrandingContextValue = {
-  chainName: 'Atlas',
+  chainName: 'Unknown',
   logoUrl: null,
   loaded: false,
 };

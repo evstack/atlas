@@ -73,7 +73,7 @@ pub struct AppState {
     pub solc_path: String,
     pub admin_api_key: Option<String>,
     pub chain_id: u64,       // fetched from RPC once at startup via eth_chainId
-    pub chain_name: String,  // from CHAIN_NAME env var, defaults to "Atlas"
+    pub chain_name: String,  // from CHAIN_NAME env var, defaults to "Unknown"
 }
 ```
 
@@ -100,7 +100,7 @@ Key vars (see `.env.example` for full list):
 |---|---|---|
 | `DATABASE_URL` | all | required |
 | `RPC_URL` | indexer, api | required |
-| `CHAIN_NAME` | api | `"Atlas"` |
+| `CHAIN_NAME` | api | `"Unknown"` |
 | `DB_MAX_CONNECTIONS` | indexer | `20` |
 | `BATCH_SIZE` | indexer | `100` |
 | `FETCH_WORKERS` | indexer | `10` |

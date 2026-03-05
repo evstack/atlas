@@ -2,7 +2,7 @@
 
 Atlas supports white-labeling so each L2 chain can customize the explorer's appearance — name, logo, and color scheme — without rebuilding the frontend.
 
-All branding is configured through environment variables. When none are set, the explorer uses the default ev-node branding (name "Atlas", red accent, dark/warm-beige backgrounds).
+All branding is configured through environment variables. When none are set, the explorer uses the default ev-node branding (red accent, dark/warm-beige backgrounds). `CHAIN_NAME` defaults to "Unknown" — deployers should always set it.
 
 ## Configuration
 
@@ -10,7 +10,7 @@ Add these variables to your `.env` file alongside `RPC_URL`:
 
 | Variable | Description | Default (ev-node) |
 |----------|-------------|--------------------|
-| `CHAIN_NAME` | Displayed in the navbar, page title, and welcome page | `Atlas` |
+| `CHAIN_NAME` | Displayed in the navbar, page title, and welcome page | `Unknown` |
 | `CHAIN_LOGO_URL` | URL or path to your logo (e.g. `/branding/logo.svg`) | Bundled ev-node logo |
 | `ACCENT_COLOR` | Primary accent hex for links, buttons, active states | `#dc2626` |
 | `BACKGROUND_COLOR_DARK` | Dark mode base background hex | `#050505` |

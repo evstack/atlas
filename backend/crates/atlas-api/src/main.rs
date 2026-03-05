@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     let chain_name = std::env::var("CHAIN_NAME")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "Atlas".to_string());
+        .unwrap_or_else(|| "Unknown".to_string());
     let chain_logo_url = std::env::var("CHAIN_LOGO_URL")
         .ok()
         .filter(|s| !s.is_empty());
