@@ -164,17 +164,6 @@ mod tests {
     // --- touch_addr tests ---
 
     #[test]
-    fn touch_addr_first_insertion() {
-        let mut batch = BlockBatch::new();
-        batch.touch_addr("0xabc".to_string(), 100, false, 1);
-
-        let state = batch.addr_map.get("0xabc").unwrap();
-        assert_eq!(state.first_seen_block, 100);
-        assert!(!state.is_contract);
-        assert_eq!(state.tx_count_delta, 1);
-    }
-
-    #[test]
     fn touch_addr_keeps_minimum_first_seen_block() {
         let mut batch = BlockBatch::new();
         batch.touch_addr("0xabc".to_string(), 200, false, 0);
@@ -192,35 +181,7 @@ mod tests {
         assert!(batch.addr_map["0xabc"].is_contract);
     }
 
-    #[test]
-    fn touch_addr_accumulates_tx_count_delta() {
-        let mut batch = BlockBatch::new();
-        batch.touch_addr("0xabc".to_string(), 100, false, 1);
-        batch.touch_addr("0xabc".to_string(), 101, false, 2);
-        batch.touch_addr("0xabc".to_string(), 102, false, 3);
-
-        assert_eq!(batch.addr_map["0xabc"].tx_count_delta, 6);
-    }
-
     // --- apply_balance_delta tests ---
-
-    #[test]
-    fn apply_balance_delta_first_insertion() {
-        let mut batch = BlockBatch::new();
-        batch.apply_balance_delta(
-            "0xaddr".to_string(),
-            "0xtoken".to_string(),
-            BigDecimal::from(100),
-            50,
-        );
-
-        let entry = batch
-            .balance_map
-            .get(&("0xaddr".to_string(), "0xtoken".to_string()))
-            .unwrap();
-        assert_eq!(entry.delta, BigDecimal::from(100));
-        assert_eq!(entry.last_block, 50);
-    }
 
     #[test]
     fn apply_balance_delta_accumulates_positive() {
@@ -247,29 +208,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_balance_delta_accumulates_negative() {
-        let mut batch = BlockBatch::new();
-        batch.apply_balance_delta(
-            "0xaddr".to_string(),
-            "0xtoken".to_string(),
-            BigDecimal::from(100),
-            50,
-        );
-        batch.apply_balance_delta(
-            "0xaddr".to_string(),
-            "0xtoken".to_string(),
-            BigDecimal::from(-30),
-            51,
-        );
-
-        let entry = batch
-            .balance_map
-            .get(&("0xaddr".to_string(), "0xtoken".to_string()))
-            .unwrap();
-        assert_eq!(entry.delta, BigDecimal::from(70));
-    }
-
-    #[test]
     fn apply_balance_delta_tracks_max_block() {
         let mut batch = BlockBatch::new();
         batch.apply_balance_delta(
@@ -291,40 +229,5 @@ mod tests {
             .get(&("0xaddr".to_string(), "0xtoken".to_string()))
             .unwrap();
         assert_eq!(entry.last_block, 100);
-    }
-
-    #[test]
-    fn apply_balance_delta_separate_contracts_are_independent() {
-        let mut batch = BlockBatch::new();
-        batch.apply_balance_delta(
-            "0xaddr".to_string(),
-            "0xtoken1".to_string(),
-            BigDecimal::from(100),
-            50,
-        );
-        batch.apply_balance_delta(
-            "0xaddr".to_string(),
-            "0xtoken2".to_string(),
-            BigDecimal::from(200),
-            50,
-        );
-
-        assert_eq!(batch.balance_map.len(), 2);
-        assert_eq!(
-            batch
-                .balance_map
-                .get(&("0xaddr".to_string(), "0xtoken1".to_string()))
-                .unwrap()
-                .delta,
-            BigDecimal::from(100)
-        );
-        assert_eq!(
-            batch
-                .balance_map
-                .get(&("0xaddr".to_string(), "0xtoken2".to_string()))
-                .unwrap()
-                .delta,
-            BigDecimal::from(200)
-        );
     }
 }

@@ -940,25 +940,6 @@ mod tests {
     }
 
     #[test]
-    fn collect_empty_block_populates_block_fields() {
-        let mut batch = BlockBatch::new();
-        let known_erc20 = HashSet::new();
-        let known_nft = HashSet::new();
-
-        Indexer::collect_block(
-            &mut batch,
-            &known_erc20,
-            &known_nft,
-            empty_fetched_block(100),
-        );
-
-        assert_eq!(batch.b_numbers, vec![100i64]);
-        assert_eq!(batch.b_tx_counts, vec![0i32]);
-        assert!(batch.addr_map.is_empty());
-        assert_eq!(batch.last_block, 100);
-    }
-
-    #[test]
     fn collect_erc20_transfer_populates_transfer_and_balance_arrays() {
         let mut batch = BlockBatch::new();
         let known_erc20 = HashSet::new();

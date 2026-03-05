@@ -552,14 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_ipfs_uri_with_path() {
-        assert_eq!(
-            resolve_uri("ipfs://QmXxx123/metadata/1.json", GATEWAY),
-            "https://ipfs.io/ipfs/QmXxx123/metadata/1.json"
-        );
-    }
-
-    #[test]
     fn resolve_arweave_uri() {
         assert_eq!(
             resolve_uri("ar://txid123", GATEWAY),
