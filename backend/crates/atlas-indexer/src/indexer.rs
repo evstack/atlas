@@ -1135,4 +1135,181 @@ mod tests {
         assert!(batch.nft_contract_addrs.is_empty());
         assert!(batch.balance_map.is_empty());
     }
+
+    #[test]
+    fn collect_erc20_two_transfers_in_same_block_aggregate_balance_deltas() {
+        let mut batch = BlockBatch::new();
+        let known_erc20 = HashSet::new();
+        let known_nft = HashSet::new();
+
+        // Two transfers from 0x1111 to 0x2222, each of value 1000
+        let logs = serde_json::json!([
+            {
+                "address": "0x3333333333333333333333333333333333333333",
+                "topics": [
+                    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                    "0x0000000000000000000000001111111111111111111111111111111111111111",
+                    "0x0000000000000000000000002222222222222222222222222222222222222222"
+                ],
+                "data": "0x00000000000000000000000000000000000000000000000000000000000003e8",
+                "blockNumber": "0x1",
+                "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "transactionIndex": "0x0",
+                "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "logIndex": "0x0",
+                "removed": false
+            },
+            {
+                "address": "0x3333333333333333333333333333333333333333",
+                "topics": [
+                    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                    "0x0000000000000000000000001111111111111111111111111111111111111111",
+                    "0x0000000000000000000000002222222222222222222222222222222222222222"
+                ],
+                "data": "0x00000000000000000000000000000000000000000000000000000000000003e8",
+                "blockNumber": "0x1",
+                "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "transactionIndex": "0x0",
+                "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "logIndex": "0x1",
+                "removed": false
+            }
+        ]);
+
+        let mut fb = empty_fetched_block(1);
+        fb.receipts = vec![make_receipt(logs)];
+        Indexer::collect_block(&mut batch, &known_erc20, &known_nft, fb);
+
+        let contract = batch.ec_addresses[0].clone();
+        let from = "0x1111111111111111111111111111111111111111";
+        let to = "0x2222222222222222222222222222222222222222";
+
+        assert_eq!(batch.balance_map.len(), 2);
+        assert_eq!(
+            batch.balance_map[&(from.to_string(), contract.clone())].delta,
+            BigDecimal::from(-2000)
+        );
+        assert_eq!(
+            batch.balance_map[&(to.to_string(), contract)].delta,
+            BigDecimal::from(2000)
+        );
+    }
+
+    #[test]
+    fn collect_log_emitter_registered_as_contract_in_addr_map() {
+        let mut batch = BlockBatch::new();
+        let known_erc20 = HashSet::new();
+        let known_nft = HashSet::new();
+
+        // A non-Transfer log — any event emission marks the address as a contract
+        let logs = serde_json::json!([{
+            "address": "0x5555555555555555555555555555555555555555",
+            "topics": ["0x1111111111111111111111111111111111111111111111111111111111111111"],
+            "data": "0x",
+            "blockNumber": "0x1",
+            "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "transactionIndex": "0x0",
+            "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "logIndex": "0x0",
+            "removed": false
+        }]);
+
+        let mut fb = empty_fetched_block(1);
+        fb.receipts = vec![make_receipt(logs)];
+        Indexer::collect_block(&mut batch, &known_erc20, &known_nft, fb);
+
+        let emitter = "0x5555555555555555555555555555555555555555";
+        assert!(batch.addr_map[emitter].is_contract);
+    }
+
+    #[test]
+    fn collect_erc721_known_contract_not_added_to_nft_contract_addrs() {
+        let mut batch = BlockBatch::new();
+        let known_erc20 = HashSet::new();
+        let mut known_nft = HashSet::new();
+        known_nft.insert("0x4444444444444444444444444444444444444444".to_string());
+
+        let logs = serde_json::json!([{
+            "address": "0x4444444444444444444444444444444444444444",
+            "topics": [
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000001111111111111111111111111111111111111111",
+                "0x0000000000000000000000002222222222222222222222222222222222222222",
+                "0x000000000000000000000000000000000000000000000000000000000000002a"
+            ],
+            "data": "0x",
+            "blockNumber": "0x1",
+            "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "transactionIndex": "0x0",
+            "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "logIndex": "0x0",
+            "removed": false
+        }]);
+
+        let mut fb = empty_fetched_block(1);
+        fb.receipts = vec![make_receipt(logs)];
+        Indexer::collect_block(&mut batch, &known_erc20, &known_nft, fb);
+
+        // Transfer still recorded
+        assert_eq!(batch.nt_contracts.len(), 1);
+        // Contract NOT re-registered
+        assert!(batch.nft_contract_addrs.is_empty());
+        assert!(batch.new_nft.is_empty());
+    }
+
+    #[test]
+    fn collect_erc721_second_transfer_of_same_token_overwrites_owner() {
+        let mut batch = BlockBatch::new();
+        let known_erc20 = HashSet::new();
+        let known_nft = HashSet::new();
+
+        // Token #42: first transferred to 0x2222, then to 0x3333 in the same batch
+        let logs = serde_json::json!([
+            {
+                "address": "0x4444444444444444444444444444444444444444",
+                "topics": [
+                    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                    "0x0000000000000000000000001111111111111111111111111111111111111111",
+                    "0x0000000000000000000000002222222222222222222222222222222222222222",
+                    "0x000000000000000000000000000000000000000000000000000000000000002a"
+                ],
+                "data": "0x",
+                "blockNumber": "0x1",
+                "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "transactionIndex": "0x0",
+                "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "logIndex": "0x0",
+                "removed": false
+            },
+            {
+                "address": "0x4444444444444444444444444444444444444444",
+                "topics": [
+                    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                    "0x0000000000000000000000002222222222222222222222222222222222222222",
+                    "0x0000000000000000000000003333333333333333333333333333333333333333",
+                    "0x000000000000000000000000000000000000000000000000000000000000002a"
+                ],
+                "data": "0x",
+                "blockNumber": "0x1",
+                "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "transactionIndex": "0x0",
+                "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "logIndex": "0x1",
+                "removed": false
+            }
+        ]);
+
+        let mut fb = empty_fetched_block(1);
+        fb.receipts = vec![make_receipt(logs)];
+        Indexer::collect_block(&mut batch, &known_erc20, &known_nft, fb);
+
+        // Both transfers recorded
+        assert_eq!(batch.nt_contracts.len(), 2);
+        // Only one nft_token_map entry for this token
+        assert_eq!(batch.nft_token_map.len(), 1);
+        // Last transfer wins — final owner is 0x3333
+        let contract = "0x4444444444444444444444444444444444444444".to_string();
+        let state = &batch.nft_token_map[&(contract, "42".to_string())];
+        assert_eq!(state.owner, "0x3333333333333333333333333333333333333333");
+    }
 }
