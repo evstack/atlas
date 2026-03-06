@@ -142,7 +142,10 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert!(v.get("block").is_some(), "event JSON must contain a 'block' key");
+        assert!(
+            v.get("block").is_some(),
+            "event JSON must contain a 'block' key"
+        );
         assert_eq!(v["block"]["number"], 42);
         assert_eq!(v["block"]["gas_used"], 21_000);
         assert_eq!(v["block"]["transaction_count"], 1);
