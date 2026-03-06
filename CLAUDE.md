@@ -79,8 +79,8 @@ pub struct AppState {
 
 ### Frontend API client
 - Base URL: `/api` (proxied by nginx to `atlas-api:3000`)
-- Fast polling endpoint: `GET /api/height` → `{ block_height, indexed_at }` — used by navbar every 2s
-- Chain status: `GET /api/status` → full chain info, fetched once on page load
+- `GET /api/status` → `{ block_height, indexed_at }` — single key-value lookup from `indexer_state`, sub-ms. This is the **only** chain status endpoint; there is no separate "full chain info" endpoint. Used by the navbar as a polling fallback when SSE is disconnected.
+- `GET /api/events` → SSE stream of `new_block` events, one per block in order. Primary live-update path for navbar counter and blocks page. Falls back to `/api/status` polling on disconnect.
 
 ## Important Conventions
 

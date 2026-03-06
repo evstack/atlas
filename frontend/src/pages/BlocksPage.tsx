@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useBlocks } from '../hooks';
 import { CopyButton, Loading } from '../components';
 import { formatNumber, formatTimeAgo, formatGas, truncateHash } from '../utils';
+import { BlockStatsContext } from '../context/BlockStatsContext';
 
 export default function BlocksPage() {
   const [page, setPage] = useState(1);
@@ -14,8 +15,58 @@ export default function BlocksPage() {
       return true;
     }
   });
-  const { blocks, pagination, refetch, loading } = useBlocks({ page, limit: 20 });
+  const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: 20 });
   const hasLoaded = !loading || pagination !== null;
+  const { latestBlockEvent, sseConnected } = useContext(BlockStatsContext);
+  const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
+  const lastSseBlockRef = useRef<number | null>(null);
+  const ssePrependRafRef = useRef<number | null>(null);
+  const pendingSseBlocksRef = useRef<typeof fetchedBlocks>([]);
+  const sseFilterRafRef = useRef<number | null>(null);
+
+  // Prepend new blocks from SSE on page 1 with auto-refresh.
+  // Buffer pending blocks so that burst arrivals (e.g. 100, 101, 102 before the
+  // next frame) are all flushed in a single RAF rather than cancelling each other.
+  useEffect(() => {
+    if (!latestBlockEvent || page !== 1 || !autoRefresh) return;
+    const block = latestBlockEvent.block;
+    if (lastSseBlockRef.current != null && block.number <= lastSseBlockRef.current) return;
+    lastSseBlockRef.current = block.number;
+    pendingSseBlocksRef.current.push(block);
+    if (ssePrependRafRef.current !== null) return; // RAF already scheduled; block is buffered
+    ssePrependRafRef.current = window.requestAnimationFrame(() => {
+      const pending = pendingSseBlocksRef.current;
+      pendingSseBlocksRef.current = [];
+      setSseBlocks((prev) => {
+        const seen = new Set(prev.map((b) => b.number));
+        // pending is oldest-first; reverse so newest ends up at the top
+        const prepend = pending.filter((b) => !seen.has(b.number)).reverse();
+        return [...prepend, ...prev].slice(0, 20);
+      });
+      ssePrependRafRef.current = null;
+    });
+  }, [latestBlockEvent, page, autoRefresh]);
+
+  // Drop SSE blocks that are now present in fetchedBlocks to avoid duplicates,
+  // but keep any that haven't been fetched yet.
+  useEffect(() => {
+    if (!fetchedBlocks.length) return;
+    const fetched = new Set(fetchedBlocks.map((b) => b.number));
+    if (sseFilterRafRef.current !== null) cancelAnimationFrame(sseFilterRafRef.current);
+    sseFilterRafRef.current = window.requestAnimationFrame(() => {
+      setSseBlocks((prev) => prev.filter((b) => !fetched.has(b.number)));
+      sseFilterRafRef.current = null;
+    });
+  }, [fetchedBlocks]);
+
+  // Merge: SSE blocks prepended, deduped, trimmed to page size.
+  // Only prepend on page 1 with auto-refresh — other pages show fetched data only.
+  const blocks = useMemo(() => {
+    if (page !== 1 || !autoRefresh || !sseBlocks.length) return fetchedBlocks;
+    const seen = new Set(fetchedBlocks.map((b) => b.number));
+    const unique = sseBlocks.filter((b) => !seen.has(b.number));
+    return [...unique, ...fetchedBlocks].slice(0, 20);
+  }, [fetchedBlocks, sseBlocks, page, autoRefresh]);
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
   const seenBlocksRef = useRef<Set<number>>(new Set());
@@ -49,15 +100,24 @@ export default function BlocksPage() {
     });
   }, [blocks, sort]);
 
+  // No polling while SSE is connected — periodic refetches disrupt the smooth live flow.
+  // Fall back to 1s polling only when SSE is disconnected.
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || sseConnected) return;
     const id = setInterval(() => {
-      if (!loading) {
-        void refetch();
-      }
+      if (!loading) void refetch();
     }, 1000);
     return () => clearInterval(id);
-  }, [autoRefresh, refetch, loading]);
+  }, [autoRefresh, refetch, loading, sseConnected]);
+
+  // When SSE drops, immediately refetch to catch any blocks missed during the gap.
+  const prevSseConnectedRef = useRef(sseConnected);
+  useEffect(() => {
+    if (prevSseConnectedRef.current && !sseConnected && autoRefresh) {
+      void refetch();
+    }
+    prevSseConnectedRef.current = sseConnected;
+  }, [sseConnected, refetch, autoRefresh]);
 
   // Keep relative timestamps (Age) updating even when auto refresh is paused
   useEffect(() => {
@@ -126,6 +186,15 @@ export default function BlocksPage() {
       if (highlightRafRef.current !== null) {
         window.cancelAnimationFrame(highlightRafRef.current);
         highlightRafRef.current = null;
+      }
+      if (ssePrependRafRef.current !== null) {
+        cancelAnimationFrame(ssePrependRafRef.current);
+        ssePrependRafRef.current = null;
+        pendingSseBlocksRef.current = [];
+      }
+      if (sseFilterRafRef.current !== null) {
+        cancelAnimationFrame(sseFilterRafRef.current);
+        sseFilterRafRef.current = null;
       }
       for (const [, t] of activeTimeouts) clearTimeout(t);
       activeTimeouts.clear();

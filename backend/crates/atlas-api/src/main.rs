@@ -60,6 +60,11 @@ async fn main() -> Result<()> {
         admin_api_key,
     });
 
+    // SSE route — excluded from TimeoutLayer so connections stay alive
+    let sse_routes = Router::new()
+        .route("/api/events", get(handlers::sse::block_events))
+        .with_state(state.clone());
+
     // Build router
     let app = Router::new()
         // Blocks
@@ -215,14 +220,17 @@ async fn main() -> Result<()> {
             axum::http::StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(10),
         ))
+        .with_state(state)
+        // Merge SSE routes (no TimeoutLayer so connections stay alive)
+        .merge(sse_routes)
+        // Shared layers applied to all routes
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .layer(TraceLayer::new_for_http());
 
     let addr = format!("{}:{}", host, port);
     tracing::info!("Listening on {}", addr);
