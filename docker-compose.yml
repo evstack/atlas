@@ -66,5 +66,4 @@ services:
 
 volumes:
   pgdata:
-    external: true
     name: atlas_pgdata

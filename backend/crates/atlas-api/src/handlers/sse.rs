@@ -13,7 +13,7 @@ use crate::AppState;
 use atlas_common::Block;
 use tracing::warn;
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct NewBlockEvent {
     block: Block,
 }
@@ -73,10 +73,11 @@ pub async fn block_events(
 
             let cursor = last_block_number.unwrap();
 
-            // Fetch ALL new blocks since last sent, in ascending order
+            // Fetch new blocks since last sent, in ascending order (capped to avoid
+            // unbounded memory usage and to stay well within the 10s statement_timeout).
             let new_blocks: Vec<Block> = match sqlx::query_as(
                 "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
-                 FROM blocks WHERE number > $1 ORDER BY number ASC"
+                 FROM blocks WHERE number > $1 ORDER BY number ASC LIMIT 100"
             )
             .bind(cursor)
             .fetch_all(&state.pool)
@@ -113,4 +114,63 @@ pub async fn block_events(
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn sample_block(number: i64) -> Block {
+        Block {
+            number,
+            hash: format!("0x{:064x}", number),
+            parent_hash: format!("0x{:064x}", number.saturating_sub(1)),
+            timestamp: 1_700_000_000 + number,
+            gas_used: 21_000,
+            gas_limit: 30_000_000,
+            transaction_count: 1,
+            indexed_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn new_block_event_serializes_with_block_wrapper() {
+        let event = NewBlockEvent {
+            block: sample_block(42),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert!(v.get("block").is_some(), "event JSON must contain a 'block' key");
+        assert_eq!(v["block"]["number"], 42);
+        assert_eq!(v["block"]["gas_used"], 21_000);
+        assert_eq!(v["block"]["transaction_count"], 1);
+    }
+
+    #[test]
+    fn new_block_event_contains_all_block_fields() {
+        let event = NewBlockEvent {
+            block: sample_block(1),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let block = &v["block"];
+
+        for field in [
+            "number",
+            "hash",
+            "parent_hash",
+            "timestamp",
+            "gas_used",
+            "gas_limit",
+            "transaction_count",
+            "indexed_at",
+        ] {
+            assert!(
+                block.get(field).is_some(),
+                "block JSON missing field: {field}"
+            );
+        }
+    }
 }
