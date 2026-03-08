@@ -12,7 +12,7 @@ export default function Layout() {
   const location = useLocation();
   const isHome = location.pathname === '/';
   const sse = useBlockSSE();
-  const { height, lastUpdatedAt, bps } = useLatestBlockHeight(2000, 1000000, sse.height, sse.connected, sse.bps);
+  const { height, lastUpdatedAt, bps } = useLatestBlockHeight(2000, sse);
   const [now, setNow] = useState(() => Date.now());
   const recentlyUpdated = lastUpdatedAt ? (now - lastUpdatedAt) < 10000 : false;
   const [displayedHeight, setDisplayedHeight] = useState<number | null>(null);

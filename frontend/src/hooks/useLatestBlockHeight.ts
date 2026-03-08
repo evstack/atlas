@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getStatus } from '../api/status';
 
+export interface SSEState {
+  height: number | null;
+  connected: boolean;
+  bps: number | null;
+}
+
 export interface LatestHeightState {
   height: number | null;
   loading: boolean;
@@ -16,12 +22,8 @@ export interface LatestHeightState {
  */
 export default function useLatestBlockHeight(
   pollMs = 2000,
-  _windowBlocks = 1000000,
-  sseHeight: number | null = null,
-  sseConnected = false,
-  sseBps: number | null = null,
+  sse: SSEState | null = null,
 ): LatestHeightState {
-  void _windowBlocks;
   const [height, setHeight] = useState<number | null>(null);
   const heightRef = useRef<number | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -31,6 +33,10 @@ export default function useLatestBlockHeight(
   const [bps, setBps] = useState<number | null>(null);
   const prevSampleRef = useRef<{ h: number; t: number } | null>(null);
   const alphaRef = useRef<number>(0.25); // smoothing factor for EMA
+
+  const sseConnected = sse?.connected ?? false;
+  const sseHeight = sse?.height ?? null;
+  const sseBps = sse?.bps ?? null;
 
   // When SSE provides bps from block timestamps, use it directly
   useEffect(() => {
