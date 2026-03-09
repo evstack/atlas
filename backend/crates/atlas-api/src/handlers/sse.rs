@@ -13,6 +13,9 @@ use crate::AppState;
 use atlas_common::Block;
 use tracing::warn;
 
+const BLOCK_COLUMNS: &str =
+    "number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at";
+
 #[derive(Serialize, Debug)]
 struct NewBlockEvent {
     block: Block,
@@ -33,40 +36,25 @@ pub async fn block_events(
             tick.tick().await;
             ping_counter += 1;
 
-            // On first tick, seed with the latest block number
+            // On first tick, seed with the latest block
             if last_block_number.is_none() {
-                let latest: Option<i64> = match sqlx::query_scalar("SELECT MAX(number) FROM blocks")
-                    .fetch_one(&state.pool)
-                    .await
+                let block: Option<Block> = match sqlx::query_as(
+                    &format!("SELECT {} FROM blocks ORDER BY number DESC LIMIT 1", BLOCK_COLUMNS)
+                )
+                .fetch_optional(&state.pool)
+                .await
                 {
                     Ok(v) => v,
-                    Err(e) => { warn!(error = ?e, "sse: failed to query latest block number"); continue; }
+                    Err(e) => { warn!(error = ?e, "sse: failed to fetch initial block"); continue; }
                 };
 
-                if let Some(max_num) = latest {
-                    // Emit the current latest block as the initial event.
-                    // Only advance the cursor after a successful fetch-and-emit so the
-                    // block is not skipped if the fetch fails.
-                    let block: Option<Block> = match sqlx::query_as(
-                        "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
-                         FROM blocks WHERE number = $1"
-                    )
-                    .bind(max_num)
-                    .fetch_optional(&state.pool)
-                    .await
-                    {
-                        Ok(v) => v,
-                        Err(e) => { warn!(error = ?e, "sse: failed to fetch initial block"); continue; }
-                    };
-
-                    if let Some(block) = block {
-                        last_block_number = Some(block.number);
-                        let event = NewBlockEvent { block };
-                        if let Ok(json) = serde_json::to_string(&event) {
-                            yield Ok(Event::default().event("new_block").data(json));
-                        }
-                        ping_counter = 0;
+                if let Some(block) = block {
+                    last_block_number = Some(block.number);
+                    let event = NewBlockEvent { block };
+                    if let Ok(json) = serde_json::to_string(&event) {
+                        yield Ok(Event::default().event("new_block").data(json));
                     }
+                    ping_counter = 0;
                 }
                 continue;
             }
@@ -76,8 +64,7 @@ pub async fn block_events(
             // Fetch new blocks since last sent, in ascending order (capped to avoid
             // unbounded memory usage and to stay well within the 10s statement_timeout).
             let new_blocks: Vec<Block> = match sqlx::query_as(
-                "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
-                 FROM blocks WHERE number > $1 ORDER BY number ASC LIMIT 100"
+                &format!("SELECT {} FROM blocks WHERE number > $1 ORDER BY number ASC LIMIT 100", BLOCK_COLUMNS)
             )
             .bind(cursor)
             .fetch_all(&state.pool)

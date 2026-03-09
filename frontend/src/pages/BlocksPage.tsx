@@ -24,6 +24,12 @@ export default function BlocksPage() {
   const pendingSseBlocksRef = useRef<typeof fetchedBlocks>([]);
   const sseFilterRafRef = useRef<number | null>(null);
 
+  // Cache fetched block numbers to avoid recreating Sets on every effect/memo
+  const fetchedNumberSet = useMemo(
+    () => new Set(fetchedBlocks.map((b) => b.number)),
+    [fetchedBlocks],
+  );
+
   // Prepend new blocks from SSE on page 1 with auto-refresh.
   // Buffer pending blocks so that burst arrivals (e.g. 100, 101, 102 before the
   // next frame) are all flushed in a single RAF rather than cancelling each other.
@@ -39,7 +45,6 @@ export default function BlocksPage() {
       pendingSseBlocksRef.current = [];
       setSseBlocks((prev) => {
         const seen = new Set(prev.map((b) => b.number));
-        // pending is oldest-first; reverse so newest ends up at the top
         const prepend = pending.filter((b) => !seen.has(b.number)).reverse();
         return [...prepend, ...prev].slice(0, 20);
       });
@@ -51,22 +56,20 @@ export default function BlocksPage() {
   // but keep any that haven't been fetched yet.
   useEffect(() => {
     if (!fetchedBlocks.length) return;
-    const fetched = new Set(fetchedBlocks.map((b) => b.number));
     if (sseFilterRafRef.current !== null) cancelAnimationFrame(sseFilterRafRef.current);
     sseFilterRafRef.current = window.requestAnimationFrame(() => {
-      setSseBlocks((prev) => prev.filter((b) => !fetched.has(b.number)));
+      setSseBlocks((prev) => prev.filter((b) => !fetchedNumberSet.has(b.number)));
       sseFilterRafRef.current = null;
     });
-  }, [fetchedBlocks]);
+  }, [fetchedBlocks, fetchedNumberSet]);
 
   // Merge: SSE blocks prepended, deduped, trimmed to page size.
   // Only prepend on page 1 with auto-refresh — other pages show fetched data only.
   const blocks = useMemo(() => {
     if (page !== 1 || !autoRefresh || !sseBlocks.length) return fetchedBlocks;
-    const seen = new Set(fetchedBlocks.map((b) => b.number));
-    const unique = sseBlocks.filter((b) => !seen.has(b.number));
+    const unique = sseBlocks.filter((b) => !fetchedNumberSet.has(b.number));
     return [...unique, ...fetchedBlocks].slice(0, 20);
-  }, [fetchedBlocks, sseBlocks, page, autoRefresh]);
+  }, [fetchedBlocks, fetchedNumberSet, sseBlocks, page, autoRefresh]);
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
   const seenBlocksRef = useRef<Set<number>>(new Set());

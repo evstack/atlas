@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Block } from '../types';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
+import { API_BASE_URL } from '../api/client';
 
 export interface NewBlockEvent {
   block: Block;
@@ -13,6 +12,24 @@ export interface BlockSSEState {
   connected: boolean;
   error: string | null;
   bps: number | null;
+}
+
+type BlockLog = { num: number; ts: number }[];
+
+/**
+ * Compute bps from a rolling log of (blockNumber, blockTimestamp) samples.
+ * Returns the rate from the first sample whose span >= minSpan, or from the
+ * oldest sample if its span >= fallbackMinSpan. Returns null if insufficient data.
+ */
+function computeBpsFromLog(log: BlockLog, minSpan: number, fallbackMinSpan: number): number | null {
+  if (log.length < 2) return null;
+  const newest = log[log.length - 1];
+  for (let i = 0; i < log.length - 1; i++) {
+    const span = newest.ts - log[i].ts;
+    if (span >= minSpan) return (newest.num - log[i].num) / span;
+    if (i === 0 && span >= fallbackMinSpan) return (newest.num - log[0].num) / span;
+  }
+  return null;
 }
 
 /**
@@ -44,9 +61,16 @@ export default function useBlockSSE(): BlockSSEState {
   // We keep up to 500 samples (~45s at 11 bps) and use two windows:
   //  - 30s of block-time for the displayed bps (very stable)
   //  - 10s of block-time for drain pacing (responsive enough to adapt)
-  const blockLogRef = useRef<{ num: number; ts: number }[]>([]);
+  const blockLogRef = useRef<BlockLog>([]);
   // Cached drain interval in ms, derived from chain block timestamps
   const drainIntervalRef = useRef<number>(90); // initial guess ~11 bps
+
+  // Kick the drain loop when new items arrive (avoids 33hz idle polling)
+  const kickDrain = useCallback(() => {
+    // If drain is already scheduled, let it run naturally
+    if (drainTimerRef.current !== null) return;
+    drainTimerRef.current = window.setTimeout(drainOne, 0);
+  }, []);
 
   const connect = useCallback(function connectSSE() {
     if (esRef.current) {
@@ -67,52 +91,27 @@ export default function useBlockSSE(): BlockSSEState {
         const data: NewBlockEvent = JSON.parse(e.data);
 
         // Log block number + on-chain timestamp for true chain-rate calculation
-        blockLogRef.current.push({
-          num: data.block.number,
-          ts: data.block.timestamp, // unix seconds from the chain
-        });
+        const log = blockLogRef.current;
+        log.push({ num: data.block.number, ts: data.block.timestamp });
 
         // Keep last 500 samples (~45s at 11 bps)
-        if (blockLogRef.current.length > 500) {
-          blockLogRef.current = blockLogRef.current.slice(-500);
+        if (log.length > 500) {
+          blockLogRef.current = log.slice(-500);
         }
 
-        // Recalculate bps and drain interval from chain timestamps.
-        const log = blockLogRef.current;
-        const newest = log[log.length - 1];
+        // Displayed bps: 30s window for stability, 5s fallback while bootstrapping
+        const displayBps = computeBpsFromLog(blockLogRef.current, 30, 5);
+        if (displayBps !== null) setBps(displayBps);
 
-        // Displayed bps: use 30s window for maximum stability
-        for (let i = 0; i < log.length - 1; i++) {
-          const span = newest.ts - log[i].ts;
-          if (span >= 30) {
-            const chainBps = (newest.num - log[i].num) / span;
-            setBps(chainBps);
-            break;
-          }
-          // If we don't have 30s yet, use whatever we have (≥5s)
-          if (i === 0 && span >= 5) {
-            const chainBps = (newest.num - log[0].num) / span;
-            setBps(chainBps);
-          }
-        }
-
-        // Drain pacing: use 10s window for moderate responsiveness
-        for (let i = 0; i < log.length - 1; i++) {
-          const span = newest.ts - log[i].ts;
-          if (span >= 10) {
-            const drainBps = (newest.num - log[i].num) / span;
-            drainIntervalRef.current = Math.max(30, Math.min(500, 1000 / drainBps));
-            break;
-          }
-          // Bootstrap: use ≥2s while building up
-          if (i === 0 && span >= 2) {
-            const drainBps = (newest.num - log[0].num) / span;
-            drainIntervalRef.current = Math.max(30, Math.min(500, 1000 / drainBps));
-          }
+        // Drain pacing: 10s window for moderate responsiveness, 2s fallback
+        const drainBps = computeBpsFromLog(blockLogRef.current, 10, 2);
+        if (drainBps !== null) {
+          drainIntervalRef.current = Math.max(30, Math.min(500, 1000 / drainBps));
         }
 
         // Push to ref queue — synchronous, never lost by React batching
         queueRef.current.push(data);
+        kickDrain();
       } catch {
         // Ignore malformed events
       }
@@ -128,51 +127,33 @@ export default function useBlockSSE(): BlockSSEState {
         connectSSE();
       }, 2000);
     };
-  }, []);
+  }, [kickDrain]);
 
-  // Drain loop: emit one block per tick at the chain's natural cadence.
-  useEffect(() => {
-    let running = true;
+  // Drain one block from the queue at the chain's natural cadence.
+  function drainOne() {
+    const queue = queueRef.current;
+    drainTimerRef.current = null;
 
-    const drain = () => {
-      if (!running) return;
-      const queue = queueRef.current;
+    if (queue.length === 0) return; // idle — kickDrain will restart when items arrive
 
-      if (queue.length === 0) {
-        // Nothing to drain — check again soon
-        drainTimerRef.current = window.setTimeout(drain, 30);
-        return;
-      }
+    // If queue is backing up (> 50 items), skip to near the end
+    if (queue.length > 50) {
+      const skip = queue.splice(0, queue.length - 5);
+      const lastSkipped = skip[skip.length - 1];
+      setHeight(lastSkipped.block.number);
+    }
 
-      // If queue is backing up (> 50 items), skip to near the end
-      if (queue.length > 50) {
-        const skip = queue.splice(0, queue.length - 5);
-        const lastSkipped = skip[skip.length - 1];
-        setHeight(lastSkipped.block.number);
-      }
+    const next = queue.shift()!;
+    setLatestBlock(next);
+    setHeight(next.block.number);
 
-      const next = queue.shift()!;
-      setLatestBlock(next);
-      setHeight(next.block.number);
-
-      // Use the chain-rate interval, but if queue is growing speed up gently
+    // Schedule next drain if more items remain
+    if (queue.length > 0) {
       let interval = drainIntervalRef.current;
-      if (queue.length > 5) {
-        interval = interval * 0.7;
-      }
-      drainTimerRef.current = window.setTimeout(drain, interval);
-    };
-
-    drainTimerRef.current = window.setTimeout(drain, 30);
-
-    return () => {
-      running = false;
-      if (drainTimerRef.current !== null) {
-        clearTimeout(drainTimerRef.current);
-        drainTimerRef.current = null;
-      }
-    };
-  }, []);
+      if (queue.length > 5) interval = interval * 0.7;
+      drainTimerRef.current = window.setTimeout(drainOne, interval);
+    }
+  }
 
   useEffect(() => {
     connect();
