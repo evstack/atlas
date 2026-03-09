@@ -7,7 +7,7 @@ export default function useStats() {
   const [dailyTx, setDailyTx] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { bps } = useLatestBlockHeight(4000, 1_000_000);
+  const { bps } = useLatestBlockHeight(4000);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
