@@ -117,11 +117,15 @@ export default function useBlockSSE(): BlockSSEState {
       }
     });
 
-    es.onerror = () => {
+    es.onerror = (e) => {
       setConnected(false);
+      setError(`SSE ${e.type || 'error'}; retrying`);
       es.close();
       esRef.current = null;
 
+      if (reconnectTimeoutRef.current !== null) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
       reconnectTimeoutRef.current = window.setTimeout(() => {
         reconnectTimeoutRef.current = null;
         connectSSE();

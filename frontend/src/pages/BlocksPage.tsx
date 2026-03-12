@@ -45,7 +45,13 @@ export default function BlocksPage() {
       pendingSseBlocksRef.current = [];
       setSseBlocks((prev) => {
         const seen = new Set(prev.map((b) => b.number));
-        const prepend = pending.filter((b) => !seen.has(b.number)).reverse();
+        const prepend: typeof prev = [];
+        for (const b of pending) {
+          if (seen.has(b.number)) continue;
+          seen.add(b.number);
+          prepend.push(b);
+        }
+        prepend.reverse();
         return [...prepend, ...prev].slice(0, 20);
       });
       ssePrependRafRef.current = null;
