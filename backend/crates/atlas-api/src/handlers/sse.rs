@@ -258,9 +258,9 @@ async fn fetch_blocks_after(
     match target {
         Some(target) => {
             sqlx::query_as(&format!(
-                "SELECT {} FROM blocks WHERE number > $1 AND number <= $2 ORDER BY number ASC LIMIT {}",
-                BLOCK_COLUMNS, FETCH_BATCH_SIZE
-            ))
+            "SELECT {} FROM blocks WHERE number > $1 AND number <= $2 ORDER BY number ASC LIMIT {}",
+            BLOCK_COLUMNS, FETCH_BATCH_SIZE
+        ))
             .bind(lower_bound)
             .bind(target)
             .fetch_all(pool)
