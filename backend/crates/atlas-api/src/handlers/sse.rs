@@ -192,7 +192,9 @@ pub async fn run_block_event_fanout(
                 }
             };
 
-            if let Err(e) = broadcast_pending_blocks(&pool, &tx, &mut last_broadcasted, target).await {
+            if let Err(e) =
+                broadcast_pending_blocks(&pool, &tx, &mut last_broadcasted, target).await
+            {
                 warn!(error = ?e, cursor = ?last_broadcasted, target = ?target, "sse: failed to broadcast pending blocks");
             }
         }
@@ -254,16 +256,14 @@ async fn fetch_blocks_after(
     let lower_bound = cursor.unwrap_or(-1);
 
     match target {
-        Some(target) => {
-            sqlx::query_as(&format!(
-                "SELECT {} FROM blocks WHERE number > $1 AND number <= $2 ORDER BY number ASC LIMIT {}",
-                BLOCK_COLUMNS, FETCH_BATCH_SIZE
-            ))
-            .bind(lower_bound)
-            .bind(target)
-            .fetch_all(pool)
-            .await
-        }
+        Some(target) => sqlx::query_as(&format!(
+            "SELECT {} FROM blocks WHERE number > $1 AND number <= $2 ORDER BY number ASC LIMIT {}",
+            BLOCK_COLUMNS, FETCH_BATCH_SIZE
+        ))
+        .bind(lower_bound)
+        .bind(target)
+        .fetch_all(pool)
+        .await,
         None => {
             sqlx::query_as(&format!(
                 "SELECT {} FROM blocks WHERE number > $1 ORDER BY number ASC LIMIT {}",
