@@ -7,14 +7,18 @@ use serde::Serialize;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::interval;
+use tokio::sync::broadcast;
+use tokio::time::sleep;
 
 use crate::AppState;
 use atlas_common::Block;
+use sqlx::{postgres::PgListener, PgPool};
 use tracing::warn;
 
 const BLOCK_COLUMNS: &str =
     "number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at";
+const BLOCK_EVENT_CHANNEL: &str = "atlas_new_blocks";
+const FETCH_BATCH_SIZE: i64 = 256;
 
 #[derive(Serialize, Debug)]
 struct NewBlockEvent {
@@ -22,76 +26,111 @@ struct NewBlockEvent {
 }
 
 /// GET /api/events — Server-Sent Events stream for live block updates.
-/// Polls the DB every 200ms and emits one `new_block` event per block, in order.
-/// Never skips blocks — fetches all blocks since the last one sent.
+/// Seeds from the latest indexed block, then streams blocks from the shared
+/// Postgres notification fanout. Falls back to DB catch-up if the client lags.
 pub async fn block_events(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let pool = state.pool.clone();
+    let mut rx = state.block_events_tx.subscribe();
+
     let stream = async_stream::stream! {
         let mut last_block_number: Option<i64> = None;
-        let mut tick = interval(Duration::from_millis(200));
-        let mut ping_counter: u32 = 0;
+
+        match fetch_latest_block(&pool).await {
+            Ok(Some(block)) => {
+                let block_number = block.number;
+                last_block_number = Some(block_number);
+                if let Some(event) = block_to_event(block) {
+                    yield Ok(event);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => warn!(error = ?e, "sse: failed to fetch initial block"),
+        }
 
         loop {
-            tick.tick().await;
-            ping_counter += 1;
+            match rx.recv().await {
+                Ok(block) => {
+                    match last_block_number {
+                        Some(cursor) if block.number <= cursor => continue,
+                        Some(cursor) if block.number > cursor + 1 => {
+                            let target = block.number;
+                            let mut gap_cursor = Some(cursor);
 
-            // On first tick, seed with the latest block
-            if last_block_number.is_none() {
-                let block: Option<Block> = match sqlx::query_as(
-                    &format!("SELECT {} FROM blocks ORDER BY number DESC LIMIT 1", BLOCK_COLUMNS)
-                )
-                .fetch_optional(&state.pool)
-                .await
-                {
-                    Ok(v) => v,
-                    Err(e) => { warn!(error = ?e, "sse: failed to fetch initial block"); continue; }
-                };
+                            loop {
+                                match fetch_blocks_after(&pool, gap_cursor, Some(target)).await {
+                                    Ok(blocks) => {
+                                        if blocks.is_empty() {
+                                            break;
+                                        }
 
-                if let Some(block) = block {
-                    last_block_number = Some(block.number);
-                    let event = NewBlockEvent { block };
-                    if let Ok(json) = serde_json::to_string(&event) {
-                        yield Ok(Event::default().event("new_block").data(json));
+                                        let batch_len = blocks.len();
+                                        for block in blocks {
+                                            let block_number = block.number;
+                                            last_block_number = Some(block_number);
+                                            gap_cursor = Some(block_number);
+                                            if let Some(event) = block_to_event(block) {
+                                                yield Ok(event);
+                                            }
+                                        }
+
+                                        if gap_cursor.is_some_and(|n| n >= target)
+                                            || batch_len < FETCH_BATCH_SIZE as usize
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!(error = ?e, cursor, target, "sse: failed to catch up missed blocks");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            let block_number = block.number;
+                            last_block_number = Some(block_number);
+                            if let Some(event) = block_to_event(block) {
+                                yield Ok(event);
+                            }
+                        }
                     }
-                    ping_counter = 0;
                 }
-                continue;
-            }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    let cursor = last_block_number;
+                    warn!(skipped, cursor, "sse: subscriber lagged; falling back to DB catch-up");
+                    let mut catch_up_cursor = cursor;
 
-            let cursor = last_block_number.unwrap();
+                    loop {
+                        match fetch_blocks_after(&pool, catch_up_cursor, None).await {
+                            Ok(blocks) => {
+                                if blocks.is_empty() {
+                                    break;
+                                }
 
-            // Fetch new blocks since last sent, in ascending order (capped to avoid
-            // unbounded memory usage and to stay well within the 10s statement_timeout).
-            let new_blocks: Vec<Block> = match sqlx::query_as(
-                &format!("SELECT {} FROM blocks WHERE number > $1 ORDER BY number ASC LIMIT 100", BLOCK_COLUMNS)
-            )
-            .bind(cursor)
-            .fetch_all(&state.pool)
-            .await
-            {
-                Ok(rows) => rows,
-                Err(e) => { warn!(error = ?e, cursor, "sse: failed to fetch new blocks"); continue; }
-            };
+                                let batch_len = blocks.len();
+                                for block in blocks {
+                                    let block_number = block.number;
+                                    last_block_number = Some(block_number);
+                                    catch_up_cursor = Some(block_number);
+                                    if let Some(event) = block_to_event(block) {
+                                        yield Ok(event);
+                                    }
+                                }
 
-            if !new_blocks.is_empty() {
-                ping_counter = 0;
-            }
-
-            // Emit one event per block, in order
-            for block in new_blocks {
-                last_block_number = Some(block.number);
-
-                let event = NewBlockEvent { block };
-                if let Ok(json) = serde_json::to_string(&event) {
-                    yield Ok(Event::default().event("new_block").data(json));
+                                if batch_len < FETCH_BATCH_SIZE as usize {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                warn!(error = ?e, cursor, "sse: failed to catch up after lag");
+                                break;
+                            }
+                        }
+                    }
                 }
-            }
-
-            // Send keep-alive ping every ~15s (75 ticks * 200ms)
-            if ping_counter >= 75 {
-                ping_counter = 0;
-                yield Ok(Event::default().comment("keep-alive"));
+                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     };
@@ -101,6 +140,147 @@ pub async fn block_events(
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
     )
+}
+
+pub async fn run_block_event_fanout(
+    database_url: String,
+    pool: PgPool,
+    tx: broadcast::Sender<Block>,
+) {
+    let mut last_broadcasted = match fetch_latest_block_number(&pool).await {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(error = ?e, "sse: failed to seed latest block number for notification fanout");
+            None
+        }
+    };
+
+    loop {
+        let mut listener = match PgListener::connect(&database_url).await {
+            Ok(listener) => listener,
+            Err(e) => {
+                warn!(error = ?e, "sse: failed to connect Postgres listener");
+                sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+
+        if let Err(e) = listener.listen(BLOCK_EVENT_CHANNEL).await {
+            warn!(error = ?e, channel = BLOCK_EVENT_CHANNEL, "sse: failed to LISTEN for block notifications");
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        }
+
+        if let Err(e) = broadcast_pending_blocks(&pool, &tx, &mut last_broadcasted, None).await {
+            warn!(error = ?e, cursor = ?last_broadcasted, "sse: failed to catch up blocks after listener connect");
+        }
+
+        loop {
+            let notification = match listener.recv().await {
+                Ok(notification) => notification,
+                Err(e) => {
+                    warn!(error = ?e, "sse: Postgres listener disconnected");
+                    break;
+                }
+            };
+
+            let target = match notification.payload().parse::<i64>() {
+                Ok(value) => Some(value),
+                Err(e) => {
+                    warn!(error = ?e, payload = notification.payload(), "sse: invalid block notification payload");
+                    None
+                }
+            };
+
+            if let Err(e) = broadcast_pending_blocks(&pool, &tx, &mut last_broadcasted, target).await {
+                warn!(error = ?e, cursor = ?last_broadcasted, target = ?target, "sse: failed to broadcast pending blocks");
+            }
+        }
+
+        sleep(Duration::from_secs(1)).await;
+    }
+}
+
+async fn broadcast_pending_blocks(
+    pool: &PgPool,
+    tx: &broadcast::Sender<Block>,
+    last_broadcasted: &mut Option<i64>,
+    target: Option<i64>,
+) -> Result<(), sqlx::Error> {
+    loop {
+        let blocks = fetch_blocks_after(pool, *last_broadcasted, target).await?;
+        if blocks.is_empty() {
+            return Ok(());
+        }
+
+        let batch_len = blocks.len();
+        for block in blocks {
+            *last_broadcasted = Some(block.number);
+            let _ = tx.send(block);
+        }
+
+        if let Some(target) = target {
+            if last_broadcasted.is_some_and(|cursor| cursor >= target) {
+                return Ok(());
+            }
+        }
+
+        if batch_len < FETCH_BATCH_SIZE as usize {
+            return Ok(());
+        }
+    }
+}
+
+async fn fetch_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Error> {
+    sqlx::query_as(&format!(
+        "SELECT {} FROM blocks ORDER BY number DESC LIMIT 1",
+        BLOCK_COLUMNS
+    ))
+    .fetch_optional(pool)
+    .await
+}
+
+async fn fetch_latest_block_number(pool: &PgPool) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar("SELECT MAX(number) FROM blocks")
+        .fetch_one(pool)
+        .await
+}
+
+async fn fetch_blocks_after(
+    pool: &PgPool,
+    cursor: Option<i64>,
+    target: Option<i64>,
+) -> Result<Vec<Block>, sqlx::Error> {
+    let lower_bound = cursor.unwrap_or(-1);
+
+    match target {
+        Some(target) => {
+            sqlx::query_as(&format!(
+                "SELECT {} FROM blocks WHERE number > $1 AND number <= $2 ORDER BY number ASC LIMIT {}",
+                BLOCK_COLUMNS, FETCH_BATCH_SIZE
+            ))
+            .bind(lower_bound)
+            .bind(target)
+            .fetch_all(pool)
+            .await
+        }
+        None => {
+            sqlx::query_as(&format!(
+                "SELECT {} FROM blocks WHERE number > $1 ORDER BY number ASC LIMIT {}",
+                BLOCK_COLUMNS, FETCH_BATCH_SIZE
+            ))
+            .bind(lower_bound)
+            .fetch_all(pool)
+            .await
+        }
+    }
+}
+
+fn block_to_event(block: Block) -> Option<Event> {
+    let event = NewBlockEvent { block };
+    serde_json::to_string(&event)
+        .ok()
+        .map(|json| Event::default().event("new_block").data(json))
 }
 
 #[cfg(test)]

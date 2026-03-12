@@ -6,6 +6,7 @@ use axum::{
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
@@ -16,6 +17,7 @@ mod handlers;
 
 pub struct AppState {
     pub pool: PgPool,
+    pub block_events_tx: broadcast::Sender<atlas_common::Block>,
     pub rpc_url: String,
     pub solc_path: String,
     pub admin_api_key: Option<String>,
@@ -53,12 +55,21 @@ async fn main() -> Result<()> {
     tracing::info!("Running database migrations");
     atlas_common::db::run_migrations(&database_url).await?;
 
+    let (block_events_tx, _) = broadcast::channel(1024);
+
     let state = Arc::new(AppState {
-        pool,
+        pool: pool.clone(),
+        block_events_tx: block_events_tx.clone(),
         rpc_url,
         solc_path,
         admin_api_key,
     });
+
+    tokio::spawn(handlers::sse::run_block_event_fanout(
+        database_url.clone(),
+        pool,
+        block_events_tx,
+    ));
 
     // SSE route — excluded from TimeoutLayer so connections stay alive
     let sse_routes = Router::new()
