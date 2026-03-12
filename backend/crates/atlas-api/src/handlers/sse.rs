@@ -256,14 +256,16 @@ async fn fetch_blocks_after(
     let lower_bound = cursor.unwrap_or(-1);
 
     match target {
-        Some(target) => sqlx::query_as(&format!(
-            "SELECT {} FROM blocks WHERE number > $1 AND number <= $2 ORDER BY number ASC LIMIT {}",
-            BLOCK_COLUMNS, FETCH_BATCH_SIZE
-        ))
-        .bind(lower_bound)
-        .bind(target)
-        .fetch_all(pool)
-        .await,
+        Some(target) => {
+            sqlx::query_as(&format!(
+                "SELECT {} FROM blocks WHERE number > $1 AND number <= $2 ORDER BY number ASC LIMIT {}",
+                BLOCK_COLUMNS, FETCH_BATCH_SIZE
+            ))
+            .bind(lower_bound)
+            .bind(target)
+            .fetch_all(pool)
+            .await
+        }
         None => {
             sqlx::query_as(&format!(
                 "SELECT {} FROM blocks WHERE number > $1 ORDER BY number ASC LIMIT {}",
