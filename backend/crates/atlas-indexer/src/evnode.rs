@@ -123,7 +123,9 @@ impl EvnodeClient {
         Self {
             client,
             base_url: evnode_url.trim_end_matches('/').to_string(),
-            use_json: AtomicBool::new(false),
+            // Default to JSON mode — it's universally supported by ev-node
+            // and avoids protobuf decoding issues with our minimal struct.
+            use_json: AtomicBool::new(true),
         }
     }
 
@@ -291,9 +293,9 @@ mod tests {
     }
 
     #[test]
-    fn client_starts_in_proto_mode() {
+    fn client_starts_in_json_mode() {
         let client = EvnodeClient::new("http://localhost:7331");
-        assert!(!client.use_json.load(Ordering::Relaxed));
+        assert!(client.use_json.load(Ordering::Relaxed));
     }
 
     #[test]
