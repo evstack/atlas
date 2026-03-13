@@ -70,12 +70,13 @@ export default function BlocksPage() {
   }, [fetchedBlocks, fetchedNumberSet]);
 
   // Merge: SSE blocks prepended, deduped, trimmed to page size.
-  // Only prepend on page 1 with auto-refresh — other pages show fetched data only.
+  // On page 1, keep the merged snapshot even when auto-refresh is paused so
+  // the table doesn't snap back to the last fetched poll result.
   const blocks = useMemo(() => {
-    if (page !== 1 || !autoRefresh || !sseBlocks.length) return fetchedBlocks;
+    if (page !== 1 || !sseBlocks.length) return fetchedBlocks;
     const unique = sseBlocks.filter((b) => !fetchedNumberSet.has(b.number));
     return [...unique, ...fetchedBlocks].slice(0, 20);
-  }, [fetchedBlocks, fetchedNumberSet, sseBlocks, page, autoRefresh]);
+  }, [fetchedBlocks, fetchedNumberSet, sseBlocks, page]);
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
   const seenBlocksRef = useRef<Set<number>>(new Set());
@@ -118,6 +119,16 @@ export default function BlocksPage() {
     }, 1000);
     return () => clearInterval(id);
   }, [autoRefresh, refetch, loading, sseConnected]);
+
+  // When live updates are re-enabled, resync immediately so any blocks that
+  // arrived during the pause are fetched before SSE prepends continue.
+  const prevAutoRefreshRef = useRef(autoRefresh);
+  useEffect(() => {
+    if (!prevAutoRefreshRef.current && autoRefresh) {
+      void refetch();
+    }
+    prevAutoRefreshRef.current = autoRefresh;
+  }, [autoRefresh, refetch]);
 
   // When SSE drops, immediately refetch to catch any blocks missed during the gap.
   const prevSseConnectedRef = useRef(sseConnected);

@@ -26,8 +26,8 @@ struct NewBlockEvent {
 }
 
 /// GET /api/events — Server-Sent Events stream for live block updates.
-/// Seeds from the latest indexed block, then streams blocks from the shared
-/// Postgres notification fanout. Falls back to DB catch-up if the client lags.
+/// Seeds from the latest indexed block, then requeries the DB for blocks added
+/// after that point whenever the shared notification fanout emits a wake-up.
 pub async fn block_events(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
@@ -51,59 +51,11 @@ pub async fn block_events(
 
         loop {
             match rx.recv().await {
-                Ok(block) => {
-                    match last_block_number {
-                        Some(cursor) if block.number <= cursor => continue,
-                        Some(cursor) if block.number > cursor + 1 => {
-                            let target = block.number;
-                            let mut gap_cursor = Some(cursor);
-
-                            loop {
-                                match fetch_blocks_after(&pool, gap_cursor, Some(target)).await {
-                                    Ok(blocks) => {
-                                        if blocks.is_empty() {
-                                            break;
-                                        }
-
-                                        let batch_len = blocks.len();
-                                        for block in blocks {
-                                            let block_number = block.number;
-                                            last_block_number = Some(block_number);
-                                            gap_cursor = Some(block_number);
-                                            if let Some(event) = block_to_event(block) {
-                                                yield Ok(event);
-                                            }
-                                        }
-
-                                        if gap_cursor.is_some_and(|n| n >= target)
-                                            || batch_len < FETCH_BATCH_SIZE as usize
-                                        {
-                                            break;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!(error = ?e, cursor, target, "sse: failed to catch up missed blocks");
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        _ => {
-                            let block_number = block.number;
-                            last_block_number = Some(block_number);
-                            if let Some(event) = block_to_event(block) {
-                                yield Ok(event);
-                            }
-                        }
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    let cursor = last_block_number;
-                    warn!(skipped, cursor, "sse: subscriber lagged; falling back to DB catch-up");
-                    let mut catch_up_cursor = cursor;
+                Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                    let mut cursor = last_block_number;
 
                     loop {
-                        match fetch_blocks_after(&pool, catch_up_cursor, None).await {
+                        match fetch_blocks_after(&pool, cursor).await {
                             Ok(blocks) => {
                                 if blocks.is_empty() {
                                     break;
@@ -113,7 +65,7 @@ pub async fn block_events(
                                 for block in blocks {
                                     let block_number = block.number;
                                     last_block_number = Some(block_number);
-                                    catch_up_cursor = Some(block_number);
+                                    cursor = Some(block_number);
                                     if let Some(event) = block_to_event(block) {
                                         yield Ok(event);
                                     }
@@ -124,7 +76,7 @@ pub async fn block_events(
                                 }
                             }
                             Err(e) => {
-                                warn!(error = ?e, cursor, "sse: failed to catch up after lag");
+                                warn!(error = ?e, cursor = ?last_block_number, "sse: failed to fetch blocks after wake-up");
                                 break;
                             }
                         }
@@ -144,17 +96,9 @@ pub async fn block_events(
 
 pub async fn run_block_event_fanout(
     database_url: String,
-    pool: PgPool,
-    tx: broadcast::Sender<Block>,
+    _pool: PgPool,
+    tx: broadcast::Sender<()>,
 ) {
-    let mut last_broadcasted = match fetch_latest_block_number(&pool).await {
-        Ok(v) => v,
-        Err(e) => {
-            warn!(error = ?e, "sse: failed to seed latest block number for notification fanout");
-            None
-        }
-    };
-
     loop {
         let mut listener = match PgListener::connect(&database_url).await {
             Ok(listener) => listener,
@@ -171,65 +115,22 @@ pub async fn run_block_event_fanout(
             continue;
         }
 
-        if let Err(e) = broadcast_pending_blocks(&pool, &tx, &mut last_broadcasted, None).await {
-            warn!(error = ?e, cursor = ?last_broadcasted, "sse: failed to catch up blocks after listener connect");
-        }
+        // Wake all subscribers once after reconnect so they can requery the DB.
+        let _ = tx.send(());
 
         loop {
-            let notification = match listener.recv().await {
-                Ok(notification) => notification,
+            match listener.recv().await {
+                Ok(_) => {
+                    let _ = tx.send(());
+                }
                 Err(e) => {
                     warn!(error = ?e, "sse: Postgres listener disconnected");
                     break;
                 }
-            };
-
-            let target = match notification.payload().parse::<i64>() {
-                Ok(value) => Some(value),
-                Err(e) => {
-                    warn!(error = ?e, payload = notification.payload(), "sse: invalid block notification payload");
-                    None
-                }
-            };
-
-            if let Err(e) =
-                broadcast_pending_blocks(&pool, &tx, &mut last_broadcasted, target).await
-            {
-                warn!(error = ?e, cursor = ?last_broadcasted, target = ?target, "sse: failed to broadcast pending blocks");
             }
         }
 
         sleep(Duration::from_secs(1)).await;
-    }
-}
-
-async fn broadcast_pending_blocks(
-    pool: &PgPool,
-    tx: &broadcast::Sender<Block>,
-    last_broadcasted: &mut Option<i64>,
-    target: Option<i64>,
-) -> Result<(), sqlx::Error> {
-    loop {
-        let blocks = fetch_blocks_after(pool, *last_broadcasted, target).await?;
-        if blocks.is_empty() {
-            return Ok(());
-        }
-
-        let batch_len = blocks.len();
-        for block in blocks {
-            *last_broadcasted = Some(block.number);
-            let _ = tx.send(block);
-        }
-
-        if let Some(target) = target {
-            if last_broadcasted.is_some_and(|cursor| cursor >= target) {
-                return Ok(());
-            }
-        }
-
-        if batch_len < FETCH_BATCH_SIZE as usize {
-            return Ok(());
-        }
     }
 }
 
@@ -242,40 +143,16 @@ async fn fetch_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Error>
     .await
 }
 
-async fn fetch_latest_block_number(pool: &PgPool) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar("SELECT MAX(number) FROM blocks")
-        .fetch_one(pool)
-        .await
-}
-
-async fn fetch_blocks_after(
-    pool: &PgPool,
-    cursor: Option<i64>,
-    target: Option<i64>,
-) -> Result<Vec<Block>, sqlx::Error> {
+async fn fetch_blocks_after(pool: &PgPool, cursor: Option<i64>) -> Result<Vec<Block>, sqlx::Error> {
     let lower_bound = cursor.unwrap_or(-1);
 
-    match target {
-        Some(target) => {
-            sqlx::query_as(&format!(
-            "SELECT {} FROM blocks WHERE number > $1 AND number <= $2 ORDER BY number ASC LIMIT {}",
-            BLOCK_COLUMNS, FETCH_BATCH_SIZE
-        ))
-            .bind(lower_bound)
-            .bind(target)
-            .fetch_all(pool)
-            .await
-        }
-        None => {
-            sqlx::query_as(&format!(
-                "SELECT {} FROM blocks WHERE number > $1 ORDER BY number ASC LIMIT {}",
-                BLOCK_COLUMNS, FETCH_BATCH_SIZE
-            ))
-            .bind(lower_bound)
-            .fetch_all(pool)
-            .await
-        }
-    }
+    sqlx::query_as(&format!(
+        "SELECT {} FROM blocks WHERE number > $1 ORDER BY number ASC LIMIT {}",
+        BLOCK_COLUMNS, FETCH_BATCH_SIZE
+    ))
+    .bind(lower_bound)
+    .fetch_all(pool)
+    .await
 }
 
 fn block_to_event(block: Block) -> Option<Event> {

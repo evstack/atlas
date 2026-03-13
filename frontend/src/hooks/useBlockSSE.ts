@@ -15,6 +15,13 @@ export interface BlockSSEState {
 }
 
 type BlockLog = { num: number; ts: number }[];
+type QueuedBlock = { event: NewBlockEvent; receivedAt: number };
+
+const MIN_DRAIN_INTERVAL_MS = 30;
+const MAX_DRAIN_INTERVAL_MS = 500;
+const STREAM_BUFFER_BLOCKS = 3;
+const MAX_BUFFER_WAIT_MS = 320;
+const MAX_BURST_LEAD_IN_MS = 320;
 
 /**
  * Compute bps from a rolling log of (blockNumber, blockTimestamp) samples.
@@ -32,12 +39,24 @@ function computeBpsFromLog(log: BlockLog, minSpan: number, fallbackMinSpan: numb
   return null;
 }
 
+function getDrainInterval(baseInterval: number, queueLength: number): number {
+  let interval = baseInterval;
+
+  // Speed up gently when backlog builds, but avoid collapsing back into bursts.
+  if (queueLength > 24) interval *= 0.62;
+  else if (queueLength > 12) interval *= 0.72;
+  else if (queueLength > 6) interval *= 0.82;
+  else if (queueLength > 2) interval *= 0.9;
+
+  return Math.max(MIN_DRAIN_INTERVAL_MS, interval);
+}
+
 /**
  * Connects to the SSE endpoint and delivers block events one-by-one.
  *
- * SSE events arrive in bursts (the backend polls every 200ms and yields all
- * new blocks at once). React batching would collapse rapid setState calls,
- * so we buffer into a ref-based queue and drain one at a time.
+ * SSE events can still arrive in bursts when the backend indexes a backlog.
+ * React batching would collapse rapid setState calls, so we buffer into a
+ * ref-based queue and drain one at a time at a steadier visual cadence.
  *
  * The drain interval is derived from the chain's true block time, computed
  * from on-chain block timestamps (not arrival/indexed times). We collect a
@@ -55,8 +74,9 @@ export default function useBlockSSE(): BlockSSEState {
   const [bps, setBps] = useState<number | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
-  const queueRef = useRef<NewBlockEvent[]>([]);
+  const queueRef = useRef<QueuedBlock[]>([]);
   const drainTimerRef = useRef<number | null>(null);
+  const lastDrainAtRef = useRef<number>(0);
   // Rolling window of (blockNumber, blockTimestamp) for chain-rate calculation.
   // We keep up to 500 samples (~45s at 11 bps) and use two windows:
   //  - 30s of block-time for the displayed bps (very stable)
@@ -65,12 +85,43 @@ export default function useBlockSSE(): BlockSSEState {
   // Cached drain interval in ms, derived from chain block timestamps
   const drainIntervalRef = useRef<number>(90); // initial guess ~11 bps
 
-  // Kick the drain loop when new items arrive (avoids 33hz idle polling)
-  const kickDrain = useCallback(() => {
-    // If drain is already scheduled, let it run naturally
-    if (drainTimerRef.current !== null) return;
-    drainTimerRef.current = window.setTimeout(drainOne, 0);
+  const scheduleDrain = useCallback((fromBurstStart: boolean) => {
+    if (drainTimerRef.current !== null || queueRef.current.length === 0) return;
+
+    const now = performance.now();
+    const queue = queueRef.current;
+    const interval = getDrainInterval(drainIntervalRef.current, queue.length);
+    const sinceLastDrain = lastDrainAtRef.current > 0 ? now - lastDrainAtRef.current : null;
+
+    let delay = 0;
+    if (sinceLastDrain !== null) {
+      delay = Math.max(0, interval - sinceLastDrain);
+    }
+
+    // Keep a small client-side buffer so the UI doesn't spend its final couple
+    // of items too early and expose the backend's batch cadence as a pause.
+    const oldestBufferedFor = now - queue[0].receivedAt;
+    if (queue.length < STREAM_BUFFER_BLOCKS && oldestBufferedFor < MAX_BUFFER_WAIT_MS) {
+      delay = Math.max(delay, Math.min(interval, MAX_BUFFER_WAIT_MS - oldestBufferedFor));
+    }
+
+    // When a backlog arrives after idle time, add a brief lead-in so the UI
+    // starts "dripping" rather than snapping to the first block immediately.
+    if (fromBurstStart && queue.length > 1) {
+      const burstLeadIn = Math.min(
+        MAX_BURST_LEAD_IN_MS,
+        interval * Math.min(queue.length - 1, STREAM_BUFFER_BLOCKS + 1),
+      );
+      delay = Math.max(delay, burstLeadIn);
+    }
+
+    drainTimerRef.current = window.setTimeout(drainOne, delay);
   }, []);
+
+  // Kick the drain loop when new items arrive.
+  const kickDrain = useCallback(() => {
+    scheduleDrain(true);
+  }, [scheduleDrain]);
 
   const connect = useCallback(function connectSSE() {
     if (esRef.current) {
@@ -106,11 +157,14 @@ export default function useBlockSSE(): BlockSSEState {
         // Drain pacing: 10s window for moderate responsiveness, 2s fallback
         const drainBps = computeBpsFromLog(blockLogRef.current, 10, 2);
         if (drainBps !== null) {
-          drainIntervalRef.current = Math.max(30, Math.min(500, 1000 / drainBps));
+          drainIntervalRef.current = Math.max(
+            MIN_DRAIN_INTERVAL_MS,
+            Math.min(MAX_DRAIN_INTERVAL_MS, 1000 / drainBps),
+          );
         }
 
         // Push to ref queue — synchronous, never lost by React batching
-        queueRef.current.push(data);
+        queueRef.current.push({ event: data, receivedAt: performance.now() });
         kickDrain();
       } catch {
         // Ignore malformed events
@@ -143,19 +197,18 @@ export default function useBlockSSE(): BlockSSEState {
     // If queue is backing up (> 50 items), skip to near the end
     if (queue.length > 50) {
       const skip = queue.splice(0, queue.length - 5);
-      const lastSkipped = skip[skip.length - 1];
+      const lastSkipped = skip[skip.length - 1].event;
       setHeight(lastSkipped.block.number);
     }
 
-    const next = queue.shift()!;
+    const next = queue.shift()!.event;
     setLatestBlock(next);
     setHeight(next.block.number);
+    lastDrainAtRef.current = performance.now();
 
     // Schedule next drain if more items remain
     if (queue.length > 0) {
-      let interval = drainIntervalRef.current;
-      if (queue.length > 5) interval = interval * 0.7;
-      drainTimerRef.current = window.setTimeout(drainOne, interval);
+      scheduleDrain(false);
     }
   }
 
@@ -175,6 +228,7 @@ export default function useBlockSSE(): BlockSSEState {
         clearTimeout(drainTimerRef.current);
         drainTimerRef.current = null;
       }
+      lastDrainAtRef.current = 0;
     };
   }, [connect]);
 

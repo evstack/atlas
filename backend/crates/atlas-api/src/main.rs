@@ -17,7 +17,7 @@ mod handlers;
 
 pub struct AppState {
     pub pool: PgPool,
-    pub block_events_tx: broadcast::Sender<atlas_common::Block>,
+    pub block_events_tx: broadcast::Sender<()>,
     pub rpc_url: String,
     pub solc_path: String,
     pub admin_api_key: Option<String>,
