@@ -30,6 +30,8 @@ services:
       FETCH_WORKERS: ${FETCH_WORKERS:-10}
       RPC_REQUESTS_PER_SECOND: ${RPC_REQUESTS_PER_SECOND:-100}
       RPC_BATCH_SIZE: ${RPC_BATCH_SIZE:-20}
+      EVNODE_URL: ${EVNODE_URL:-}
+      DA_WORKER_CONCURRENCY: ${DA_WORKER_CONCURRENCY:-10}
       RUST_LOG: atlas_indexer=info
     depends_on:
       postgres:
@@ -44,6 +46,7 @@ services:
     environment:
       DATABASE_URL: postgres://atlas:atlas@postgres/atlas
       RPC_URL: ${RPC_URL}
+      EVNODE_URL: ${EVNODE_URL:-}
       API_HOST: 0.0.0.0
       API_PORT: 3000
       RUST_LOG: atlas_api=info,tower_http=info

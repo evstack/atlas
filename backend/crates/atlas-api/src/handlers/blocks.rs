@@ -2,11 +2,22 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use serde::Serialize;
 use std::sync::Arc;
 
 use crate::error::ApiResult;
 use crate::AppState;
-use atlas_common::{AtlasError, Block, PaginatedResponse, Pagination, Transaction};
+use atlas_common::{AtlasError, Block, BlockDaStatus, PaginatedResponse, Pagination, Transaction};
+
+/// Block response with optional DA status.
+/// DA fields are always present in the JSON (null when no data),
+/// so the frontend can rely on a stable schema.
+#[derive(Serialize)]
+pub struct BlockResponse {
+    #[serde(flatten)]
+    pub block: Block,
+    pub da_status: Option<BlockDaStatus>,
+}
 
 pub async fn list_blocks(
     State(state): State<Arc<AppState>>,
@@ -48,7 +59,7 @@ pub async fn list_blocks(
 pub async fn get_block(
     State(state): State<Arc<AppState>>,
     Path(number): Path<i64>,
-) -> ApiResult<Json<Block>> {
+) -> ApiResult<Json<BlockResponse>> {
     let block: Block = sqlx::query_as(
         "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
          FROM blocks
@@ -59,7 +70,19 @@ pub async fn get_block(
     .await?
     .ok_or_else(|| AtlasError::NotFound(format!("Block {} not found", number)))?;
 
-    Ok(Json(block))
+    // Always query DA status — returns None when no row exists (DA worker hasn't checked yet,
+    // or EVNODE_URL is not configured). The frontend uses the features.da_tracking flag from
+    // /api/status to decide whether to display DA information.
+    let da_status: Option<BlockDaStatus> = sqlx::query_as(
+        "SELECT block_number, header_da_height, data_da_height, updated_at
+         FROM block_da_status
+         WHERE block_number = $1",
+    )
+    .bind(number)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    Ok(Json(BlockResponse { block, da_status }))
 }
 
 pub async fn get_block_transactions(

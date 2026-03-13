@@ -44,6 +44,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Config
 dotenvy = "0.15"
 
+# Protobuf
+prost = "0.13"
+
+# Async utilities
+futures = "0.3"
+
 # Utilities
 bigdecimal = { version = "0.4", features = ["serde"] }
 hex = "0.4"

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getStatus } from '../api/status';
+import type { ChainFeatures } from '../types';
 
 export interface LatestHeightState {
   height: number | null;
@@ -7,6 +8,7 @@ export interface LatestHeightState {
   error: string | null;
   lastUpdatedAt: number | null;
   bps: number | null;
+  features: ChainFeatures | null;
 }
 
 export default function useLatestBlockHeight(pollMs = 2000, _windowBlocks = 1000000): LatestHeightState {
@@ -18,6 +20,7 @@ export default function useLatestBlockHeight(pollMs = 2000, _windowBlocks = 1000
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const fetchingRef = useRef(false);
   const [bps, setBps] = useState<number | null>(null);
+  const [features, setFeatures] = useState<ChainFeatures | null>(null);
   const prevSampleRef = useRef<{ h: number; t: number } | null>(null);
   const alphaRef = useRef<number>(0.25); // smoothing factor for EMA
 
@@ -46,6 +49,9 @@ export default function useLatestBlockHeight(pollMs = 2000, _windowBlocks = 1000
           setBps((prevBps) => (prevBps == null ? inst : prevBps + alpha * (inst - prevBps)));
         }
         prevSampleRef.current = curr;
+        if (status.features) {
+          setFeatures(status.features);
+        }
         setError(null);
       } else {
         setHeight(null);
@@ -64,5 +70,5 @@ export default function useLatestBlockHeight(pollMs = 2000, _windowBlocks = 1000
     return () => clearInterval(id);
   }, [pollMs, fetchHeight]);
 
-  return { height, loading, error, lastUpdatedAt, bps };
+  return { height, loading, error, lastUpdatedAt, bps, features };
 }

@@ -5,6 +5,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod batch;
 mod config;
 mod copy;
+mod da_worker;
+mod evnode;
 mod fetcher;
 mod indexer;
 mod metadata;
@@ -52,6 +54,24 @@ async fn main() -> Result<()> {
         })
         .await
     });
+
+    // Start DA worker in background (only if EVNODE_URL is configured)
+    if let Some(ref evnode_url) = config.evnode_url {
+        tracing::info!("DA worker enabled, ev-node URL: {}", evnode_url);
+        let da_pool = pool.clone();
+        let da_url = evnode_url.clone();
+        let da_concurrency = config.da_worker_concurrency;
+        tokio::spawn(async move {
+            run_with_retry(|| async {
+                let worker =
+                    da_worker::DaWorker::new(da_pool.clone(), &da_url, da_concurrency)?;
+                worker.run().await
+            })
+            .await
+        });
+    } else {
+        tracing::info!("DA worker disabled (EVNODE_URL not set)");
+    }
 
     // Run indexer with retry on failure
     run_with_retry(|| indexer.run()).await?;

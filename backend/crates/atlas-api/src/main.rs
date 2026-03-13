@@ -19,6 +19,8 @@ pub struct AppState {
     pub rpc_url: String,
     pub solc_path: String,
     pub admin_api_key: Option<String>,
+    /// ev-node Connect RPC URL. When set, enables DA tracking features.
+    pub evnode_url: Option<String>,
 }
 
 #[tokio::main]
@@ -53,11 +55,17 @@ async fn main() -> Result<()> {
     tracing::info!("Running database migrations");
     atlas_common::db::run_migrations(&database_url).await?;
 
+    let evnode_url = std::env::var("EVNODE_URL").ok();
+    if evnode_url.is_some() {
+        tracing::info!("DA tracking enabled (EVNODE_URL set)");
+    }
+
     let state = Arc::new(AppState {
         pool,
         rpc_url,
         solc_path,
         admin_api_key,
+        evnode_url,
     });
 
     // Build router
