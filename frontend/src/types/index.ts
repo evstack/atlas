@@ -8,6 +8,21 @@ export interface Block {
   gas_limit: number;
   transaction_count: number;
   indexed_at: string;
+  da_status?: BlockDaStatus | null;
+}
+
+// DA (Data Availability) status for L2 blocks using Celestia.
+// Only present when the DA worker has checked the block.
+export interface BlockDaStatus {
+  block_number: number;
+  header_da_height: number;
+  data_da_height: number;
+  updated_at: string;
+}
+
+// Chain feature flags returned by /api/status
+export interface ChainFeatures {
+  da_tracking: boolean;
 }
 
 // Transaction types

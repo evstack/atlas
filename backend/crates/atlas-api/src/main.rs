@@ -21,6 +21,8 @@ pub struct AppState {
     pub rpc_url: String,
     pub solc_path: String,
     pub admin_api_key: Option<String>,
+    /// ev-node Connect RPC URL. When set, enables DA tracking features.
+    pub evnode_url: Option<String>,
 }
 
 #[tokio::main]
@@ -57,12 +59,18 @@ async fn main() -> Result<()> {
 
     let (block_events_tx, _) = broadcast::channel(1024);
 
+    let evnode_url = std::env::var("EVNODE_URL").ok();
+    if evnode_url.is_some() {
+        tracing::info!("DA tracking enabled (EVNODE_URL set)");
+    }
+
     let state = Arc::new(AppState {
         pool: pool.clone(),
         block_events_tx: block_events_tx.clone(),
         rpc_url,
         solc_path,
         admin_api_key,
+        evnode_url,
     });
 
     tokio::spawn(handlers::sse::run_block_event_fanout(

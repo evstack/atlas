@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getStatus } from '../api/status';
+import type { ChainFeatures } from '../types';
 
 export interface SSEState {
   height: number | null;
@@ -13,6 +14,7 @@ export interface LatestHeightState {
   error: string | null;
   lastUpdatedAt: number | null;
   bps: number | null;
+  features: ChainFeatures | null;
 }
 
 /**
@@ -31,6 +33,7 @@ export default function useLatestBlockHeight(
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const fetchingRef = useRef(false);
   const [bps, setBps] = useState<number | null>(null);
+  const [features, setFeatures] = useState<ChainFeatures | null>(null);
   const prevSampleRef = useRef<{ h: number; t: number } | null>(null);
   const alphaRef = useRef<number>(0.25); // smoothing factor for EMA
 
@@ -86,6 +89,9 @@ export default function useLatestBlockHeight(
       const latestHeight = status?.block_height;
       if (typeof latestHeight === 'number') {
         processHeight(latestHeight, false);
+        if (status.features) {
+          setFeatures(status.features);
+        }
       } else {
         setHeight(null);
       }
@@ -106,5 +112,5 @@ export default function useLatestBlockHeight(
     return () => clearInterval(id);
   }, [pollMs, fetchHeight, sseConnected]);
 
-  return { height, loading, error, lastUpdatedAt, bps };
+  return { height, loading, error, lastUpdatedAt, bps, features };
 }

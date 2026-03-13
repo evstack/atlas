@@ -105,6 +105,8 @@ Key vars (see `.env.example` for full list):
 | `BATCH_SIZE` | indexer | `100` |
 | `FETCH_WORKERS` | indexer | `10` |
 | `ADMIN_API_KEY` | api | none |
+| `EVNODE_URL` | indexer, api | none (DA tracking disabled) |
+| `DA_WORKER_CONCURRENCY` | indexer | `10` |
 
 ## Running Locally
 

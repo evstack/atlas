@@ -15,6 +15,10 @@ pub struct Config {
     pub metadata_retry_attempts: u32,
     pub fetch_workers: u32,
     pub rpc_batch_size: u32,
+    /// ev-node Connect RPC URL for DA status tracking. None = DA feature disabled.
+    pub evnode_url: Option<String>,
+    /// Number of concurrent requests to ev-node for DA status backfill.
+    pub da_worker_concurrency: u32,
 }
 
 impl Config {
@@ -60,6 +64,11 @@ impl Config {
                 .unwrap_or_else(|_| "20".to_string())
                 .parse()
                 .context("Invalid RPC_BATCH_SIZE")?,
+            evnode_url: env::var("EVNODE_URL").ok(),
+            da_worker_concurrency: env::var("DA_WORKER_CONCURRENCY")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .context("Invalid DA_WORKER_CONCURRENCY")?,
         })
     }
 }

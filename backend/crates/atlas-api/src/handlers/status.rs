@@ -6,9 +6,15 @@ use crate::error::ApiResult;
 use crate::AppState;
 
 #[derive(Serialize)]
+pub struct ChainFeatures {
+    pub da_tracking: bool,
+}
+
+#[derive(Serialize)]
 pub struct ChainStatus {
     pub block_height: i64,
     pub indexed_at: String,
+    pub features: ChainFeatures,
 }
 
 /// GET /api/status - Lightweight endpoint for current chain status
@@ -25,5 +31,8 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Ch
     Ok(Json(ChainStatus {
         block_height,
         indexed_at: result.1.to_rfc3339(),
+        features: ChainFeatures {
+            da_tracking: state.evnode_url.is_some(),
+        },
     }))
 }
