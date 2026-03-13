@@ -49,40 +49,35 @@ pub async fn block_events(
             Err(e) => warn!(error = ?e, "sse: failed to fetch initial block"),
         }
 
-        loop {
-            match rx.recv().await {
-                Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {
-                    let mut cursor = last_block_number;
+        while let Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) = rx.recv().await {
+            let mut cursor = last_block_number;
 
-                    loop {
-                        match fetch_blocks_after(&pool, cursor).await {
-                            Ok(blocks) => {
-                                if blocks.is_empty() {
-                                    break;
-                                }
+            loop {
+                match fetch_blocks_after(&pool, cursor).await {
+                    Ok(blocks) => {
+                        if blocks.is_empty() {
+                            break;
+                        }
 
-                                let batch_len = blocks.len();
-                                for block in blocks {
-                                    let block_number = block.number;
-                                    last_block_number = Some(block_number);
-                                    cursor = Some(block_number);
-                                    if let Some(event) = block_to_event(block) {
-                                        yield Ok(event);
-                                    }
-                                }
-
-                                if batch_len < FETCH_BATCH_SIZE as usize {
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                warn!(error = ?e, cursor = ?last_block_number, "sse: failed to fetch blocks after wake-up");
-                                break;
+                        let batch_len = blocks.len();
+                        for block in blocks {
+                            let block_number = block.number;
+                            last_block_number = Some(block_number);
+                            cursor = Some(block_number);
+                            if let Some(event) = block_to_event(block) {
+                                yield Ok(event);
                             }
                         }
+
+                        if batch_len < FETCH_BATCH_SIZE as usize {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = ?e, cursor = ?last_block_number, "sse: failed to fetch blocks after wake-up");
+                        break;
                     }
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     };
