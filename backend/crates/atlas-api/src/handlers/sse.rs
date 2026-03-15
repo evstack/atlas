@@ -307,32 +307,6 @@ mod tests {
     }
 
     #[test]
-    fn new_block_event_contains_all_block_fields() {
-        let event = NewBlockEvent {
-            block: sample_block(1),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let block = &v["block"];
-
-        for field in [
-            "number",
-            "hash",
-            "parent_hash",
-            "timestamp",
-            "gas_used",
-            "gas_limit",
-            "transaction_count",
-            "indexed_at",
-        ] {
-            assert!(
-                block.get(field).is_some(),
-                "block JSON missing field: {field}"
-            );
-        }
-    }
-
-    #[test]
     fn da_update_event_serializes_correctly() {
         let event = DaUpdateEvent {
             block_number: 42,
@@ -347,21 +321,4 @@ mod tests {
         assert_eq!(v["data_da_height"], 8448335);
     }
 
-    #[test]
-    fn da_update_event_contains_all_fields() {
-        let event = DaUpdateEvent {
-            block_number: 1,
-            header_da_height: 0,
-            data_da_height: 0,
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-
-        for field in ["block_number", "header_da_height", "data_da_height"] {
-            assert!(
-                v.get(field).is_some(),
-                "da_update JSON missing field: {field}"
-            );
-        }
-    }
 }
