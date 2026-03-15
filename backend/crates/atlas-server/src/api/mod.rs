@@ -156,7 +156,6 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         .layer(build_cors_layer(cors_origin))
         .layer(TraceLayer::new_for_http())
 }
-
 /// Construct the CORS layer.
 ///
 /// When `cors_origin` is `Some`, restrict to that exact origin.
