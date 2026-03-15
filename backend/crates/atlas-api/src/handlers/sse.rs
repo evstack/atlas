@@ -252,18 +252,6 @@ fn block_to_event(block: Block) -> Option<Event> {
         .map(|json| Event::default().event("new_block").data(json))
 }
 
-#[cfg(test)]
-fn da_to_event(da: &BlockDaStatus) -> Option<Event> {
-    let event = DaUpdateEvent {
-        block_number: da.block_number,
-        header_da_height: da.header_da_height,
-        data_da_height: da.data_da_height,
-    };
-    serde_json::to_string(&event)
-        .ok()
-        .map(|json| Event::default().event("da_update").data(json))
-}
-
 fn da_batch_to_event(rows: &[BlockDaStatus]) -> Option<Event> {
     if rows.is_empty() {
         return None;

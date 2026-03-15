@@ -24,7 +24,6 @@ bigdecimal = { workspace = true }
 num-bigint = "0.4"
 hex = { workspace = true }
 chrono = { workspace = true }
-prost = { workspace = true }
 futures = { workspace = true }
 async-channel = "2.3"
 governor = "0.6"
