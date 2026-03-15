@@ -5,13 +5,13 @@ import { formatNumber, formatTimestamp, formatGas, truncateHash, formatTimeAgo, 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
-/** Format a DA height as a human-readable status string. */
+/** Format a DA height as a status indicator. */
 function formatDaStatus(daHeight: number): ReactNode {
   if (daHeight > 0) {
     return (
       <span className="inline-flex items-center gap-1.5">
         <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
-        <span>Included at Celestia height {formatNumber(daHeight)}</span>
+        <span>{formatNumber(daHeight)}</span>
       </span>
     );
   }

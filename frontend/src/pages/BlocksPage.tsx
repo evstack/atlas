@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useBlocks } from '../hooks';
+import { useBlocks, useFeatures } from '../hooks';
 import { CopyButton, Loading } from '../components';
 import { formatNumber, formatTimeAgo, formatGas, truncateHash } from '../utils';
 import { BlockStatsContext } from '../context/BlockStatsContext';
@@ -16,6 +16,7 @@ export default function BlocksPage() {
     }
   });
   const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: 20 });
+  const features = useFeatures();
   const hasLoaded = !loading || pagination !== null;
   const { latestBlockEvent, sseConnected } = useContext(BlockStatsContext);
   const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
@@ -323,6 +324,9 @@ export default function BlocksPage() {
                     )}
                   </button>
                 </th>
+                {features.da_tracking && (
+                  <th className="table-cell text-center table-header">DA</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -360,7 +364,19 @@ export default function BlocksPage() {
                   <td className="table-cell text-gray-400 font-mono text-xs">
                     {formatGas(block.gas_used.toString())}
                   </td>
-                  
+                  {features.da_tracking && (
+                    <td className="table-cell text-center">
+                      {block.da_status ? (
+                        block.da_status.header_da_height > 0 && block.da_status.data_da_height > 0 ? (
+                          <span className="w-2 h-2 rounded-full bg-green-400 inline-block" title={`Header: ${block.da_status.header_da_height}, Data: ${block.da_status.data_da_height}`} />
+                        ) : (
+                          <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" title="Pending DA inclusion" />
+                        )
+                      ) : (
+                        <span className="w-2 h-2 rounded-full bg-gray-600 inline-block" title="Awaiting check" />
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

@@ -22,7 +22,7 @@ pub struct BlockResponse {
 pub async fn list_blocks(
     State(state): State<Arc<AppState>>,
     Query(pagination): Query<Pagination>,
-) -> ApiResult<Json<PaginatedResponse<Block>>> {
+) -> ApiResult<Json<PaginatedResponse<BlockResponse>>> {
     // Use MAX(number) + 1 instead of COUNT(*) - blocks are sequential so this is accurate
     // This is ~6500x faster than COUNT(*) on large tables
     let total: (Option<i64>,) = sqlx::query_as("SELECT MAX(number) + 1 FROM blocks")
@@ -48,8 +48,30 @@ pub async fn list_blocks(
     .fetch_all(&state.pool)
     .await?;
 
+    // Batch-fetch DA status for all blocks in this page
+    let block_numbers: Vec<i64> = blocks.iter().map(|b| b.number).collect();
+    let da_rows: Vec<BlockDaStatus> = sqlx::query_as(
+        "SELECT block_number, header_da_height, data_da_height, updated_at
+         FROM block_da_status
+         WHERE block_number = ANY($1)"
+    )
+    .bind(&block_numbers)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let da_map: std::collections::HashMap<i64, BlockDaStatus> =
+        da_rows.into_iter().map(|d| (d.block_number, d)).collect();
+
+    let responses: Vec<BlockResponse> = blocks
+        .into_iter()
+        .map(|block| {
+            let da_status = da_map.get(&block.number).cloned();
+            BlockResponse { block, da_status }
+        })
+        .collect();
+
     Ok(Json(PaginatedResponse::new(
-        blocks,
+        responses,
         pagination.page,
         pagination.limit,
         total_count,
