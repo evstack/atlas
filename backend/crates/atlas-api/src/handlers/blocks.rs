@@ -53,7 +53,7 @@ pub async fn list_blocks(
     let da_rows: Vec<BlockDaStatus> = sqlx::query_as(
         "SELECT block_number, header_da_height, data_da_height, updated_at
          FROM block_da_status
-         WHERE block_number = ANY($1)"
+         WHERE block_number = ANY($1)",
     )
     .bind(&block_numbers)
     .fetch_all(&state.pool)

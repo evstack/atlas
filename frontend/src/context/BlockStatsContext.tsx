@@ -1,5 +1,5 @@
 import { createContext } from 'react';
-import type { NewBlockEvent, DaUpdateEvent } from '../hooks/useBlockSSE';
+import type { NewBlockEvent, DaUpdateEvent, DaSubscriber } from '../hooks/useBlockSSE';
 
 export interface BlockStats {
   bps: number | null;
@@ -7,7 +7,10 @@ export interface BlockStats {
   latestBlockEvent: NewBlockEvent | null;
   latestDaUpdate: DaUpdateEvent | null;
   sseConnected: boolean;
+  subscribeDa: (cb: DaSubscriber) => () => void;
 }
+
+const noopSubscribe = () => () => {};
 
 export const BlockStatsContext = createContext<BlockStats>({
   bps: null,
@@ -15,4 +18,5 @@ export const BlockStatsContext = createContext<BlockStats>({
   latestBlockEvent: null,
   latestDaUpdate: null,
   sseConnected: false,
+  subscribeDa: noopSubscribe,
 });

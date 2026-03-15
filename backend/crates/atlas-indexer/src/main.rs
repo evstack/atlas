@@ -63,8 +63,7 @@ async fn main() -> Result<()> {
         let da_concurrency = config.da_worker_concurrency;
         tokio::spawn(async move {
             run_with_retry(|| async {
-                let worker =
-                    da_worker::DaWorker::new(da_pool.clone(), &da_url, da_concurrency)?;
+                let worker = da_worker::DaWorker::new(da_pool.clone(), &da_url, da_concurrency)?;
                 worker.run().await
             })
             .await

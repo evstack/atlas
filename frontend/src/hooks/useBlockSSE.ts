@@ -16,6 +16,8 @@ export interface DaBatchEvent {
   updates: DaUpdateEvent[];
 }
 
+export type DaSubscriber = (updates: DaUpdateEvent[]) => void;
+
 export interface BlockSSEState {
   latestBlock: NewBlockEvent | null;
   latestDaUpdate: DaUpdateEvent | null;
@@ -23,6 +25,7 @@ export interface BlockSSEState {
   connected: boolean;
   error: string | null;
   bps: number | null;
+  subscribeDa: (cb: DaSubscriber) => () => void;
 }
 
 type BlockLog = { num: number; ts: number }[];
@@ -84,6 +87,11 @@ export default function useBlockSSE(): BlockSSEState {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bps, setBps] = useState<number | null>(null);
+  const daSubscribersRef = useRef<Set<DaSubscriber>>(new Set());
+  const subscribeDa = useCallback((cb: DaSubscriber) => {
+    daSubscribersRef.current.add(cb);
+    return () => { daSubscribersRef.current.delete(cb); };
+  }, []);
   const esRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const queueRef = useRef<QueuedBlock[]>([]);
@@ -96,6 +104,7 @@ export default function useBlockSSE(): BlockSSEState {
   const blockLogRef = useRef<BlockLog>([]);
   // Cached drain interval in ms, derived from chain block timestamps
   const drainIntervalRef = useRef<number>(90); // initial guess ~11 bps
+  const drainOneRef = useRef<() => void>(() => {});
 
   const scheduleDrain = useCallback((fromBurstStart: boolean) => {
     if (drainTimerRef.current !== null || queueRef.current.length === 0) return;
@@ -127,7 +136,7 @@ export default function useBlockSSE(): BlockSSEState {
       delay = Math.max(delay, burstLeadIn);
     }
 
-    drainTimerRef.current = window.setTimeout(drainOne, delay);
+    drainTimerRef.current = window.setTimeout(() => drainOneRef.current(), delay);
   }, []);
 
   // Kick the drain loop when new items arrive.
@@ -187,10 +196,8 @@ export default function useBlockSSE(): BlockSSEState {
       try {
         const data: DaBatchEvent = JSON.parse(e.data);
         if (data.updates?.length) {
-          // Apply the last update — the batch is applied all at once in the
-          // consuming components via the daOverrides map, so we just need to
-          // trigger a state change. We store the full batch for consumers.
           setLatestDaUpdate(data.updates[data.updates.length - 1]);
+          for (const cb of daSubscribersRef.current) cb(data.updates);
         }
       } catch {
         // Ignore malformed events
@@ -214,6 +221,8 @@ export default function useBlockSSE(): BlockSSEState {
   }, [kickDrain]);
 
   // Drain one block from the queue at the chain's natural cadence.
+  // Assigned to drainOneRef so scheduleDrain can call it without a circular dependency.
+  drainOneRef.current = drainOne;
   function drainOne() {
     const queue = queueRef.current;
     drainTimerRef.current = null;
@@ -258,5 +267,5 @@ export default function useBlockSSE(): BlockSSEState {
     };
   }, [connect]);
 
-  return { latestBlock, latestDaUpdate, height, connected, error, bps };
+  return { latestBlock, latestDaUpdate, height, connected, error, bps, subscribeDa };
 }

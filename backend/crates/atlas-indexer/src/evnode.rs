@@ -152,7 +152,10 @@ mod tests {
     #[test]
     fn client_trims_trailing_slash() {
         let client = EvnodeClient::new("http://localhost:7331/");
-        assert_eq!(client.url, "http://localhost:7331/evnode.v1.StoreService/GetBlock");
+        assert_eq!(
+            client.url,
+            "http://localhost:7331/evnode.v1.StoreService/GetBlock"
+        );
     }
 
     #[test]

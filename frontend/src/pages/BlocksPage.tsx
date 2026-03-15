@@ -19,7 +19,7 @@ export default function BlocksPage() {
   const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: 100 });
   const features = useFeatures();
   const hasLoaded = !loading || pagination !== null;
-  const { latestBlockEvent, latestDaUpdate, sseConnected } = useContext(BlockStatsContext);
+  const { latestBlockEvent, sseConnected, subscribeDa } = useContext(BlockStatsContext);
   const [daOverrides, setDaOverrides] = useState<Map<number, BlockDaStatus>>(new Map());
   const [daHighlight, setDaHighlight] = useState<Set<number>>(new Set());
   const daHighlightTimeoutsRef = useRef<Map<number, number>>(new Map());
@@ -83,41 +83,40 @@ export default function BlocksPage() {
     return [...unique, ...fetchedBlocks].slice(0, 100);
   }, [fetchedBlocks, fetchedNumberSet, sseBlocks, page]);
 
-  // Apply live DA status updates from SSE (drip-fed one at a time)
+  // Subscribe to DA updates from SSE. setState is called inside the subscription
+  // callback (not synchronously in the effect body), satisfying react-hooks/set-state-in-effect.
   useEffect(() => {
-    if (!latestDaUpdate) return;
-    const bn = latestDaUpdate.block_number;
-    setDaOverrides(prev => {
-      const next = new Map(prev);
-      next.set(bn, {
-        block_number: bn,
-        header_da_height: latestDaUpdate.header_da_height,
-        data_da_height: latestDaUpdate.data_da_height,
-        updated_at: new Date().toISOString(),
-      });
-      return next;
-    });
-    // Flash the dot for 1.5s
-    setDaHighlight(prev => new Set(prev).add(bn));
-    const prev = daHighlightTimeoutsRef.current.get(bn);
-    if (prev !== undefined) clearTimeout(prev);
-    const t = window.setTimeout(() => {
-      setDaHighlight(p => {
-        const next = new Set(p);
-        next.delete(bn);
+    return subscribeDa((updates) => {
+      setDaOverrides(prev => {
+        const next = new Map(prev);
+        for (const u of updates) {
+          next.set(u.block_number, {
+            block_number: u.block_number,
+            header_da_height: u.header_da_height,
+            data_da_height: u.data_da_height,
+            updated_at: new Date().toISOString(),
+          });
+        }
         return next;
       });
-      daHighlightTimeoutsRef.current.delete(bn);
-    }, 1500);
-    daHighlightTimeoutsRef.current.set(bn, t);
-  }, [latestDaUpdate]);
-
-  // Clear DA overrides when fetched data refreshes (it now includes the updates)
-  useEffect(() => {
-    if (fetchedBlocks.length) {
-      setDaOverrides(new Map());
-    }
-  }, [fetchedBlocks]);
+      // Flash dots for 1.5s
+      for (const u of updates) {
+        const bn = u.block_number;
+        setDaHighlight(prev => new Set(prev).add(bn));
+        const existing = daHighlightTimeoutsRef.current.get(bn);
+        if (existing !== undefined) clearTimeout(existing);
+        const t = window.setTimeout(() => {
+          setDaHighlight(p => {
+            const next = new Set(p);
+            next.delete(bn);
+            return next;
+          });
+          daHighlightTimeoutsRef.current.delete(bn);
+        }, 1500);
+        daHighlightTimeoutsRef.current.set(bn, t);
+      }
+    });
+  }, [subscribeDa]);
 
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
@@ -126,7 +125,6 @@ export default function BlocksPage() {
   const [highlightBlocks, setHighlightBlocks] = useState<Set<number>>(new Set());
   const timeoutsRef = useRef<Map<number, number>>(new Map());
   const highlightRafRef = useRef<number | null>(null);
-  const [, setTick] = useState(0);
 
   const handleSort = (key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used') => {
     setSort((prev) => {
@@ -244,6 +242,7 @@ export default function BlocksPage() {
   // Cleanup on unmount
   useEffect(() => {
     const activeTimeouts = timeoutsRef.current;
+    const activeDaTimeouts = daHighlightTimeoutsRef.current;
     return () => {
       if (highlightRafRef.current !== null) {
         window.cancelAnimationFrame(highlightRafRef.current);
@@ -260,8 +259,8 @@ export default function BlocksPage() {
       }
       for (const [, t] of activeTimeouts) clearTimeout(t);
       activeTimeouts.clear();
-      for (const [, t] of daHighlightTimeoutsRef.current) clearTimeout(t);
-      daHighlightTimeoutsRef.current.clear();
+      for (const [, t] of activeDaTimeouts) clearTimeout(t);
+      activeDaTimeouts.clear();
     };
   }, []);
 

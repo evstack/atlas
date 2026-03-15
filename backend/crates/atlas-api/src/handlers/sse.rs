@@ -170,10 +170,7 @@ pub async fn run_block_event_fanout(
     }
 }
 
-pub async fn run_da_event_fanout(
-    database_url: String,
-    tx: broadcast::Sender<Vec<i64>>,
-) {
+pub async fn run_da_event_fanout(database_url: String, tx: broadcast::Sender<Vec<i64>>) {
     loop {
         let mut listener = match PgListener::connect(&database_url).await {
             Ok(listener) => listener,

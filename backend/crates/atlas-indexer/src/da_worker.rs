@@ -59,10 +59,7 @@ impl DaWorker {
     }
 
     pub async fn run(&self) -> Result<()> {
-        tracing::info!(
-            "DA worker started (concurrency: {})",
-            self.concurrency
-        );
+        tracing::info!("DA worker started (concurrency: {})", self.concurrency);
 
         loop {
             // Phase 1: backfill gets first pick of the budget
