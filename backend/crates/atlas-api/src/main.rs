@@ -15,6 +15,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod error;
 mod handlers;
 
+fn parse_chain_id(hex: &str) -> u64 {
+    u64::from_str_radix(hex.trim_start_matches("0x"), 16).unwrap_or(0)
+}
+
 async fn fetch_chain_id(rpc_url: &str) -> u64 {
     let client = reqwest::Client::new();
     let resp = client
@@ -33,7 +37,7 @@ async fn fetch_chain_id(rpc_url: &str) -> u64 {
         Ok(r) => {
             let json: serde_json::Value = r.json().await.unwrap_or_default();
             let hex = json["result"].as_str().unwrap_or("0x0");
-            u64::from_str_radix(hex.trim_start_matches("0x"), 16).unwrap_or(0)
+            parse_chain_id(hex)
         }
         Err(e) => {
             tracing::warn!("Failed to fetch chain ID from RPC: {}", e);
@@ -288,4 +292,37 @@ async fn main() -> Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_chain_id_standard_hex() {
+        assert_eq!(parse_chain_id("0x1"), 1);
+        assert_eq!(parse_chain_id("0xa"), 10);
+        assert_eq!(parse_chain_id("0x38"), 56);
+        assert_eq!(parse_chain_id("0x89"), 137);
+        assert_eq!(parse_chain_id("0xa4b1"), 42161);
+    }
+
+    #[test]
+    fn parse_chain_id_without_prefix() {
+        assert_eq!(parse_chain_id("1"), 1);
+        assert_eq!(parse_chain_id("a"), 10);
+    }
+
+    #[test]
+    fn parse_chain_id_zero() {
+        assert_eq!(parse_chain_id("0x0"), 0);
+        assert_eq!(parse_chain_id("0"), 0);
+    }
+
+    #[test]
+    fn parse_chain_id_invalid_returns_zero() {
+        assert_eq!(parse_chain_id(""), 0);
+        assert_eq!(parse_chain_id("0x"), 0);
+        assert_eq!(parse_chain_id("not_hex"), 0);
+    }
 }
