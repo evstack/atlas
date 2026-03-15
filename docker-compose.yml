@@ -44,6 +44,7 @@ services:
     environment:
       DATABASE_URL: postgres://atlas:atlas@postgres/atlas
       RPC_URL: ${RPC_URL}
+      CHAIN_NAME: ${CHAIN_NAME:-Unknown}
       API_HOST: 0.0.0.0
       API_PORT: 3000
       RUST_LOG: atlas_api=info,tower_http=info

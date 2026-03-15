@@ -15,14 +15,12 @@ pub mod transactions;
 
 use sqlx::PgPool;
 
-/// Get transactions table row count efficiently.
+/// Get a table's row count efficiently.
 /// - For tables > 100k rows: uses PostgreSQL's approximate count (instant, ~99% accurate)
 /// - For smaller tables: uses exact COUNT(*) (fast enough)
 ///
 /// This avoids the slow COUNT(*) full table scan on large tables.
-pub async fn get_table_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
-    let table_name = "transactions";
-
+pub async fn get_table_count(pool: &PgPool, table_name: &str) -> Result<i64, sqlx::Error> {
     // Sum approximate reltuples across partitions if any, else use parent.
     // This is instant and reasonably accurate for large tables.
     // Cast to float8 (f64) since reltuples is float4 and SUM returns float4
@@ -54,7 +52,7 @@ pub async fn get_table_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
         Ok(approx)
     } else {
         // Exact count for small tables
-        let exact: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions")
+        let exact: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {table_name}"))
             .fetch_one(pool)
             .await?;
         Ok(exact.0)

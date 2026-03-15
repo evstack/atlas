@@ -144,6 +144,9 @@ export default function Layout() {
               <NavLink to="/nfts" className={navLinkClass}>
                 NFTs
               </NavLink>
+              <NavLink to="/status" className={navLinkClass}>
+                Status
+              </NavLink>
             </nav>
 
             {/* Right status: latest height + live pulse */}
@@ -215,6 +218,9 @@ export default function Layout() {
             </NavLink>
             <NavLink to="/nfts" className={navLinkClass}>
               NFTs
+            </NavLink>
+            <NavLink to="/status" className={navLinkClass}>
+              Status
             </NavLink>
             <button
               type="button"
