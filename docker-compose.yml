@@ -66,3 +66,4 @@ services:
 
 volumes:
   pgdata:
+    name: atlas_pgdata

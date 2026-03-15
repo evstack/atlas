@@ -6,6 +6,7 @@ use axum::{
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
@@ -43,6 +44,7 @@ async fn fetch_chain_id(rpc_url: &str) -> u64 {
 
 pub struct AppState {
     pub pool: PgPool,
+    pub block_events_tx: broadcast::Sender<()>,
     pub rpc_url: String,
     pub solc_path: String,
     pub admin_api_key: Option<String>,
@@ -88,14 +90,28 @@ async fn main() -> Result<()> {
     tracing::info!("Running database migrations");
     atlas_common::db::run_migrations(&database_url).await?;
 
+    let (block_events_tx, _) = broadcast::channel(1024);
+
     let state = Arc::new(AppState {
-        pool,
+        pool: pool.clone(),
+        block_events_tx: block_events_tx.clone(),
         rpc_url,
         solc_path,
         admin_api_key,
         chain_id,
         chain_name,
     });
+
+    tokio::spawn(handlers::sse::run_block_event_fanout(
+        database_url.clone(),
+        pool,
+        block_events_tx,
+    ));
+
+    // SSE route — excluded from TimeoutLayer so connections stay alive
+    let sse_routes = Router::new()
+        .route("/api/events", get(handlers::sse::block_events))
+        .with_state(state.clone());
 
     // Build router
     let app = Router::new()
@@ -253,14 +269,17 @@ async fn main() -> Result<()> {
             axum::http::StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(10),
         ))
+        .with_state(state)
+        // Merge SSE routes (no TimeoutLayer so connections stay alive)
+        .merge(sse_routes)
+        // Shared layers applied to all routes
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .layer(TraceLayer::new_for_http());
 
     let addr = format!("{}:{}", host, port);
     tracing::info!("Listening on {}", addr);
