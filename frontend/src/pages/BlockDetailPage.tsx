@@ -2,9 +2,10 @@ import { useParams, Link } from 'react-router-dom';
 import { useBlock, useBlockTransactions, useFeatures } from '../hooks';
 import { CopyButton, Loading, AddressLink, TxHashLink, StatusBadge } from '../components';
 import { formatNumber, formatTimestamp, formatGas, truncateHash, formatTimeAgo, formatEther } from '../utils';
-import { useContext, useMemo, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { BlockStatsContext } from '../context/BlockStatsContext';
+import type { BlockDaStatus } from '../types';
 
 /** Format a DA height as a status indicator. */
 function formatDaStatus(daHeight: number): ReactNode {
@@ -31,20 +32,26 @@ export default function BlockDetailPage() {
   const features = useFeatures();
   const [txPage, setTxPage] = useState(1);
   const { transactions, pagination, loading } = useBlockTransactions(blockNumber, { page: txPage, limit: 20 });
-  const { latestDaUpdate } = useContext(BlockStatsContext);
+  const { subscribeDa } = useContext(BlockStatsContext);
+  const [daOverride, setDaOverride] = useState<BlockDaStatus | null>(null);
 
-  // Derive DA override directly from latest SSE update (no state needed)
-  const daOverride = useMemo(() => {
-    if (latestDaUpdate && latestDaUpdate.block_number === blockNumber) {
-      return {
-        block_number: latestDaUpdate.block_number,
-        header_da_height: latestDaUpdate.header_da_height,
-        data_da_height: latestDaUpdate.data_da_height,
+  // Persist DA updates for this block until navigation or a full refetch catches up.
+  useEffect(() => {
+    return subscribeDa((updates) => {
+      const match = updates.find((update) => update.block_number === blockNumber);
+      if (!match) return;
+      setDaOverride({
+        block_number: match.block_number,
+        header_da_height: match.header_da_height,
+        data_da_height: match.data_da_height,
         updated_at: new Date().toISOString(),
-      };
-    }
-    return null;
-  }, [latestDaUpdate, blockNumber]);
+      });
+    });
+  }, [subscribeDa, blockNumber]);
+
+  useEffect(() => {
+    setDaOverride(null);
+  }, [blockNumber]);
 
   type DetailRow = { label: string; value: ReactNode; stacked?: boolean };
   const details: DetailRow[] = block ? [
