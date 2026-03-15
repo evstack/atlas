@@ -297,32 +297,42 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
-    #[test]
-    fn parse_chain_id_standard_hex() {
-        assert_eq!(parse_chain_id("0x1"), 1);
-        assert_eq!(parse_chain_id("0xa"), 10);
-        assert_eq!(parse_chain_id("0x38"), 56);
-        assert_eq!(parse_chain_id("0x89"), 137);
-        assert_eq!(parse_chain_id("0xa4b1"), 42161);
+    async fn serve_json_once(body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0_u8; 1024];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        format!("http://{}", addr)
     }
 
-    #[test]
-    fn parse_chain_id_without_prefix() {
-        assert_eq!(parse_chain_id("1"), 1);
-        assert_eq!(parse_chain_id("a"), 10);
+    #[tokio::test]
+    async fn fetch_chain_id_reads_hex_result_from_rpc_response() {
+        let url = serve_json_once(r#"{"jsonrpc":"2.0","id":1,"result":"0xa4b1"}"#).await;
+        assert_eq!(fetch_chain_id(&url).await, 42161);
     }
 
-    #[test]
-    fn parse_chain_id_zero() {
-        assert_eq!(parse_chain_id("0x0"), 0);
-        assert_eq!(parse_chain_id("0"), 0);
-    }
+    #[tokio::test]
+    async fn fetch_chain_id_returns_zero_for_http_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
 
-    #[test]
-    fn parse_chain_id_invalid_returns_zero() {
-        assert_eq!(parse_chain_id(""), 0);
-        assert_eq!(parse_chain_id("0x"), 0);
-        assert_eq!(parse_chain_id("not_hex"), 0);
+        let url = format!("http://{}", addr);
+        assert_eq!(fetch_chain_id(&url).await, 0);
     }
 }
