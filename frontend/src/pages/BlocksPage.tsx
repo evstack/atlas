@@ -23,6 +23,7 @@ export default function BlocksPage() {
   const [daOverrides, setDaOverrides] = useState<Map<number, BlockDaStatus>>(new Map());
   const [daHighlight, setDaHighlight] = useState<Set<number>>(new Set());
   const daHighlightTimeoutsRef = useRef<Map<number, number>>(new Map());
+  const [, setTick] = useState(0);
   const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
   const lastSseBlockRef = useRef<number | null>(null);
   const ssePrependRafRef = useRef<number | null>(null);
