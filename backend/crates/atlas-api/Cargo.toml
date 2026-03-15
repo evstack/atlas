@@ -25,3 +25,6 @@ bigdecimal = { workspace = true }
 hex = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
+tokio-stream = { workspace = true }
+futures = { workspace = true }
+async-stream = { workspace = true }

@@ -24,6 +24,8 @@ use crate::fetcher::{
     WorkItem,
 };
 
+const BLOCK_EVENT_CHANNEL: &str = "atlas_new_blocks";
+
 /// Partition size: 10 million blocks per partition
 const PARTITION_SIZE: u64 = 10_000_000;
 
@@ -781,6 +783,12 @@ impl Indexer {
                  VALUES ('last_indexed_block', $1, NOW())
                  ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
                     &[&last_value],
+                )
+                .await?;
+            pg_tx
+                .execute(
+                    "SELECT pg_notify($1, $2)",
+                    &[&BLOCK_EVENT_CHANNEL, &last_value],
                 )
                 .await?;
         }
