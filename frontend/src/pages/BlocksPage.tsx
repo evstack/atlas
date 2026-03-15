@@ -4,6 +4,7 @@ import { useBlocks, useFeatures } from '../hooks';
 import { CopyButton, Loading } from '../components';
 import { formatNumber, formatTimeAgo, formatGas, truncateHash } from '../utils';
 import { BlockStatsContext } from '../context/BlockStatsContext';
+import type { BlockDaStatus } from '../types';
 
 export default function BlocksPage() {
   const [page, setPage] = useState(1);
@@ -15,10 +16,13 @@ export default function BlocksPage() {
       return true;
     }
   });
-  const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: 20 });
+  const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: 100 });
   const features = useFeatures();
   const hasLoaded = !loading || pagination !== null;
-  const { latestBlockEvent, sseConnected } = useContext(BlockStatsContext);
+  const { latestBlockEvent, latestDaUpdate, sseConnected } = useContext(BlockStatsContext);
+  const [daOverrides, setDaOverrides] = useState<Map<number, BlockDaStatus>>(new Map());
+  const [daHighlight, setDaHighlight] = useState<Set<number>>(new Set());
+  const daHighlightTimeoutsRef = useRef<Map<number, number>>(new Map());
   const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
   const lastSseBlockRef = useRef<number | null>(null);
   const ssePrependRafRef = useRef<number | null>(null);
@@ -53,7 +57,7 @@ export default function BlocksPage() {
           prepend.push(b);
         }
         prepend.reverse();
-        return [...prepend, ...prev].slice(0, 20);
+        return [...prepend, ...prev].slice(0, 100);
       });
       ssePrependRafRef.current = null;
     });
@@ -76,8 +80,45 @@ export default function BlocksPage() {
   const blocks = useMemo(() => {
     if (page !== 1 || !sseBlocks.length) return fetchedBlocks;
     const unique = sseBlocks.filter((b) => !fetchedNumberSet.has(b.number));
-    return [...unique, ...fetchedBlocks].slice(0, 20);
+    return [...unique, ...fetchedBlocks].slice(0, 100);
   }, [fetchedBlocks, fetchedNumberSet, sseBlocks, page]);
+
+  // Apply live DA status updates from SSE (drip-fed one at a time)
+  useEffect(() => {
+    if (!latestDaUpdate) return;
+    const bn = latestDaUpdate.block_number;
+    setDaOverrides(prev => {
+      const next = new Map(prev);
+      next.set(bn, {
+        block_number: bn,
+        header_da_height: latestDaUpdate.header_da_height,
+        data_da_height: latestDaUpdate.data_da_height,
+        updated_at: new Date().toISOString(),
+      });
+      return next;
+    });
+    // Flash the dot for 1.5s
+    setDaHighlight(prev => new Set(prev).add(bn));
+    const prev = daHighlightTimeoutsRef.current.get(bn);
+    if (prev !== undefined) clearTimeout(prev);
+    const t = window.setTimeout(() => {
+      setDaHighlight(p => {
+        const next = new Set(p);
+        next.delete(bn);
+        return next;
+      });
+      daHighlightTimeoutsRef.current.delete(bn);
+    }, 1500);
+    daHighlightTimeoutsRef.current.set(bn, t);
+  }, [latestDaUpdate]);
+
+  // Clear DA overrides when fetched data refreshes (it now includes the updates)
+  useEffect(() => {
+    if (fetchedBlocks.length) {
+      setDaOverrides(new Map());
+    }
+  }, [fetchedBlocks]);
+
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
   const seenBlocksRef = useRef<Set<number>>(new Set());
@@ -219,6 +260,8 @@ export default function BlocksPage() {
       }
       for (const [, t] of activeTimeouts) clearTimeout(t);
       activeTimeouts.clear();
+      for (const [, t] of daHighlightTimeoutsRef.current) clearTimeout(t);
+      daHighlightTimeoutsRef.current.clear();
     };
   }, []);
 
@@ -364,19 +407,20 @@ export default function BlocksPage() {
                   <td className="table-cell text-gray-400 font-mono text-xs">
                     {formatGas(block.gas_used.toString())}
                   </td>
-                  {features.da_tracking && (
-                    <td className="table-cell text-center">
-                      {block.da_status ? (
-                        block.da_status.header_da_height > 0 && block.da_status.data_da_height > 0 ? (
-                          <span className="w-2 h-2 rounded-full bg-green-400 inline-block" title={`Header: ${block.da_status.header_da_height}, Data: ${block.da_status.data_da_height}`} />
+                  {features.da_tracking && (() => {
+                    const daStatus = daOverrides.get(block.number) ?? block.da_status;
+                    const flash = daHighlight.has(block.number);
+                    const included = daStatus && daStatus.header_da_height > 0 && daStatus.data_da_height > 0;
+                    return (
+                      <td className="table-cell text-center">
+                        {included ? (
+                          <span className={`w-2 h-2 rounded-full bg-green-400 inline-block${flash ? ' animate-da-pulse' : ''}`} title={`Header: ${daStatus.header_da_height}, Data: ${daStatus.data_da_height}`} />
                         ) : (
-                          <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" title="Pending DA inclusion" />
-                        )
-                      ) : (
-                        <span className="w-2 h-2 rounded-full bg-gray-600 inline-block" title="Awaiting check" />
-                      )}
-                    </td>
-                  )}
+                          <span className={`w-2 h-2 rounded-full bg-yellow-400 inline-block${flash ? ' animate-da-pulse' : ''}`} title="Pending DA inclusion" />
+                        )}
+                      </td>
+                    );
+                  })()}
                 </tr>
               ))}
             </tbody>

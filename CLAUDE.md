@@ -106,7 +106,7 @@ Key vars (see `.env.example` for full list):
 | `FETCH_WORKERS` | indexer | `10` |
 | `ADMIN_API_KEY` | api | none |
 | `EVNODE_URL` | indexer, api | none (DA tracking disabled) |
-| `DA_WORKER_CONCURRENCY` | indexer | `10` |
+| `DA_WORKER_CONCURRENCY` | indexer | `50` |
 
 ## Running Locally
 

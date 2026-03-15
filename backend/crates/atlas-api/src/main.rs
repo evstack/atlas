@@ -18,6 +18,7 @@ mod handlers;
 pub struct AppState {
     pub pool: PgPool,
     pub block_events_tx: broadcast::Sender<()>,
+    pub da_events_tx: broadcast::Sender<Vec<i64>>,
     pub rpc_url: String,
     pub solc_path: String,
     pub admin_api_key: Option<String>,
@@ -58,6 +59,7 @@ async fn main() -> Result<()> {
     atlas_common::db::run_migrations(&database_url).await?;
 
     let (block_events_tx, _) = broadcast::channel(1024);
+    let (da_events_tx, _) = broadcast::channel(256);
 
     let evnode_url = std::env::var("EVNODE_URL").ok();
     if evnode_url.is_some() {
@@ -67,6 +69,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState {
         pool: pool.clone(),
         block_events_tx: block_events_tx.clone(),
+        da_events_tx: da_events_tx.clone(),
         rpc_url,
         solc_path,
         admin_api_key,
@@ -75,8 +78,13 @@ async fn main() -> Result<()> {
 
     tokio::spawn(handlers::sse::run_block_event_fanout(
         database_url.clone(),
-        pool,
+        pool.clone(),
         block_events_tx,
+    ));
+
+    tokio::spawn(handlers::sse::run_da_event_fanout(
+        database_url.clone(),
+        da_events_tx,
     ));
 
     // SSE route — excluded from TimeoutLayer so connections stay alive

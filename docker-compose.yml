@@ -31,7 +31,7 @@ services:
       RPC_REQUESTS_PER_SECOND: ${RPC_REQUESTS_PER_SECOND:-100}
       RPC_BATCH_SIZE: ${RPC_BATCH_SIZE:-20}
       EVNODE_URL: ${EVNODE_URL:-}
-      DA_WORKER_CONCURRENCY: ${DA_WORKER_CONCURRENCY:-10}
+      DA_WORKER_CONCURRENCY: ${DA_WORKER_CONCURRENCY:-50}
       RUST_LOG: atlas_indexer=info
     depends_on:
       postgres:

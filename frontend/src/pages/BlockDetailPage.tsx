@@ -2,8 +2,10 @@ import { useParams, Link } from 'react-router-dom';
 import { useBlock, useBlockTransactions, useFeatures } from '../hooks';
 import { CopyButton, Loading, AddressLink, TxHashLink, StatusBadge } from '../components';
 import { formatNumber, formatTimestamp, formatGas, truncateHash, formatTimeAgo, formatEther } from '../utils';
-import { useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { BlockStatsContext } from '../context/BlockStatsContext';
+import type { BlockDaStatus } from '../types';
 
 /** Format a DA height as a status indicator. */
 function formatDaStatus(daHeight: number): ReactNode {
@@ -30,6 +32,25 @@ export default function BlockDetailPage() {
   const features = useFeatures();
   const [txPage, setTxPage] = useState(1);
   const { transactions, pagination, loading } = useBlockTransactions(blockNumber, { page: txPage, limit: 20 });
+  const { latestDaUpdate } = useContext(BlockStatsContext);
+  const [daOverride, setDaOverride] = useState<BlockDaStatus | null>(null);
+
+  // Apply live DA status updates from SSE
+  useEffect(() => {
+    if (latestDaUpdate && latestDaUpdate.block_number === blockNumber) {
+      setDaOverride({
+        block_number: latestDaUpdate.block_number,
+        header_da_height: latestDaUpdate.header_da_height,
+        data_da_height: latestDaUpdate.data_da_height,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }, [latestDaUpdate, blockNumber]);
+
+  // Reset override when navigating to a different block
+  useEffect(() => {
+    setDaOverride(null);
+  }, [blockNumber]);
 
   type DetailRow = { label: string; value: ReactNode; stacked?: boolean };
   const details: DetailRow[] = block ? [
@@ -64,20 +85,19 @@ export default function BlockDetailPage() {
     { label: 'Gas Used', value: formatGas(block.gas_used.toString()) },
     { label: 'Gas Limit', value: formatGas(block.gas_limit.toString()) },
     // DA status rows — only shown when da_tracking feature is enabled
-    ...(features.da_tracking ? [
-      {
-        label: 'Header DA',
-        value: block.da_status
-          ? formatDaStatus(block.da_status.header_da_height)
-          : <span className="text-gray-500">Awaiting check...</span>,
-      },
-      {
-        label: 'Data DA',
-        value: block.da_status
-          ? formatDaStatus(block.da_status.data_da_height)
-          : <span className="text-gray-500">Awaiting check...</span>,
-      },
-    ] as DetailRow[] : []),
+    ...(features.da_tracking ? (() => {
+      const daStatus = daOverride ?? block.da_status;
+      return [
+        {
+          label: 'Header DA',
+          value: formatDaStatus(daStatus?.header_da_height ?? 0),
+        },
+        {
+          label: 'Data DA',
+          value: formatDaStatus(daStatus?.data_da_height ?? 0),
+        },
+      ];
+    })() as DetailRow[] : []),
   ] : [
     { label: 'Block Height', value: '---' },
     { label: 'Timestamp', value: '---' },

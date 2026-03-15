@@ -6,8 +6,19 @@ export interface NewBlockEvent {
   block: Block;
 }
 
+export interface DaUpdateEvent {
+  block_number: number;
+  header_da_height: number;
+  data_da_height: number;
+}
+
+export interface DaBatchEvent {
+  updates: DaUpdateEvent[];
+}
+
 export interface BlockSSEState {
   latestBlock: NewBlockEvent | null;
+  latestDaUpdate: DaUpdateEvent | null;
   height: number | null;
   connected: boolean;
   error: string | null;
@@ -68,6 +79,7 @@ function getDrainInterval(baseInterval: number, queueLength: number): number {
  */
 export default function useBlockSSE(): BlockSSEState {
   const [latestBlock, setLatestBlock] = useState<NewBlockEvent | null>(null);
+  const [latestDaUpdate, setLatestDaUpdate] = useState<DaUpdateEvent | null>(null);
   const [height, setHeight] = useState<number | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,6 +183,20 @@ export default function useBlockSSE(): BlockSSEState {
       }
     });
 
+    es.addEventListener('da_batch', (e: MessageEvent) => {
+      try {
+        const data: DaBatchEvent = JSON.parse(e.data);
+        if (data.updates?.length) {
+          // Apply the last update — the batch is applied all at once in the
+          // consuming components via the daOverrides map, so we just need to
+          // trigger a state change. We store the full batch for consumers.
+          setLatestDaUpdate(data.updates[data.updates.length - 1]);
+        }
+      } catch {
+        // Ignore malformed events
+      }
+    });
+
     es.onerror = (e) => {
       setConnected(false);
       setError(`SSE ${e.type || 'error'}; retrying`);
@@ -232,5 +258,5 @@ export default function useBlockSSE(): BlockSSEState {
     };
   }, [connect]);
 
-  return { latestBlock, height, connected, error, bps };
+  return { latestBlock, latestDaUpdate, height, connected, error, bps };
 }

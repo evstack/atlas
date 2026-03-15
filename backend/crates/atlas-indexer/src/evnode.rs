@@ -93,9 +93,10 @@ where
     deserializer.deserialize_any(U64Visitor)
 }
 
-/// Retry delays for ev-node RPC calls (in seconds).
-const RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30];
-const MAX_RETRIES: usize = 10;
+/// Retry delays for ev-node RPC calls (in milliseconds).
+/// Fail fast — the background loop will retry on the next cycle anyway.
+const RETRY_DELAYS_MS: &[u64] = &[100, 500, 1000];
+const MAX_RETRIES: usize = 3;
 
 /// Client for ev-node's Connect RPC StoreService.
 ///
@@ -116,7 +117,7 @@ impl EvnodeClient {
     /// * `evnode_url` — Base URL of the ev-node Connect RPC service (e.g., `http://localhost:7331`)
     pub fn new(evnode_url: &str) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(2))
             .build()
             .expect("failed to create HTTP client");
 
@@ -147,21 +148,21 @@ impl EvnodeClient {
             match self.do_request(&url, height).await {
                 Ok((h, d)) => return Ok((h, d)),
                 Err(e) => {
-                    let delay = RETRY_DELAYS
+                    let delay_ms = RETRY_DELAYS_MS
                         .get(attempt)
                         .copied()
-                        .unwrap_or(*RETRY_DELAYS.last().unwrap());
+                        .unwrap_or(*RETRY_DELAYS_MS.last().unwrap());
 
                     tracing::warn!(
-                        "ev-node GetBlock failed for height {} (attempt {}): {}. Retrying in {}s",
+                        "ev-node GetBlock failed for height {} (attempt {}): {}. Retrying in {}ms",
                         height,
                         attempt + 1,
                         e,
-                        delay,
+                        delay_ms,
                     );
 
                     last_error = Some(e);
-                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 }
             }
         }

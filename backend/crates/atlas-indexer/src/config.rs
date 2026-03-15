@@ -66,7 +66,7 @@ impl Config {
                 .context("Invalid RPC_BATCH_SIZE")?,
             evnode_url: env::var("EVNODE_URL").ok(),
             da_worker_concurrency: env::var("DA_WORKER_CONCURRENCY")
-                .unwrap_or_else(|_| "10".to_string())
+                .unwrap_or_else(|_| "50".to_string())
                 .parse()
                 .context("Invalid DA_WORKER_CONCURRENCY")?,
         })
