@@ -10,11 +10,8 @@ pub mod status;
 pub mod tokens;
 pub mod transactions;
 
-use atlas_common::Block;
+use atlas_common::{Block, BLOCK_COLUMNS};
 use sqlx::PgPool;
-
-const BLOCK_COLUMNS: &str =
-    "number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at";
 
 pub async fn get_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Error> {
     sqlx::query_as(&format!(

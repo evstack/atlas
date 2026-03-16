@@ -58,7 +58,7 @@ pub async fn block_events(State(state): State<Arc<AppState>>) -> Sse<SseStream> 
                 let snapshot = head_tracker.replay_after(Some(cursor)).await;
 
                 if let Some(buffer_start) = snapshot.buffer_start {
-                    if cursor < buffer_start.saturating_sub(1) {
+                    if cursor + 1 < buffer_start {
                         warn!(
                             last_seen = cursor,
                             buffer_start,

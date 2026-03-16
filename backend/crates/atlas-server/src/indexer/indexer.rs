@@ -643,7 +643,7 @@ impl Indexer {
         }
 
         let mut pg_tx = copy_client.transaction().await?;
-        let indexed_at: DateTime<Utc> = pg_tx.query_one("SELECT NOW()", &[]).await?.get(0);
+        let indexed_at: DateTime<Utc> = Utc::now();
         let committed_blocks = update_watermark.then(|| batch.materialize_blocks(indexed_at));
 
         copy_blocks(&mut pg_tx, &batch, indexed_at).await?;
@@ -804,7 +804,7 @@ impl Indexer {
         pg_tx.commit().await?;
 
         if update_watermark {
-            if let Some(blocks) = committed_blocks.as_ref() {
+            if let Some(blocks) = committed_blocks {
                 self.head_tracker.publish_committed_batch(blocks).await;
             }
             // Notify SSE subscribers only after the batch commit is visible.

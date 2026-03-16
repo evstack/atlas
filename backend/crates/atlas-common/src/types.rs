@@ -226,6 +226,10 @@ pub struct ContractAbi {
     pub verified_at: DateTime<Utc>,
 }
 
+/// SQL column list for the `blocks` table, matching the field order in [`Block`].
+pub const BLOCK_COLUMNS: &str =
+    "number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at";
+
 /// Pagination parameters
 #[derive(Debug, Clone, Deserialize)]
 pub struct Pagination {

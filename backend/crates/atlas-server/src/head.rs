@@ -1,11 +1,8 @@
-use atlas_common::Block;
+use atlas_common::{Block, BLOCK_COLUMNS};
 use sqlx::PgPool;
 use std::collections::VecDeque;
 use tokio::sync::RwLock;
-use tracing::warn;
-
-const BLOCK_COLUMNS: &str =
-    "number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at";
+use tracing::{info, warn};
 
 pub(crate) struct HeadTracker {
     replay_capacity: usize,
@@ -39,6 +36,11 @@ impl HeadTracker {
         blocks.reverse();
 
         let latest = blocks.last().cloned();
+        info!(
+            loaded = blocks.len(),
+            head = latest.as_ref().map(|b| b.number),
+            "head tracker bootstrapped from DB"
+        );
         let replay = VecDeque::from(blocks);
 
         Ok(Self {
@@ -59,7 +61,7 @@ impl HeadTracker {
         *state = HeadState::default();
     }
 
-    pub(crate) async fn publish_committed_batch(&self, blocks: &[Block]) {
+    pub(crate) async fn publish_committed_batch(&self, blocks: Vec<Block>) {
         if blocks.is_empty() {
             return;
         }
@@ -77,9 +79,9 @@ impl HeadTracker {
                 continue;
             }
 
-            state.latest = Some(block.clone());
-            state.replay.push_back(block.clone());
             latest_number = Some(block.number);
+            state.latest = Some(block.clone());
+            state.replay.push_back(block);
         }
 
         while state.replay.len() > self.replay_capacity {
@@ -94,12 +96,22 @@ impl HeadTracker {
     pub(crate) async fn replay_after(&self, after_block: Option<i64>) -> ReplaySnapshot {
         let state = self.state.read().await;
 
-        let blocks_after_cursor = state
-            .replay
-            .iter()
-            .filter(|block| after_block.is_none_or(|cursor| block.number > cursor))
-            .cloned()
-            .collect();
+        let blocks_after_cursor = match after_block {
+            None => state.replay.iter().cloned().collect(),
+            Some(cursor) => {
+                // The replay deque is sorted by block number. Binary search on
+                // each contiguous slice to skip past blocks <= cursor.
+                let (head, tail) = state.replay.as_slices();
+                let mut out = Vec::new();
+                for slc in [head, tail] {
+                    let start = slc.partition_point(|b| b.number <= cursor);
+                    if start < slc.len() {
+                        out.extend_from_slice(&slc[start..]);
+                    }
+                }
+                out
+            }
+        };
 
         ReplaySnapshot {
             buffer_start: state.replay.front().map(|block| block.number),
@@ -131,7 +143,7 @@ mod tests {
     async fn replay_after_returns_full_buffer_for_empty_cursor() {
         let tracker = HeadTracker::empty(3);
         tracker
-            .publish_committed_batch(&[sample_block(10), sample_block(11)])
+            .publish_committed_batch(vec![sample_block(10), sample_block(11)])
             .await;
 
         let snapshot = tracker.replay_after(None).await;
@@ -150,7 +162,7 @@ mod tests {
     async fn publish_committed_batch_trims_oldest_blocks() {
         let tracker = HeadTracker::empty(2);
         tracker
-            .publish_committed_batch(&[sample_block(10), sample_block(11), sample_block(12)])
+            .publish_committed_batch(vec![sample_block(10), sample_block(11), sample_block(12)])
             .await;
 
         let snapshot = tracker.replay_after(None).await;
@@ -167,9 +179,11 @@ mod tests {
     #[tokio::test]
     async fn publish_committed_batch_ignores_non_advancing_blocks() {
         let tracker = HeadTracker::empty(3);
-        tracker.publish_committed_batch(&[sample_block(10)]).await;
         tracker
-            .publish_committed_batch(&[sample_block(9), sample_block(10)])
+            .publish_committed_batch(vec![sample_block(10)])
+            .await;
+        tracker
+            .publish_committed_batch(vec![sample_block(9), sample_block(10)])
             .await;
 
         let snapshot = tracker.replay_after(None).await;
