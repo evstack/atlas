@@ -63,10 +63,8 @@ async fn main() -> Result<()> {
     let metadata_config = config.clone();
     tokio::spawn(async move {
         if let Err(e) = run_with_retry(|| async {
-            let fetcher = indexer::MetadataFetcher::new(
-                metadata_pool.clone(),
-                metadata_config.clone(),
-            )?;
+            let fetcher =
+                indexer::MetadataFetcher::new(metadata_pool.clone(), metadata_config.clone())?;
             fetcher.run().await
         })
         .await

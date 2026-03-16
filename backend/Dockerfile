@@ -22,3 +22,8 @@ COPY --from=builder /app/target/release/atlas-server /usr/local/bin/
 
 EXPOSE 3000
 CMD ["atlas-server"]
+
+# Backward-compatible target names for CI jobs that still build the old images.
+FROM server AS api
+
+FROM server AS indexer

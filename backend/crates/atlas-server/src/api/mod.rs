@@ -1,10 +1,7 @@
 pub mod error;
 pub mod handlers;
 
-use axum::{
-    routing::get,
-    Router,
-};
+use axum::{routing::get, Router};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;

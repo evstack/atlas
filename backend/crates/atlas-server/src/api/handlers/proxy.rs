@@ -234,7 +234,6 @@ pub async fn list_proxies(
     )))
 }
 
-
 fn normalize_address(address: &str) -> String {
     if address.starts_with("0x") {
         address.to_lowercase()

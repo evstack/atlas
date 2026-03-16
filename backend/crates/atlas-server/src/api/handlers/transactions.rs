@@ -4,8 +4,8 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::api::error::ApiResult;
 use super::get_table_count;
+use crate::api::error::ApiResult;
 use crate::api::AppState;
 use atlas_common::{
     AtlasError, Erc20Transfer, NftTransfer, PaginatedResponse, Pagination, Transaction,
