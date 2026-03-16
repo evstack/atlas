@@ -36,8 +36,8 @@ impl Config {
             .unwrap_or_else(|_| "4096".to_string())
             .parse()
             .context("Invalid SSE_REPLAY_BUFFER_BLOCKS")?;
-        if sse_replay_buffer_blocks == 0 {
-            bail!("SSE_REPLAY_BUFFER_BLOCKS must be greater than 0");
+        if sse_replay_buffer_blocks == 0 || sse_replay_buffer_blocks > 100_000 {
+            bail!("SSE_REPLAY_BUFFER_BLOCKS must be between 1 and 100000");
         }
 
         Ok(Self {

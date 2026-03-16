@@ -3,7 +3,6 @@ use serde::Serialize;
 use std::sync::Arc;
 
 use crate::api::error::ApiResult;
-use crate::api::handlers::get_latest_block;
 use crate::api::AppState;
 
 #[derive(Serialize)]
@@ -23,10 +22,17 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Ch
         }));
     }
 
-    if let Some(block) = get_latest_block(&state.pool).await? {
+    // Fallback: single key-value lookup from indexer_state (sub-ms, avoids blocks table)
+    let row: Option<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT value, updated_at FROM indexer_state WHERE key = 'last_indexed_block'",
+    )
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if let Some((value, updated_at)) = row {
         return Ok(Json(ChainStatus {
-            block_height: block.number,
-            indexed_at: Some(block.indexed_at.to_rfc3339()),
+            block_height: value.parse().unwrap_or(0),
+            indexed_at: Some(updated_at.to_rfc3339()),
         }));
     }
 

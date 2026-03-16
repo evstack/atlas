@@ -54,30 +54,28 @@ pub async fn block_events(State(state): State<Arc<AppState>>) -> Sse<SseStream> 
         }
 
         while let Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) = rx.recv().await {
-            if let Some(cursor) = last_block_number {
-                let snapshot = head_tracker.replay_after(Some(cursor)).await;
+            let snapshot = head_tracker.replay_after(last_block_number).await;
 
-                if let Some(buffer_start) = snapshot.buffer_start {
-                    if cursor + 1 < buffer_start {
-                        warn!(
-                            last_seen = cursor,
-                            buffer_start,
-                            buffer_end = ?snapshot.buffer_end,
-                            "sse head-only: client fell behind replay tail; closing stream for canonical refetch"
-                        );
-                        break;
+            if let (Some(cursor), Some(buffer_start)) = (last_block_number, snapshot.buffer_start) {
+                if cursor + 1 < buffer_start {
+                    warn!(
+                        last_seen = cursor,
+                        buffer_start,
+                        buffer_end = ?snapshot.buffer_end,
+                        "sse head-only: client fell behind replay tail; closing stream for canonical refetch"
+                    );
+                    break;
+                }
+            }
+
+            if !snapshot.blocks_after_cursor.is_empty() {
+                for block in snapshot.blocks_after_cursor {
+                    last_block_number = Some(block.number);
+                    if let Some(event) = block_to_event(block) {
+                        yield Ok(event);
                     }
                 }
-
-                if !snapshot.blocks_after_cursor.is_empty() {
-                    for block in snapshot.blocks_after_cursor {
-                        last_block_number = Some(block.number);
-                        if let Some(event) = block_to_event(block) {
-                            yield Ok(event);
-                        }
-                    }
-                    continue;
-                }
+                continue;
             }
 
             match head_tracker.latest().await {

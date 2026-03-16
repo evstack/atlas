@@ -196,4 +196,20 @@ mod tests {
         assert_eq!(numbers, vec![10]);
         assert_eq!(tracker.latest().await.unwrap().number, 10);
     }
+
+    #[tokio::test]
+    async fn clear_resets_state_to_empty() {
+        let tracker = HeadTracker::empty(3);
+        tracker
+            .publish_committed_batch(vec![sample_block(10)])
+            .await;
+        assert!(tracker.latest().await.is_some());
+
+        tracker.clear().await;
+
+        assert!(tracker.latest().await.is_none());
+        let snapshot = tracker.replay_after(None).await;
+        assert!(snapshot.blocks_after_cursor.is_empty());
+        assert!(snapshot.buffer_start.is_none());
+    }
 }
