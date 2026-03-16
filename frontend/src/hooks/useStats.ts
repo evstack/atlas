@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { getTotals, getDailyTxCount, type Totals } from '../api/stats';
-import useLatestBlockHeight from './useLatestBlockHeight';
+import { BlockStatsContext } from '../context/BlockStatsContext';
 
 export default function useStats() {
   const [totals, setTotals] = useState<Totals | null>(null);
   const [dailyTx, setDailyTx] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { bps } = useLatestBlockHeight(4000);
+  const { bps } = useContext(BlockStatsContext);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
