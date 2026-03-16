@@ -1,7 +1,6 @@
 pub mod error;
 pub mod handlers;
 
-use atlas_common::Block;
 use axum::{routing::get, Router};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -13,7 +12,7 @@ use tower_http::trace::TraceLayer;
 
 pub struct AppState {
     pub pool: PgPool,
-    pub block_events_tx: broadcast::Sender<Block>,
+    pub block_events_tx: broadcast::Sender<()>,
     pub rpc_url: String,
 }
 

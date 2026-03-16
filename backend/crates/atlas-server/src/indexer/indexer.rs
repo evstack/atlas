@@ -2,9 +2,7 @@ use alloy::primitives::U256;
 use alloy::providers::RootProvider;
 use alloy::rpc::types::TransactionReceipt;
 use anyhow::Result;
-use atlas_common::Block as LiveBlock;
 use bigdecimal::BigDecimal;
-use chrono::Utc;
 use governor::{Quota, RateLimiter};
 use sqlx::PgPool;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -41,15 +39,11 @@ pub struct Indexer {
     /// Used to avoid checking pg_class on every batch
     current_max_partition: std::sync::atomic::AtomicU64,
     /// Broadcast channel to notify SSE subscribers of new blocks
-    block_events_tx: broadcast::Sender<LiveBlock>,
+    block_events_tx: broadcast::Sender<()>,
 }
 
 impl Indexer {
-    pub fn new(
-        pool: PgPool,
-        config: Config,
-        block_events_tx: broadcast::Sender<LiveBlock>,
-    ) -> Self {
+    pub fn new(pool: PgPool, config: Config, block_events_tx: broadcast::Sender<()>) -> Self {
         Self {
             pool,
             config,
@@ -250,9 +244,7 @@ impl Indexer {
 
                         // Collect consecutive blocks in order (sync, no await)
                         while let Some(data) = buffer.remove(&next_to_process) {
-                            let live_block = Self::live_block_from_fetched(&data);
                             Self::collect_block(&mut batch, &known_erc20, &known_nft, data);
-                            let _ = self.block_events_tx.send(live_block);
                             next_to_process += 1;
                         }
                     }
@@ -322,7 +314,6 @@ impl Indexer {
                         match results.into_iter().next() {
                             Some(FetchResult::Success(fetched)) => {
                                 // Write retried block immediately
-                                let live_block = Self::live_block_from_fetched(&fetched);
                                 let mut mini_batch = BlockBatch::new();
                                 Self::collect_block(
                                     &mut mini_batch,
@@ -335,7 +326,6 @@ impl Indexer {
                                 // Don't update the watermark — the main batch already wrote
                                 // a higher last_indexed_block; overwriting it with this
                                 // block's lower number would cause a regression on restart.
-                                let _ = self.block_events_tx.send(live_block);
                                 self.write_batch(&mut copy_client, mini_batch, false)
                                     .await?;
                                 known_erc20.extend(new_erc20);
@@ -626,19 +616,6 @@ impl Indexer {
         batch.last_block = block_num;
     }
 
-    fn live_block_from_fetched(fetched: &FetchedBlock) -> LiveBlock {
-        LiveBlock {
-            number: fetched.number as i64,
-            hash: format!("{:?}", fetched.block.header.hash),
-            parent_hash: format!("{:?}", fetched.block.header.parent_hash),
-            timestamp: fetched.block.header.timestamp as i64,
-            gas_used: fetched.block.header.gas_used as i64,
-            gas_limit: fetched.block.header.gas_limit as i64,
-            transaction_count: fetched.block.transactions.len() as i32,
-            indexed_at: Utc::now(),
-        }
-    }
-
     // -----------------------------------------------------------------------
     // write_batch — one DB transaction, one UNNEST query per table.
     // For a batch of N blocks this is ~11 round-trips regardless of N.
@@ -812,6 +789,11 @@ impl Indexer {
         }
 
         pg_tx.commit().await?;
+
+        if update_watermark {
+            // Notify SSE subscribers only after the batch commit is visible.
+            let _ = self.block_events_tx.send(());
+        }
 
         Ok(())
     }
@@ -1338,18 +1320,5 @@ mod tests {
         let contract = "0x4444444444444444444444444444444444444444".to_string();
         let state = &batch.nft_token_map[&(contract, "42".to_string())];
         assert_eq!(state.owner, "0x3333333333333333333333333333333333333333");
-    }
-
-    #[test]
-    fn live_block_from_fetched_maps_block_metadata() {
-        let fetched = empty_fetched_block(42);
-
-        let live = Indexer::live_block_from_fetched(&fetched);
-
-        assert_eq!(live.number, 42);
-        assert_eq!(live.transaction_count, 0);
-        assert_eq!(live.timestamp, 0);
-        assert_eq!(live.gas_used, 0);
-        assert_eq!(live.gas_limit, 0);
     }
 }

@@ -24,8 +24,8 @@ struct NewBlockEvent {
 }
 
 /// GET /api/events — Server-Sent Events stream for live block updates.
-/// Seeds from the latest indexed block, then streams live in-process blocks.
-/// If a subscriber lags and drops broadcast messages, it backfills from the DB.
+/// Seeds from the latest indexed block, then requeries the DB for blocks added
+/// after that point whenever the shared notification fanout emits a wake-up.
 pub async fn block_events(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
@@ -47,51 +47,35 @@ pub async fn block_events(
             Err(e) => warn!(error = ?e, "sse: failed to fetch initial block"),
         }
 
-        loop {
-            match rx.recv().await {
-                Ok(block) => {
-                    if last_block_number.is_some_and(|last| block.number <= last) {
-                        continue;
-                    }
+        while let Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) = rx.recv().await {
+            let mut cursor = last_block_number;
 
-                    last_block_number = Some(block.number);
-                    if let Some(event) = block_to_event(block) {
-                        yield Ok(event);
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    warn!(skipped, cursor = ?last_block_number, "sse: lagged on live block stream, backfilling from db");
-                    let mut cursor = last_block_number;
+            loop {
+                match fetch_blocks_after(&pool, cursor).await {
+                    Ok(blocks) => {
+                        if blocks.is_empty() {
+                            break;
+                        }
 
-                    loop {
-                        match fetch_blocks_after(&pool, cursor).await {
-                            Ok(blocks) => {
-                                if blocks.is_empty() {
-                                    break;
-                                }
-
-                                let batch_len = blocks.len();
-                                for block in blocks {
-                                    let block_number = block.number;
-                                    last_block_number = Some(block_number);
-                                    cursor = Some(block_number);
-                                    if let Some(event) = block_to_event(block) {
-                                        yield Ok(event);
-                                    }
-                                }
-
-                                if batch_len < FETCH_BATCH_SIZE as usize {
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                warn!(error = ?e, cursor = ?last_block_number, "sse: failed to backfill blocks after lag");
-                                break;
+                        let batch_len = blocks.len();
+                        for block in blocks {
+                            let block_number = block.number;
+                            last_block_number = Some(block_number);
+                            cursor = Some(block_number);
+                            if let Some(event) = block_to_event(block) {
+                                yield Ok(event);
                             }
                         }
+
+                        if batch_len < FETCH_BATCH_SIZE as usize {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = ?e, cursor = ?last_block_number, "sse: failed to fetch blocks after wake-up");
+                        break;
                     }
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     };
@@ -125,11 +109,10 @@ async fn fetch_blocks_after(pool: &PgPool, cursor: Option<i64>) -> Result<Vec<Bl
 }
 
 fn block_to_event(block: Block) -> Option<Event> {
-    let block_id = block.number.to_string();
     let event = NewBlockEvent { block };
     serde_json::to_string(&event)
         .ok()
-        .map(|json| Event::default().event("new_block").id(block_id).data(json))
+        .map(|json| Event::default().event("new_block").data(json))
 }
 
 #[cfg(test)]
