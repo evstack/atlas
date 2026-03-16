@@ -5,6 +5,7 @@ use axum::{
 use futures::stream::Stream;
 use serde::Serialize;
 use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -16,69 +17,91 @@ use tracing::warn;
 
 const BLOCK_COLUMNS: &str =
     "number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at";
-const FETCH_BATCH_SIZE: i64 = 256;
+type SseStream = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
 
 #[derive(Serialize, Debug)]
 struct NewBlockEvent {
     block: Block,
 }
 
-/// GET /api/events — Server-Sent Events stream for live block updates.
-/// Seeds from the latest indexed block, then requeries the DB for blocks added
-/// after that point whenever the shared notification fanout emits a wake-up.
-pub async fn block_events(
-    State(state): State<Arc<AppState>>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+/// GET /api/events — Server-Sent Events stream for live committed block updates.
+/// New connections receive only the current latest block and then stream
+/// forward from in-memory committed head state. Historical catch-up stays on
+/// the canonical block endpoints.
+pub async fn block_events(State(state): State<Arc<AppState>>) -> Sse<SseStream> {
     let pool = state.pool.clone();
+    let head_tracker = state.head_tracker.clone();
     let mut rx = state.block_events_tx.subscribe();
 
     let stream = async_stream::stream! {
         let mut last_block_number: Option<i64> = None;
 
-        match fetch_latest_block(&pool).await {
-            Ok(Some(block)) => {
-                let block_number = block.number;
-                last_block_number = Some(block_number);
+        match head_tracker.latest().await {
+            Some(block) => {
+                last_block_number = Some(block.number);
                 if let Some(event) = block_to_event(block) {
                     yield Ok(event);
                 }
             }
-            Ok(None) => {}
-            Err(e) => warn!(error = ?e, "sse: failed to fetch initial block"),
+            None => match fetch_latest_block(&pool).await {
+                Ok(Some(block)) => {
+                    last_block_number = Some(block.number);
+                    if let Some(event) = block_to_event(block) {
+                        yield Ok(event);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => warn!(error = ?e, "sse: failed to fetch initial block"),
+            },
         }
 
         while let Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) = rx.recv().await {
-            let mut cursor = last_block_number;
+            if let Some(cursor) = last_block_number {
+                let snapshot = head_tracker.replay_after(Some(cursor)).await;
 
-            loop {
-                match fetch_blocks_after(&pool, cursor).await {
-                    Ok(blocks) => {
-                        if blocks.is_empty() {
-                            break;
-                        }
-
-                        let batch_len = blocks.len();
-                        for block in blocks {
-                            let block_number = block.number;
-                            last_block_number = Some(block_number);
-                            cursor = Some(block_number);
-                            if let Some(event) = block_to_event(block) {
-                                yield Ok(event);
-                            }
-                        }
-
-                        if batch_len < FETCH_BATCH_SIZE as usize {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        warn!(error = ?e, cursor = ?last_block_number, "sse: failed to fetch blocks after wake-up");
+                if let Some(buffer_start) = snapshot.buffer_start {
+                    if cursor < buffer_start.saturating_sub(1) {
+                        warn!(
+                            last_seen = cursor,
+                            buffer_start,
+                            buffer_end = ?snapshot.buffer_end,
+                            "sse head-only: client fell behind replay tail; closing stream for canonical refetch"
+                        );
                         break;
                     }
                 }
+
+                if !snapshot.blocks_after_cursor.is_empty() {
+                    for block in snapshot.blocks_after_cursor {
+                        last_block_number = Some(block.number);
+                        if let Some(event) = block_to_event(block) {
+                            yield Ok(event);
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            match head_tracker.latest().await {
+                Some(block) if last_block_number.is_none_or(|last_seen| block.number > last_seen) => {
+                    last_block_number = Some(block.number);
+                    if let Some(event) = block_to_event(block) {
+                        yield Ok(event);
+                    }
+                }
+                Some(_) | None => {}
             }
         }
     };
+
+    sse_response(stream)
+}
+
+fn sse_response<S>(stream: S) -> Sse<SseStream>
+where
+    S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
+{
+    let stream: SseStream = Box::pin(stream);
 
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
@@ -93,18 +116,6 @@ async fn fetch_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Error>
         BLOCK_COLUMNS
     ))
     .fetch_optional(pool)
-    .await
-}
-
-async fn fetch_blocks_after(pool: &PgPool, cursor: Option<i64>) -> Result<Vec<Block>, sqlx::Error> {
-    let lower_bound = cursor.unwrap_or(-1);
-
-    sqlx::query_as(&format!(
-        "SELECT {} FROM blocks WHERE number > $1 ORDER BY number ASC LIMIT {}",
-        BLOCK_COLUMNS, FETCH_BATCH_SIZE
-    ))
-    .bind(lower_bound)
-    .fetch_all(pool)
     .await
 }
 

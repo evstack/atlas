@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use tokio::pin;
 use tokio_postgres::{
     binary_copy::BinaryCopyInWriter,
@@ -8,7 +9,11 @@ use tokio_postgres::{
 
 use super::batch::BlockBatch;
 
-pub async fn copy_blocks(tx: &mut Transaction<'_>, batch: &BlockBatch) -> Result<()> {
+pub async fn copy_blocks(
+    tx: &mut Transaction<'_>,
+    batch: &BlockBatch,
+    indexed_at: DateTime<Utc>,
+) -> Result<()> {
     if batch.b_numbers.is_empty() {
         return Ok(());
     }
@@ -21,7 +26,8 @@ pub async fn copy_blocks(tx: &mut Transaction<'_>, batch: &BlockBatch) -> Result
             timestamp BIGINT,
             gas_used BIGINT,
             gas_limit BIGINT,
-            transaction_count INT
+            transaction_count INT,
+            indexed_at TIMESTAMPTZ
         ) ON COMMIT DELETE ROWS;
         TRUNCATE tmp_blocks;",
     )
@@ -29,7 +35,7 @@ pub async fn copy_blocks(tx: &mut Transaction<'_>, batch: &BlockBatch) -> Result
 
     let sink = tx
         .copy_in(
-            "COPY tmp_blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count) FROM STDIN BINARY",
+            "COPY tmp_blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at) FROM STDIN BINARY",
         )
         .await?;
     let writer = BinaryCopyInWriter::new(
@@ -42,12 +48,13 @@ pub async fn copy_blocks(tx: &mut Transaction<'_>, batch: &BlockBatch) -> Result
             Type::INT8,
             Type::INT8,
             Type::INT4,
+            Type::TIMESTAMPTZ,
         ],
     );
     pin!(writer);
 
     for i in 0..batch.b_numbers.len() {
-        let row: [&(dyn ToSql + Sync); 7] = [
+        let row: [&(dyn ToSql + Sync); 8] = [
             &batch.b_numbers[i],
             &batch.b_hashes[i],
             &batch.b_parent_hashes[i],
@@ -55,6 +62,7 @@ pub async fn copy_blocks(tx: &mut Transaction<'_>, batch: &BlockBatch) -> Result
             &batch.b_gas_used[i],
             &batch.b_gas_limits[i],
             &batch.b_tx_counts[i],
+            &indexed_at,
         ];
         writer.as_mut().write(&row).await?;
     }
@@ -62,8 +70,8 @@ pub async fn copy_blocks(tx: &mut Transaction<'_>, batch: &BlockBatch) -> Result
     writer.finish().await?;
 
     tx.execute(
-        "INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count)
-         SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count
+        "INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at)
+         SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
          FROM tmp_blocks
          ON CONFLICT (number) DO UPDATE SET
             hash = EXCLUDED.hash,
@@ -72,7 +80,7 @@ pub async fn copy_blocks(tx: &mut Transaction<'_>, batch: &BlockBatch) -> Result
             gas_used = EXCLUDED.gas_used,
             gas_limit = EXCLUDED.gas_limit,
             transaction_count = EXCLUDED.transaction_count,
-            indexed_at = NOW()",
+            indexed_at = EXCLUDED.indexed_at",
         &[],
     )
     .await?;

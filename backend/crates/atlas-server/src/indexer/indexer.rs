@@ -3,6 +3,7 @@ use alloy::providers::ProviderBuilder;
 use alloy::rpc::types::TransactionReceipt;
 use anyhow::Result;
 use bigdecimal::BigDecimal;
+use chrono::{DateTime, Utc};
 use governor::{Quota, RateLimiter};
 use sqlx::PgPool;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -23,6 +24,7 @@ use super::fetcher::{
     WorkItem,
 };
 use crate::config::Config;
+use crate::head::HeadTracker;
 
 /// Partition size: 10 million blocks per partition
 const PARTITION_SIZE: u64 = 10_000_000;
@@ -40,16 +42,24 @@ pub struct Indexer {
     current_max_partition: std::sync::atomic::AtomicU64,
     /// Broadcast channel to notify SSE subscribers of new blocks
     block_events_tx: broadcast::Sender<()>,
+    /// Shared in-memory tracker for the latest committed head and replay tail
+    head_tracker: Arc<HeadTracker>,
 }
 
 impl Indexer {
-    pub fn new(pool: PgPool, config: Config, block_events_tx: broadcast::Sender<()>) -> Self {
+    pub fn new(
+        pool: PgPool,
+        config: Config,
+        block_events_tx: broadcast::Sender<()>,
+        head_tracker: Arc<HeadTracker>,
+    ) -> Self {
         Self {
             pool,
             config,
             // Will be initialized on first run based on start block
             current_max_partition: std::sync::atomic::AtomicU64::new(0),
             block_events_tx,
+            head_tracker,
         }
     }
 
@@ -102,6 +112,7 @@ impl Indexer {
         // Handle reindex flag
         if self.config.reindex {
             tracing::warn!("Reindex flag set - truncating all tables");
+            self.head_tracker.clear().await;
             self.truncate_tables().await?;
         }
 
@@ -632,8 +643,10 @@ impl Indexer {
         }
 
         let mut pg_tx = copy_client.transaction().await?;
+        let indexed_at: DateTime<Utc> = pg_tx.query_one("SELECT NOW()", &[]).await?.get(0);
+        let committed_blocks = update_watermark.then(|| batch.materialize_blocks(indexed_at));
 
-        copy_blocks(&mut pg_tx, &batch).await?;
+        copy_blocks(&mut pg_tx, &batch, indexed_at).await?;
         copy_transactions(&mut pg_tx, &batch).await?;
         copy_event_logs(&mut pg_tx, &batch).await?;
         copy_nft_transfers(&mut pg_tx, &batch).await?;
@@ -781,9 +794,9 @@ impl Indexer {
             pg_tx
                 .execute(
                     "INSERT INTO indexer_state (key, value, updated_at)
-                 VALUES ('last_indexed_block', $1, NOW())
-                 ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
-                    &[&last_value],
+                 VALUES ('last_indexed_block', $1, $2)
+                 ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = $2",
+                    &[&last_value, &indexed_at],
                 )
                 .await?;
         }
@@ -791,6 +804,9 @@ impl Indexer {
         pg_tx.commit().await?;
 
         if update_watermark {
+            if let Some(blocks) = committed_blocks.as_ref() {
+                self.head_tracker.publish_committed_batch(blocks).await;
+            }
             // Notify SSE subscribers only after the batch commit is visible.
             let _ = self.block_events_tx.send(());
         }

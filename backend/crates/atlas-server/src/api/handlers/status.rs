@@ -14,6 +14,13 @@ pub struct ChainStatus {
 /// GET /api/status - Lightweight endpoint for current chain status
 /// Returns in <1ms, optimized for frequent polling
 pub async fn get_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<ChainStatus>> {
+    if let Some(block) = state.head_tracker.latest().await {
+        return Ok(Json(ChainStatus {
+            block_height: block.number,
+            indexed_at: block.indexed_at.to_rfc3339(),
+        }));
+    }
+
     let result: (String, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
         "SELECT value, updated_at FROM indexer_state WHERE key = 'last_indexed_block'",
     )

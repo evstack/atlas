@@ -73,9 +73,9 @@ export default function useBlockSSE(): BlockSSEState {
   const [error, setError] = useState<string | null>(null);
   const [bps, setBps] = useState<number | null>(null);
   const esRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
   const queueRef = useRef<QueuedBlock[]>([]);
   const drainTimerRef = useRef<number | null>(null);
+  const drainOneRef = useRef<(() => void) | null>(null);
   const lastDrainAtRef = useRef<number>(0);
   // Rolling window of (blockNumber, blockTimestamp) for chain-rate calculation.
   // We keep up to 500 samples (~45s at 11 bps) and use two windows:
@@ -115,7 +115,7 @@ export default function useBlockSSE(): BlockSSEState {
       delay = Math.max(delay, burstLeadIn);
     }
 
-    drainTimerRef.current = window.setTimeout(drainOne, delay);
+    drainTimerRef.current = window.setTimeout(() => drainOneRef.current?.(), delay);
   }, []);
 
   // Kick the drain loop when new items arrive.
@@ -173,22 +173,15 @@ export default function useBlockSSE(): BlockSSEState {
 
     es.onerror = (e) => {
       setConnected(false);
-      setError(`SSE ${e.type || 'error'}; retrying`);
-      es.close();
-      esRef.current = null;
-
-      if (reconnectTimeoutRef.current !== null) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      reconnectTimeoutRef.current = window.setTimeout(() => {
-        reconnectTimeoutRef.current = null;
-        connectSSE();
-      }, 2000);
+      // Preserve the browser-managed EventSource reconnect path. The server's
+      // head-only stream resumes from the current live tail rather than replaying
+      // missed history; canonical catch-up stays on normal block/status fetches.
+      setError(`SSE ${e.type || 'error'}; reconnecting`);
     };
   }, [kickDrain]);
 
   // Drain one block from the queue at the chain's natural cadence.
-  function drainOne() {
+  const drainOne = useCallback(() => {
     const queue = queueRef.current;
     drainTimerRef.current = null;
 
@@ -210,7 +203,11 @@ export default function useBlockSSE(): BlockSSEState {
     if (queue.length > 0) {
       scheduleDrain(false);
     }
-  }
+  }, [scheduleDrain]);
+
+  useEffect(() => {
+    drainOneRef.current = drainOne;
+  }, [drainOne]);
 
   useEffect(() => {
     connect();
@@ -219,10 +216,6 @@ export default function useBlockSSE(): BlockSSEState {
       if (esRef.current) {
         esRef.current.close();
         esRef.current = null;
-      }
-      if (reconnectTimeoutRef.current !== null) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
       }
       if (drainTimerRef.current !== null) {
         clearTimeout(drainTimerRef.current);

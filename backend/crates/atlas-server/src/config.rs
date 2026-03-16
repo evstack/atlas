@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::env;
 
 #[derive(Debug, Clone)]
@@ -27,10 +27,19 @@ pub struct Config {
     // API-specific
     pub api_host: String,
     pub api_port: u16,
+    pub sse_replay_buffer_blocks: usize,
 }
 
 impl Config {
     pub fn from_env() -> Result<Self> {
+        let sse_replay_buffer_blocks: usize = env::var("SSE_REPLAY_BUFFER_BLOCKS")
+            .unwrap_or_else(|_| "4096".to_string())
+            .parse()
+            .context("Invalid SSE_REPLAY_BUFFER_BLOCKS")?;
+        if sse_replay_buffer_blocks == 0 {
+            bail!("SSE_REPLAY_BUFFER_BLOCKS must be greater than 0");
+        }
+
         Ok(Self {
             database_url: env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
             rpc_url: env::var("RPC_URL").context("RPC_URL must be set")?,
@@ -84,6 +93,7 @@ impl Config {
                 .unwrap_or_else(|_| "3000".to_string())
                 .parse()
                 .context("Invalid API_PORT")?,
+            sse_replay_buffer_blocks,
         })
     }
 }
