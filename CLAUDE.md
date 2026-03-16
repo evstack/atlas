@@ -42,7 +42,7 @@ atlas/
 ## Key Architectural Decisions
 
 ### Single binary
-The indexer and API run as concurrent tokio tasks in a single `atlas-server` binary. The indexer pushes block events directly to SSE subscribers via an in-process `broadcast::Sender<()>` — no PG NOTIFY or PgListener needed. If the indexer task fails, the API keeps running (graceful degradation); the indexer retries with exponential backoff.
+The indexer and API run as concurrent tokio tasks in a single `atlas-server` binary. The indexer pushes block events directly to SSE subscribers via an in-process `broadcast::Sender<()>`. If the indexer task fails, the API keeps running (graceful degradation); the indexer retries with exponential backoff.
 
 ### Database connection pools
 - **API pool**: 20 connections (configurable via `API_DB_MAX_CONNECTIONS`), `statement_timeout = '10s'`
@@ -51,7 +51,7 @@ The indexer and API run as concurrent tokio tasks in a single `atlas-server` bin
 - **Migrations**: run once with a dedicated 1-connection pool with **no** statement_timeout (index builds can take longer than 10s)
 
 ### SSE live updates
-The indexer's `write_batch` calls `broadcast::Sender::send(())` after each successful batch write. SSE handler (`GET /api/events`) subscribes to this broadcast channel and requeries the DB for new blocks. No PG NOTIFY involved.
+The indexer publishes block updates through `broadcast::Sender<()>`. SSE handler (`GET /api/events`) subscribes to this broadcast channel and refreshes independently of the database write path.
 
 ### Pagination — blocks table
 The blocks table can have 80M+ rows. `OFFSET` on large pages causes 30s+ full index scans. Instead:
@@ -113,7 +113,7 @@ Key vars (see `.env.example` for full list):
 | `BATCH_SIZE` | indexer | `100` |
 | `FETCH_WORKERS` | indexer | `10` |
 | `ADMIN_API_KEY` | API | none |
-| `API_HOST` | API | `0.0.0.0` |
+| `API_HOST` | API | `127.0.0.1` |
 | `API_PORT` | API | `3000` |
 
 ## Running Locally
