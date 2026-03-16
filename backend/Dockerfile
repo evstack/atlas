@@ -13,21 +13,12 @@ RUN cargo update wasip2 --precise 0.1.0 || true
 
 RUN cargo build --release
 
-# Indexer image
-FROM alpine:3.21 AS indexer
+# Server image
+FROM alpine:3.21 AS server
 
 RUN apk add --no-cache ca-certificates
 
-COPY --from=builder /app/target/release/atlas-indexer /usr/local/bin/
-
-CMD ["atlas-indexer"]
-
-# API image
-FROM alpine:3.21 AS api
-
-RUN apk add --no-cache ca-certificates
-
-COPY --from=builder /app/target/release/atlas-api /usr/local/bin/
+COPY --from=builder /app/target/release/atlas-server /usr/local/bin/
 
 EXPOSE 3000
-CMD ["atlas-api"]
+CMD ["atlas-server"]

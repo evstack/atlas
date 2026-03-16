@@ -2,8 +2,7 @@
 resolver = "2"
 members = [
     "crates/atlas-common",
-    "crates/atlas-indexer",
-    "crates/atlas-api",
+    "crates/atlas-server",
 ]
 
 [workspace.package]

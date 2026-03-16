@@ -10,21 +10,19 @@ use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio_postgres::{types::ToSql, Client, NoTls};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
-use crate::batch::{BlockBatch, NftTokenState};
-use crate::config::Config;
-use crate::copy::{
+use super::batch::{BlockBatch, NftTokenState};
+use super::copy::{
     copy_blocks, copy_erc20_transfers, copy_event_logs, copy_nft_transfers, copy_transactions,
 };
-use crate::fetcher::{
+use super::fetcher::{
     fetch_blocks_batch, get_block_number_with_retry, FetchResult, FetchedBlock, SharedRateLimiter,
     WorkItem,
 };
-
-const BLOCK_EVENT_CHANNEL: &str = "atlas_new_blocks";
+use crate::config::Config;
 
 /// Partition size: 10 million blocks per partition
 const PARTITION_SIZE: u64 = 10_000_000;
@@ -40,15 +38,18 @@ pub struct Indexer {
     /// Tracks the maximum partition number that has been created
     /// Used to avoid checking pg_class on every batch
     current_max_partition: std::sync::atomic::AtomicU64,
+    /// Broadcast channel to notify SSE subscribers of new blocks
+    block_events_tx: broadcast::Sender<()>,
 }
 
 impl Indexer {
-    pub fn new(pool: PgPool, config: Config) -> Self {
+    pub fn new(pool: PgPool, config: Config, block_events_tx: broadcast::Sender<()>) -> Self {
         Self {
             pool,
             config,
             // Will be initialized on first run based on start block
             current_max_partition: std::sync::atomic::AtomicU64::new(0),
+            block_events_tx,
         }
     }
 
@@ -785,12 +786,8 @@ impl Indexer {
                     &[&last_value],
                 )
                 .await?;
-            pg_tx
-                .execute(
-                    "SELECT pg_notify($1, $2)",
-                    &[&BLOCK_EVENT_CHANNEL, &last_value],
-                )
-                .await?;
+            // Notify SSE subscribers directly via in-process broadcast
+            let _ = self.block_events_tx.send(());
         }
 
         pg_tx.commit().await?;

@@ -8,16 +8,14 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tokio::time::sleep;
 
-use crate::AppState;
+use crate::api::AppState;
 use atlas_common::Block;
-use sqlx::{postgres::PgListener, PgPool};
+use sqlx::PgPool;
 use tracing::warn;
 
 const BLOCK_COLUMNS: &str =
     "number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at";
-const BLOCK_EVENT_CHANNEL: &str = "atlas_new_blocks";
 const FETCH_BATCH_SIZE: i64 = 256;
 
 #[derive(Serialize, Debug)]
@@ -87,46 +85,6 @@ pub async fn block_events(
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
     )
-}
-
-pub async fn run_block_event_fanout(
-    database_url: String,
-    _pool: PgPool,
-    tx: broadcast::Sender<()>,
-) {
-    loop {
-        let mut listener = match PgListener::connect(&database_url).await {
-            Ok(listener) => listener,
-            Err(e) => {
-                warn!(error = ?e, "sse: failed to connect Postgres listener");
-                sleep(Duration::from_secs(1)).await;
-                continue;
-            }
-        };
-
-        if let Err(e) = listener.listen(BLOCK_EVENT_CHANNEL).await {
-            warn!(error = ?e, channel = BLOCK_EVENT_CHANNEL, "sse: failed to LISTEN for block notifications");
-            sleep(Duration::from_secs(1)).await;
-            continue;
-        }
-
-        // Wake all subscribers once after reconnect so they can requery the DB.
-        let _ = tx.send(());
-
-        loop {
-            match listener.recv().await {
-                Ok(_) => {
-                    let _ = tx.send(());
-                }
-                Err(e) => {
-                    warn!(error = ?e, "sse: Postgres listener disconnected");
-                    break;
-                }
-            }
-        }
-
-        sleep(Duration::from_secs(1)).await;
-    }
 }
 
 async fn fetch_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Error> {

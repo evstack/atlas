@@ -4,8 +4,8 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::error::ApiResult;
-use crate::AppState;
+use crate::api::error::ApiResult;
+use crate::api::AppState;
 use atlas_common::{AtlasError, Block, PaginatedResponse, Pagination, Transaction};
 
 pub async fn list_blocks(
