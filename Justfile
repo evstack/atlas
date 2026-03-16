@@ -26,11 +26,8 @@ backend-clippy:
 backend-test:
   cd backend && cargo test --workspace --all-targets
 
-backend-api:
-  cd backend && cargo run --bin atlas-api
-
-backend-indexer:
-  cd backend && cargo run --bin atlas-indexer
+backend-server:
+  cd backend && cargo run --bin atlas-server
 
 # Combined checks
 ci: backend-fmt backend-clippy backend-test frontend-install frontend-lint frontend-build

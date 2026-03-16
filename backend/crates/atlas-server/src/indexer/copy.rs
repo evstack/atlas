@@ -6,7 +6,7 @@ use tokio_postgres::{
     Transaction,
 };
 
-use crate::batch::BlockBatch;
+use super::batch::BlockBatch;
 
 pub async fn copy_blocks(tx: &mut Transaction<'_>, batch: &BlockBatch) -> Result<()> {
     if batch.b_numbers.is_empty() {
