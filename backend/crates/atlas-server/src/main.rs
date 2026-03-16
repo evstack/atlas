@@ -87,10 +87,50 @@ async fn main() -> Result<()> {
 }
 
 async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("failed to listen for ctrl-c");
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to listen for SIGTERM");
+
+        wait_for_shutdown_signal(
+            async {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("failed to listen for ctrl-c");
+            },
+            async move {
+                terminate.recv().await;
+            },
+        )
+        .await;
+    }
+
+    #[cfg(not(unix))]
+    {
+        wait_for_shutdown_signal(
+            async {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("failed to listen for ctrl-c");
+            },
+            std::future::pending::<()>(),
+        )
+        .await;
+    }
+
     tracing::info!("Shutdown signal received, stopping...");
+}
+
+async fn wait_for_shutdown_signal<CtrlC, Term, CtrlOut, TermOut>(ctrl_c: CtrlC, terminate: Term)
+where
+    CtrlC: std::future::Future<Output = CtrlOut>,
+    Term: std::future::Future<Output = TermOut>,
+{
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
 }
 
 /// Run an async function with exponential backoff retry
@@ -123,5 +163,47 @@ where
                 retry_count += 1;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wait_for_shutdown_signal;
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn wait_for_shutdown_signal_returns_on_ctrl_c_future() {
+        let (ctrl_tx, ctrl_rx) = oneshot::channel::<()>();
+        let (_term_tx, term_rx) = oneshot::channel::<()>();
+
+        let shutdown = tokio::spawn(wait_for_shutdown_signal(
+            async move {
+                let _ = ctrl_rx.await;
+            },
+            async move {
+                let _ = term_rx.await;
+            },
+        ));
+
+        ctrl_tx.send(()).unwrap();
+        shutdown.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wait_for_shutdown_signal_returns_on_terminate_future() {
+        let (_ctrl_tx, ctrl_rx) = oneshot::channel::<()>();
+        let (term_tx, term_rx) = oneshot::channel::<()>();
+
+        let shutdown = tokio::spawn(wait_for_shutdown_signal(
+            async move {
+                let _ = ctrl_rx.await;
+            },
+            async move {
+                let _ = term_rx.await;
+            },
+        ));
+
+        term_tx.send(()).unwrap();
+        shutdown.await.unwrap();
     }
 }

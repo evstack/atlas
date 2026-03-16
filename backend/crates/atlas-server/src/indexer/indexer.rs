@@ -786,11 +786,15 @@ impl Indexer {
                     &[&last_value],
                 )
                 .await?;
-            // Notify SSE subscribers directly via in-process broadcast
-            let _ = self.block_events_tx.send(());
         }
 
         pg_tx.commit().await?;
+
+        if update_watermark {
+            // Notify SSE subscribers only after the batch commit is visible.
+            let _ = self.block_events_tx.send(());
+        }
+
         Ok(())
     }
 
