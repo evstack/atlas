@@ -28,14 +28,10 @@ docker-compose up -d postgres
 just frontend-install
 ```
 
-Start backend services (each in its own terminal):
+Start the backend:
 
 ```bash
-just backend-indexer
-```
-
-```bash
-just backend-api
+just backend-server
 ```
 
 Start frontend:

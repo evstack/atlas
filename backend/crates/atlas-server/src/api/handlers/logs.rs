@@ -19,12 +19,16 @@ pub struct TransactionLogsQuery {
 }
 
 impl TransactionLogsQuery {
+    fn clamped_limit(&self) -> u32 {
+        self.limit.min(100)
+    }
+
     fn offset(&self) -> i64 {
-        ((self.page.saturating_sub(1)) * self.limit) as i64
+        (self.page.saturating_sub(1) as i64) * self.clamped_limit() as i64
     }
 
     fn limit(&self) -> i64 {
-        self.limit.min(100) as i64
+        self.clamped_limit() as i64
     }
 }
 
@@ -36,6 +40,20 @@ pub struct LogsQuery {
     /// Optional pagination
     #[serde(flatten)]
     pub pagination: Pagination,
+}
+
+impl LogsQuery {
+    fn clamped_limit(&self) -> u32 {
+        self.pagination.limit.min(100)
+    }
+
+    fn offset(&self) -> i64 {
+        (self.pagination.page.saturating_sub(1) as i64) * self.clamped_limit() as i64
+    }
+
+    fn limit(&self) -> i64 {
+        self.clamped_limit() as i64
+    }
 }
 
 /// GET /api/transactions/:hash/logs - Get all logs for a transaction
@@ -68,7 +86,7 @@ pub async fn get_transaction_logs(
     Ok(Json(PaginatedResponse::new(
         logs,
         query.page,
-        query.limit,
+        query.clamped_limit(),
         total.0,
     )))
 }
@@ -100,8 +118,8 @@ pub async fn get_address_logs(
         )
         .bind(&address)
         .bind(&topic0)
-        .bind(query.pagination.limit())
-        .bind(query.pagination.offset())
+        .bind(query.limit())
+        .bind(query.offset())
         .fetch_all(&state.pool)
         .await?;
 
@@ -120,8 +138,8 @@ pub async fn get_address_logs(
              LIMIT $2 OFFSET $3",
         )
         .bind(&address)
-        .bind(query.pagination.limit())
-        .bind(query.pagination.offset())
+        .bind(query.limit())
+        .bind(query.offset())
         .fetch_all(&state.pool)
         .await?;
 
@@ -131,7 +149,7 @@ pub async fn get_address_logs(
     Ok(Json(PaginatedResponse::new(
         logs,
         query.pagination.page,
-        query.pagination.limit,
+        query.clamped_limit(),
         total,
     )))
 }
@@ -206,7 +224,7 @@ pub async fn get_transaction_logs_decoded(
     Ok(Json(PaginatedResponse::new(
         enriched,
         query.page,
-        query.limit,
+        query.clamped_limit(),
         total.0,
     )))
 }
@@ -232,5 +250,28 @@ fn normalize_address(address: &str) -> String {
         address.to_lowercase()
     } else {
         format!("0x{}", address.to_lowercase())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TransactionLogsQuery;
+    use atlas_common::PaginatedResponse;
+
+    #[test]
+    fn transaction_logs_query_clamps_limit_for_offset_and_metadata() {
+        let query = TransactionLogsQuery {
+            page: 2,
+            limit: 1000,
+        };
+
+        assert_eq!(query.clamped_limit(), 100);
+        assert_eq!(query.offset(), 100);
+        assert_eq!(query.limit(), 100);
+
+        let response =
+            PaginatedResponse::new(Vec::<()>::new(), query.page, query.clamped_limit(), 250);
+        assert_eq!(response.limit, 100);
+        assert_eq!(response.total_pages, 3);
     }
 }
