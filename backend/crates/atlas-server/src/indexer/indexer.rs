@@ -281,6 +281,18 @@ impl Indexer {
             let new_erc20 = std::mem::take(&mut batch.new_erc20);
             let new_nft = std::mem::take(&mut batch.new_nft);
 
+            // Publish to head tracker + SSE *before* the DB write so subscribers
+            // see new blocks without waiting for the full transaction to commit.
+            // The SSE handler reads from head_tracker (in-memory), not from DB,
+            // so this is safe even if the DB write is slow. If write_batch fails
+            // the indexer retries the same blocks and head_tracker ignores
+            // non-advancing publishes.
+            let committed_blocks = batch.materialize_blocks(Utc::now());
+            self.head_tracker
+                .publish_committed_batch(committed_blocks)
+                .await;
+            let _ = self.block_events_tx.send(());
+
             // One DB transaction for the entire batch
             self.write_batch(&mut copy_client, batch, true).await?;
 
@@ -644,7 +656,6 @@ impl Indexer {
 
         let mut pg_tx = copy_client.transaction().await?;
         let indexed_at: DateTime<Utc> = Utc::now();
-        let committed_blocks = update_watermark.then(|| batch.materialize_blocks(indexed_at));
 
         copy_blocks(&mut pg_tx, &batch, indexed_at).await?;
         copy_transactions(&mut pg_tx, &batch).await?;
@@ -802,14 +813,6 @@ impl Indexer {
         }
 
         pg_tx.commit().await?;
-
-        if update_watermark {
-            if let Some(blocks) = committed_blocks {
-                self.head_tracker.publish_committed_batch(blocks).await;
-            }
-            // Notify SSE subscribers only after the batch commit is visible.
-            let _ = self.block_events_tx.send(());
-        }
 
         Ok(())
     }
