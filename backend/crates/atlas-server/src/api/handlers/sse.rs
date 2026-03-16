@@ -10,13 +10,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
+use crate::api::handlers::get_latest_block;
 use crate::api::AppState;
 use atlas_common::Block;
-use sqlx::PgPool;
 use tracing::warn;
 
-const BLOCK_COLUMNS: &str =
-    "number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at";
 type SseStream = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
 
 #[derive(Serialize, Debug)]
@@ -43,7 +41,7 @@ pub async fn block_events(State(state): State<Arc<AppState>>) -> Sse<SseStream> 
                     yield Ok(event);
                 }
             }
-            None => match fetch_latest_block(&pool).await {
+            None => match get_latest_block(&pool).await {
                 Ok(Some(block)) => {
                     last_block_number = Some(block.number);
                     if let Some(event) = block_to_event(block) {
@@ -108,15 +106,6 @@ where
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
     )
-}
-
-async fn fetch_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Error> {
-    sqlx::query_as(&format!(
-        "SELECT {} FROM blocks ORDER BY number DESC LIMIT 1",
-        BLOCK_COLUMNS
-    ))
-    .fetch_optional(pool)
-    .await
 }
 
 fn block_to_event(block: Block) -> Option<Event> {
