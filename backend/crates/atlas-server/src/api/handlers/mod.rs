@@ -21,7 +21,6 @@ pub async fn get_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Erro
     .fetch_optional(pool)
     .await
 }
-
 fn exact_count_sql(table_name: &str) -> Result<&'static str, sqlx::Error> {
     match table_name {
         "transactions" => Ok("SELECT COUNT(*) FROM transactions"),
