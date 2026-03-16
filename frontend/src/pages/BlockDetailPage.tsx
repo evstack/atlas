@@ -49,9 +49,7 @@ export default function BlockDetailPage() {
     });
   }, [subscribeDa, blockNumber]);
 
-  useEffect(() => {
-    setDaOverride(null);
-  }, [blockNumber]);
+  const currentDaOverride = daOverride?.block_number === blockNumber ? daOverride : null;
 
   type DetailRow = { label: string; value: ReactNode; stacked?: boolean };
   const details: DetailRow[] = block ? [
@@ -87,7 +85,7 @@ export default function BlockDetailPage() {
     { label: 'Gas Limit', value: formatGas(block.gas_limit.toString()) },
     // DA status rows — only shown when da_tracking feature is enabled
     ...(features.da_tracking ? (() => {
-      const daStatus = daOverride ?? block.da_status;
+      const daStatus = currentDaOverride ?? block.da_status;
       return [
         {
           label: 'Header DA',
