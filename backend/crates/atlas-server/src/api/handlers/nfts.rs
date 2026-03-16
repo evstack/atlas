@@ -56,7 +56,7 @@ pub async fn get_collection(
     let mut collection: NftContract = sqlx::query_as(
         "SELECT address, name, symbol, total_supply, first_seen_block
          FROM nft_contracts
-         WHERE LOWER(address) = LOWER($1)",
+         WHERE address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -67,14 +67,12 @@ pub async fn get_collection(
     if collection.name.is_none() && collection.symbol.is_none() {
         if let Ok((name, symbol)) = fetch_collection_metadata(&state.rpc_url, &address).await {
             // Update the database
-            sqlx::query(
-                "UPDATE nft_contracts SET name = $1, symbol = $2 WHERE LOWER(address) = LOWER($3)",
-            )
-            .bind(&name)
-            .bind(&symbol)
-            .bind(&address)
-            .execute(&state.pool)
-            .await?;
+            sqlx::query("UPDATE nft_contracts SET name = $1, symbol = $2 WHERE address = $3")
+                .bind(&name)
+                .bind(&symbol)
+                .bind(&address)
+                .execute(&state.pool)
+                .await?;
 
             collection.name = name;
             collection.symbol = symbol;
@@ -99,7 +97,7 @@ async fn fetch_collection_metadata(
     let url: reqwest::Url = rpc_url
         .parse()
         .map_err(|_| AtlasError::InvalidInput("Invalid RPC URL".to_string()))?;
-    let provider = ProviderBuilder::new().on_http(url);
+    let provider = ProviderBuilder::new().connect_http(url);
 
     // name() selector = 0x06fdde03
     let name = {
@@ -107,7 +105,7 @@ async fn fetch_collection_metadata(
             .to(contract)
             .input(alloy::primitives::Bytes::from(vec![0x06, 0xfd, 0xde, 0x03]).into());
         provider
-            .call(&tx)
+            .call(tx)
             .await
             .ok()
             .and_then(|r| decode_abi_string(&r))
@@ -119,7 +117,7 @@ async fn fetch_collection_metadata(
             .to(contract)
             .input(alloy::primitives::Bytes::from(vec![0x95, 0xd8, 0x9b, 0x41]).into());
         provider
-            .call(&tx)
+            .call(tx)
             .await
             .ok()
             .and_then(|r| decode_abi_string(&r))
@@ -136,7 +134,7 @@ pub async fn list_collection_tokens(
     let address = normalize_address(&address);
 
     let total: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM nft_tokens WHERE LOWER(contract_address) = LOWER($1)")
+        sqlx::query_as("SELECT COUNT(*) FROM nft_tokens WHERE contract_address = $1")
             .bind(&address)
             .fetch_one(&state.pool)
             .await?;
@@ -144,7 +142,7 @@ pub async fn list_collection_tokens(
     let tokens: Vec<NftToken> = sqlx::query_as(
         "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
          FROM nft_tokens
-         WHERE LOWER(contract_address) = LOWER($1)
+         WHERE contract_address = $1
          ORDER BY token_id ASC
          LIMIT $2 OFFSET $3"
     )
@@ -171,7 +169,7 @@ pub async fn get_token(
     let mut token: NftToken = sqlx::query_as(
         "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
          FROM nft_tokens
-         WHERE LOWER(contract_address) = LOWER($1) AND token_id = $2::numeric"
+         WHERE contract_address = $1 AND token_id = $2::numeric"
     )
     .bind(&address)
     .bind(&token_id)
@@ -231,7 +229,7 @@ async fn fetch_and_store_metadata(
             metadata = $2,
             image_url = $3,
             name = $4
-         WHERE LOWER(contract_address) = LOWER($5) AND token_id = $6::numeric",
+         WHERE contract_address = $5 AND token_id = $6::numeric",
     )
     .bind(&token_uri)
     .bind(&metadata_json)
@@ -246,7 +244,7 @@ async fn fetch_and_store_metadata(
     let token: NftToken = sqlx::query_as(
         "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
          FROM nft_tokens
-         WHERE LOWER(contract_address) = LOWER($1) AND token_id = $2::numeric"
+         WHERE contract_address = $1 AND token_id = $2::numeric"
     )
     .bind(contract_address)
     .bind(token_id)
@@ -262,7 +260,7 @@ async fn fetch_token_uri(rpc_url: &str, contract: Address, token_id: U256) -> Op
     use alloy::rpc::types::TransactionRequest;
 
     let url: reqwest::Url = rpc_url.parse().ok()?;
-    let provider = ProviderBuilder::new().on_http(url);
+    let provider = ProviderBuilder::new().connect_http(url);
 
     // tokenURI(uint256) selector = 0xc87b56dd
     let mut calldata = vec![0xc8, 0x7b, 0x56, 0xdd];
@@ -272,7 +270,7 @@ async fn fetch_token_uri(rpc_url: &str, contract: Address, token_id: U256) -> Op
         .to(contract)
         .input(alloy::primitives::Bytes::from(calldata).into());
 
-    let result = provider.call(&tx).await.ok()?;
+    let result = provider.call(tx).await.ok()?;
 
     // Decode string from ABI encoding
     decode_abi_string(&result)
@@ -301,9 +299,35 @@ fn decode_abi_string(data: &[u8]) -> Option<String> {
     String::from_utf8(string_data.to_vec()).ok()
 }
 
+/// Validate that a resolved metadata URL uses an allowed scheme.
+///
+/// Only `http` and `https` are permitted after IPFS/Arweave resolution.
+/// `file://`, `ftp://`, `gopher://`, and other schemes are blocked to prevent
+/// SSRF via non-HTTP channels.
+///
+/// TODO: also block requests to private/RFC-1918 IP ranges (10.x, 172.16-31.x,
+/// 192.168.x, 127.x, 169.254.x) and IPv6 loopback/ULA addresses. This requires
+/// async DNS resolution before the HTTP request is issued so that the resolved
+/// address can be checked — add that once a suitable resolver is integrated.
+fn validate_metadata_url_scheme(url: &str) -> Result<(), AtlasError> {
+    let scheme_end = url
+        .find("://")
+        .ok_or_else(|| AtlasError::Validation(format!("Metadata URL has no scheme: {}", url)))?;
+    let scheme = &url[..scheme_end];
+    match scheme {
+        "http" | "https" => Ok(()),
+        other => Err(AtlasError::Validation(format!(
+            "Disallowed URL scheme '{}' in metadata URL",
+            other
+        ))),
+    }
+}
+
 /// Fetch metadata JSON from a URI (handles IPFS)
 async fn fetch_metadata_from_uri(uri: &str) -> Result<NftMetadata, AtlasError> {
     let url = resolve_ipfs_url(uri);
+
+    validate_metadata_url_scheme(&url)?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -346,17 +370,16 @@ pub async fn get_collection_transfers(
 ) -> ApiResult<Json<PaginatedResponse<NftTransfer>>> {
     let address = normalize_address(&address);
 
-    let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM nft_transfers WHERE LOWER(contract_address) = LOWER($1)",
-    )
-    .bind(&address)
-    .fetch_one(&state.pool)
-    .await?;
+    let total: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM nft_transfers WHERE contract_address = $1")
+            .bind(&address)
+            .fetch_one(&state.pool)
+            .await?;
 
     let transfers: Vec<NftTransfer> = sqlx::query_as(
         "SELECT id, tx_hash, log_index, contract_address, token_id, from_address, to_address, block_number, timestamp
          FROM nft_transfers
-         WHERE LOWER(contract_address) = LOWER($1)
+         WHERE contract_address = $1
          ORDER BY block_number DESC, log_index DESC
          LIMIT $2 OFFSET $3"
     )
@@ -383,7 +406,7 @@ pub async fn get_token_transfers(
     let address = normalize_address(&address);
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM nft_transfers WHERE LOWER(contract_address) = LOWER($1) AND token_id = $2::numeric"
+        "SELECT COUNT(*) FROM nft_transfers WHERE contract_address = $1 AND token_id = $2::numeric",
     )
     .bind(&address)
     .bind(&token_id)
@@ -393,7 +416,7 @@ pub async fn get_token_transfers(
     let transfers: Vec<NftTransfer> = sqlx::query_as(
         "SELECT id, tx_hash, log_index, contract_address, token_id, from_address, to_address, block_number, timestamp
          FROM nft_transfers
-         WHERE LOWER(contract_address) = LOWER($1) AND token_id = $2::numeric
+         WHERE contract_address = $1 AND token_id = $2::numeric
          ORDER BY block_number DESC, log_index DESC
          LIMIT $3 OFFSET $4"
     )

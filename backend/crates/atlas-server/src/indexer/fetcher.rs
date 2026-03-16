@@ -1,7 +1,6 @@
 use alloy::network::Ethereum;
 use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::types::{Block, TransactionReceipt};
-use alloy::transports::http::{Client, Http};
 use anyhow::Result;
 use governor::RateLimiter;
 use std::collections::BTreeMap;
@@ -19,7 +18,7 @@ pub(crate) struct WorkItem {
     pub(crate) count: usize,
 }
 
-pub(crate) type HttpProvider = RootProvider<Http<Client>, Ethereum>;
+pub(crate) type HttpProvider = RootProvider<Ethereum>;
 pub(crate) type SharedRateLimiter = Arc<
     RateLimiter<
         governor::state::NotKeyed,

@@ -244,7 +244,7 @@ fn default_limit() -> u32 {
 
 impl Pagination {
     pub fn offset(&self) -> i64 {
-        ((self.page.saturating_sub(1)) * self.limit) as i64
+        (self.page.saturating_sub(1) as i64) * self.limit()
     }
 
     pub fn limit(&self) -> i64 {

@@ -23,14 +23,14 @@ tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "json", "bigdecimal", "chrono"] }
 
 # Ethereum
-alloy = { version = "0.9", features = ["full", "provider-http", "rpc-types-eth"] }
+alloy = { version = "1", features = ["full", "provider-http", "rpc-types-eth"] }
 
 # Serialization
-serde = { version = ">=1.0.171, <1.0.220", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
 
 # Error handling
 thiserror = "2.0"
@@ -52,9 +52,6 @@ async-stream = "0.3"
 bigdecimal = { version = "0.4", features = ["serde"] }
 hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
-
-# Pin home to avoid Rust 1.88 requirement
-home = "=0.5.9"
 
 # Internal crates
 atlas-common = { path = "crates/atlas-common" }

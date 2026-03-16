@@ -1,4 +1,5 @@
 use anyhow::Result;
+use atlas_common::Block;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -41,7 +42,7 @@ async fn main() -> Result<()> {
         atlas_common::db::create_pool(&config.database_url, config.api_db_max_connections).await?;
 
     // Shared broadcast channel for SSE notifications
-    let (block_events_tx, _) = broadcast::channel(1024);
+    let (block_events_tx, _) = broadcast::channel::<Block>(1024);
 
     // Build AppState for API
     let state = Arc::new(api::AppState {
@@ -74,7 +75,7 @@ async fn main() -> Result<()> {
     });
 
     // Build and serve API
-    let app = api::build_router(state);
+    let app = api::build_router(state, config.cors_origin.clone());
     let addr = format!("{}:{}", config.api_host, config.api_port);
     tracing::info!("API listening on {}", addr);
 

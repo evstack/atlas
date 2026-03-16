@@ -1,22 +1,33 @@
 pub mod error;
 pub mod handlers;
 
+use atlas_common::Block;
 use axum::{routing::get, Router};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 pub struct AppState {
     pub pool: PgPool,
-    pub block_events_tx: broadcast::Sender<()>,
+    pub block_events_tx: broadcast::Sender<Block>,
     pub rpc_url: String,
 }
 
-pub fn build_router(state: Arc<AppState>) -> Router {
+/// Build the Axum router.
+///
+/// `cors_origin`: when `Some`, restrict CORS to that exact origin; when `None`,
+/// allow any origin (backwards-compatible default for development / self-hosted
+/// deployments).
+///
+/// NOTE: Rate limiting has not yet been added here. The `tower_governor` crate
+/// (v0.8, backed by `governor` v0.10) is incompatible with the `governor` v0.6
+/// already used by the indexer. Once the indexer's governor dependency is
+/// upgraded to v0.10, add a `GovernorLayer` with a per-IP burst of ~50 req/s.
+pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router {
     // SSE route — excluded from TimeoutLayer so connections stay alive
     let sse_routes = Router::new()
         .route("/api/events", get(handlers::sse::block_events))
@@ -143,11 +154,27 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Merge SSE routes (no TimeoutLayer so connections stay alive)
         .merge(sse_routes)
         // Shared layers applied to all routes
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+        .layer(build_cors_layer(cors_origin))
         .layer(TraceLayer::new_for_http())
+}
+
+/// Construct the CORS layer.
+///
+/// When `cors_origin` is `Some`, restrict to that exact origin.
+/// When `None`, allow any origin so that self-hosted and development deployments
+/// work out of the box without requiring the env var.
+fn build_cors_layer(cors_origin: Option<String>) -> CorsLayer {
+    let origin = match cors_origin {
+        Some(origin) => {
+            let header_value = origin
+                .parse::<axum::http::HeaderValue>()
+                .expect("CORS_ORIGIN is not a valid HTTP header value");
+            AllowOrigin::exact(header_value)
+        }
+        None => AllowOrigin::any(),
+    };
+    CorsLayer::new()
+        .allow_origin(origin)
+        .allow_methods(Any)
+        .allow_headers(Any)
 }

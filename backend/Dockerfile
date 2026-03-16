@@ -20,6 +20,9 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=builder /app/target/release/atlas-server /usr/local/bin/
 
+RUN addgroup -S atlas && adduser -S atlas -G atlas
+USER atlas
+
 EXPOSE 3000
 CMD ["atlas-server"]
 
