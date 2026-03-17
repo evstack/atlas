@@ -127,12 +127,18 @@ mod tests {
         for val in ["0", "100001"] {
             env::set_var("SSE_REPLAY_BUFFER_BLOCKS", val);
             let err = Config::from_env().unwrap_err();
-            assert!(err.to_string().contains("must be between 1 and 100000"), "expected range error for {val}");
+            assert!(
+                err.to_string().contains("must be between 1 and 100000"),
+                "expected range error for {val}"
+            );
         }
 
         // Non-numeric
         env::set_var("SSE_REPLAY_BUFFER_BLOCKS", "abc");
-        assert!(Config::from_env().unwrap_err().to_string().contains("Invalid SSE_REPLAY_BUFFER_BLOCKS"));
+        assert!(Config::from_env()
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid SSE_REPLAY_BUFFER_BLOCKS"));
 
         env::remove_var("SSE_REPLAY_BUFFER_BLOCKS");
     }
