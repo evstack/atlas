@@ -1,6 +1,9 @@
 use bigdecimal::BigDecimal;
 use std::collections::{HashMap, HashSet};
 
+use atlas_common::Block;
+use chrono::{DateTime, Utc};
+
 // ---------------------------------------------------------------------------
 // Batch accumulator - collects data from multiple blocks before writing to DB
 // ---------------------------------------------------------------------------
@@ -154,12 +157,35 @@ impl BlockBatch {
         entry.delta += delta;
         entry.last_block = entry.last_block.max(block);
     }
+
+    pub(crate) fn materialize_blocks(&self, indexed_at: DateTime<Utc>) -> Vec<Block> {
+        debug_assert_eq!(self.b_numbers.len(), self.b_hashes.len());
+        debug_assert_eq!(self.b_numbers.len(), self.b_parent_hashes.len());
+        debug_assert_eq!(self.b_numbers.len(), self.b_timestamps.len());
+        debug_assert_eq!(self.b_numbers.len(), self.b_gas_used.len());
+        debug_assert_eq!(self.b_numbers.len(), self.b_gas_limits.len());
+        debug_assert_eq!(self.b_numbers.len(), self.b_tx_counts.len());
+
+        (0..self.b_numbers.len())
+            .map(|i| Block {
+                number: self.b_numbers[i],
+                hash: self.b_hashes[i].clone(),
+                parent_hash: self.b_parent_hashes[i].clone(),
+                timestamp: self.b_timestamps[i],
+                gas_used: self.b_gas_used[i],
+                gas_limit: self.b_gas_limits[i],
+                transaction_count: self.b_tx_counts[i],
+                indexed_at,
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use bigdecimal::BigDecimal;
+    use chrono::{TimeZone, Utc};
 
     // --- touch_addr tests ---
 
@@ -229,5 +255,30 @@ mod tests {
             .get(&("0xaddr".to_string(), "0xtoken".to_string()))
             .unwrap();
         assert_eq!(entry.last_block, 100);
+    }
+
+    #[test]
+    fn materialize_blocks_preserves_parallel_block_fields() {
+        let mut batch = BlockBatch::new();
+        batch.b_numbers.push(42);
+        batch.b_hashes.push("0xabc".to_string());
+        batch.b_parent_hashes.push("0xdef".to_string());
+        batch.b_timestamps.push(1_700_000_042);
+        batch.b_gas_used.push(21_000);
+        batch.b_gas_limits.push(30_000_000);
+        batch.b_tx_counts.push(3);
+
+        let indexed_at = Utc.timestamp_opt(1_700_000_100, 0).unwrap();
+        let blocks = batch.materialize_blocks(indexed_at);
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].number, 42);
+        assert_eq!(blocks[0].hash, "0xabc");
+        assert_eq!(blocks[0].parent_hash, "0xdef");
+        assert_eq!(blocks[0].timestamp, 1_700_000_042);
+        assert_eq!(blocks[0].gas_used, 21_000);
+        assert_eq!(blocks[0].gas_limit, 30_000_000);
+        assert_eq!(blocks[0].transaction_count, 3);
+        assert_eq!(blocks[0].indexed_at, indexed_at);
     }
 }

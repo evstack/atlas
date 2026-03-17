@@ -10,7 +10,17 @@ pub mod status;
 pub mod tokens;
 pub mod transactions;
 
+use atlas_common::{Block, BLOCK_COLUMNS};
 use sqlx::PgPool;
+
+pub async fn get_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Error> {
+    sqlx::query_as(&format!(
+        "SELECT {} FROM blocks ORDER BY number DESC LIMIT 1",
+        BLOCK_COLUMNS
+    ))
+    .fetch_optional(pool)
+    .await
+}
 
 /// Get transactions table row count efficiently.
 /// - For tables > 100k rows: uses PostgreSQL's approximate count (instant, ~99% accurate)
