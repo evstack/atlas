@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
     });
 
     // Build and serve API
-    let app = api::build_router(state);
+    let app = api::build_router(state, config.cors_origin.clone());
     let addr = format!("{}:{}", config.api_host, config.api_port);
     tracing::info!("API listening on {}", addr);
 

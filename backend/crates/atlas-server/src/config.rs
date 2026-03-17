@@ -27,6 +27,9 @@ pub struct Config {
     // API-specific
     pub api_host: String,
     pub api_port: u16,
+    /// If set, restrict CORS to this exact origin. When unset, any origin is allowed
+    /// (backwards-compatible default for development / self-hosted deployments).
+    pub cors_origin: Option<String>,
     pub sse_replay_buffer_blocks: usize,
 }
 
@@ -93,6 +96,7 @@ impl Config {
                 .unwrap_or_else(|_| "3000".to_string())
                 .parse()
                 .context("Invalid API_PORT")?,
+            cors_origin: env::var("CORS_ORIGIN").ok(),
             sse_replay_buffer_blocks,
         })
     }

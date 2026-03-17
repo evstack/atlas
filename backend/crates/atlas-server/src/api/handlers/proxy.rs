@@ -23,7 +23,7 @@ pub async fn get_proxy_info(
     let proxy: Option<ProxyContract> = sqlx::query_as(
         "SELECT proxy_address, implementation_address, proxy_type, admin_address, detected_at_block, last_checked_block, updated_at
          FROM proxy_contracts
-         WHERE LOWER(proxy_address) = LOWER($1)",
+         WHERE proxy_address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -33,7 +33,7 @@ pub async fn get_proxy_info(
     let proxies_using_this: Vec<ProxyContract> = sqlx::query_as(
         "SELECT proxy_address, implementation_address, proxy_type, admin_address, detected_at_block, last_checked_block, updated_at
          FROM proxy_contracts
-         WHERE LOWER(implementation_address) = LOWER($1)",
+         WHERE implementation_address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -56,7 +56,7 @@ pub async fn get_proxy_info(
         sqlx::query_as::<_, ContractAbi>(
             "SELECT address, abi, source_code, compiler_version, optimization_used, runs, verified_at
              FROM contract_abis
-             WHERE LOWER(address) = LOWER($1)",
+             WHERE address = $1",
         )
         .bind(&p.implementation_address)
         .fetch_optional(&state.pool)
@@ -95,7 +95,7 @@ pub async fn get_combined_abi(
     let proxy: Option<ProxyContract> = sqlx::query_as(
         "SELECT proxy_address, implementation_address, proxy_type, admin_address, detected_at_block, last_checked_block, updated_at
          FROM proxy_contracts
-         WHERE LOWER(proxy_address) = LOWER($1)",
+         WHERE proxy_address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -105,7 +105,7 @@ pub async fn get_combined_abi(
     let proxy_abi: Option<ContractAbi> = sqlx::query_as(
         "SELECT address, abi, source_code, compiler_version, optimization_used, runs, verified_at
          FROM contract_abis
-         WHERE LOWER(address) = LOWER($1)",
+         WHERE address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -116,7 +116,7 @@ pub async fn get_combined_abi(
         let impl_abi: Option<ContractAbi> = sqlx::query_as(
             "SELECT address, abi, source_code, compiler_version, optimization_used, runs, verified_at
              FROM contract_abis
-             WHERE LOWER(address) = LOWER($1)",
+             WHERE address = $1",
         )
         .bind(&proxy_info.implementation_address)
         .fetch_optional(&state.pool)

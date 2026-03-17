@@ -64,16 +64,15 @@ pub async fn get_transaction_logs(
 ) -> ApiResult<Json<PaginatedResponse<EventLog>>> {
     let hash = normalize_hash(&hash);
 
-    let total: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM event_logs WHERE LOWER(tx_hash) = LOWER($1)")
-            .bind(&hash)
-            .fetch_one(&state.pool)
-            .await?;
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM event_logs WHERE tx_hash = $1")
+        .bind(&hash)
+        .fetch_one(&state.pool)
+        .await?;
 
     let logs: Vec<EventLog> = sqlx::query_as(
         "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
          FROM event_logs
-         WHERE LOWER(tx_hash) = LOWER($1)
+         WHERE tx_hash = $1
          ORDER BY log_index ASC
          LIMIT $2 OFFSET $3",
     )
@@ -171,16 +170,15 @@ pub async fn get_transaction_logs_decoded(
 ) -> ApiResult<Json<PaginatedResponse<EnrichedEventLog>>> {
     let hash = normalize_hash(&hash);
 
-    let total: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM event_logs WHERE LOWER(tx_hash) = LOWER($1)")
-            .bind(&hash)
-            .fetch_one(&state.pool)
-            .await?;
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM event_logs WHERE tx_hash = $1")
+        .bind(&hash)
+        .fetch_one(&state.pool)
+        .await?;
 
     let logs: Vec<EventLog> = sqlx::query_as(
         "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
          FROM event_logs
-         WHERE LOWER(tx_hash) = LOWER($1)
+         WHERE tx_hash = $1
          ORDER BY log_index ASC
          LIMIT $2 OFFSET $3",
     )

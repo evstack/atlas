@@ -94,7 +94,9 @@ fn make_block_stream(
 /// New connections receive only the current latest block and then stream
 /// forward from in-memory committed head state. Historical catch-up stays on
 /// the canonical block endpoints.
-pub async fn block_events(State(state): State<Arc<AppState>>) -> Sse<SseStream> {
+pub async fn block_events(
+    State(state): State<Arc<AppState>>,
+) -> Sse<axum::response::sse::KeepAliveStream<SseStream>> {
     let stream = make_block_stream(
         state.pool.clone(),
         state.head_tracker.clone(),
@@ -103,7 +105,7 @@ pub async fn block_events(State(state): State<Arc<AppState>>) -> Sse<SseStream> 
     sse_response(stream)
 }
 
-fn sse_response<S>(stream: S) -> Sse<SseStream>
+fn sse_response<S>(stream: S) -> Sse<axum::response::sse::KeepAliveStream<SseStream>>
 where
     S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
 {

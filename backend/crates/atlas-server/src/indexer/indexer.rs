@@ -1,5 +1,5 @@
 use alloy::primitives::U256;
-use alloy::providers::ProviderBuilder;
+use alloy::providers::RootProvider;
 use alloy::rpc::types::TransactionReceipt;
 use anyhow::Result;
 use bigdecimal::BigDecimal;
@@ -96,7 +96,7 @@ impl Indexer {
     }
 
     pub async fn run(&self) -> Result<()> {
-        let provider = Arc::new(ProviderBuilder::new().on_http(self.config.rpc_url.parse()?));
+        let provider = Arc::new(RootProvider::new_http(self.config.rpc_url.parse()?));
 
         // Dedicated connection for binary COPY — kept separate from the sqlx pool
         // because COPY IN requires exclusive use of the connection during the transfer.
@@ -455,7 +455,7 @@ impl Indexer {
             for (idx, transaction) in txs.iter().enumerate() {
                 let inner = &transaction.inner;
                 let tx_hash_str = format!("{:?}", inner.tx_hash());
-                let from_str = format!("{:?}", transaction.from);
+                let from_str = format!("{:?}", transaction.inner.signer());
                 let to_opt = inner.to().map(|a| format!("{:?}", a));
                 let value_str = inner.value().to_string();
                 let gas_price_str = transaction

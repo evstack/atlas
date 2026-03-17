@@ -58,7 +58,7 @@ pub async fn get_token(
     let mut contract: Erc20Contract = sqlx::query_as(
         "SELECT address, name, symbol, decimals, total_supply, first_seen_block
          FROM erc20_contracts
-         WHERE LOWER(address) = LOWER($1)",
+         WHERE address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -106,12 +106,11 @@ pub async fn get_token_holders(
     let address = normalize_address(&address);
 
     // Verify token exists
-    let exists: Option<(String,)> = sqlx::query_as(
-        "SELECT address FROM erc20_contracts WHERE LOWER(address) = LOWER($1) LIMIT 1",
-    )
-    .bind(&address)
-    .fetch_optional(&state.pool)
-    .await?;
+    let exists: Option<(String,)> =
+        sqlx::query_as("SELECT address FROM erc20_contracts WHERE address = $1 LIMIT 1")
+            .bind(&address)
+            .fetch_optional(&state.pool)
+            .await?;
     if exists.is_none() {
         return Err(AtlasError::NotFound(format!("Token {} not found", address)).into());
     }
@@ -126,12 +125,11 @@ pub async fn get_token_holders(
     // Get total supply for percentage calculation
     // First try to get it from the contract, if NULL compute from sum of balances
     let total_supply: Option<bigdecimal::BigDecimal> = {
-        let stored: Option<(Option<bigdecimal::BigDecimal>,)> = sqlx::query_as(
-            "SELECT total_supply FROM erc20_contracts WHERE LOWER(address) = LOWER($1)",
-        )
-        .bind(&address)
-        .fetch_optional(&state.pool)
-        .await?;
+        let stored: Option<(Option<bigdecimal::BigDecimal>,)> =
+            sqlx::query_as("SELECT total_supply FROM erc20_contracts WHERE address = $1")
+                .bind(&address)
+                .fetch_optional(&state.pool)
+                .await?;
 
         match stored {
             Some((Some(ts),)) => Some(ts),
@@ -139,7 +137,7 @@ pub async fn get_token_holders(
                 // Compute from sum of balances
                 let computed: Option<(bigdecimal::BigDecimal,)> = sqlx::query_as(
                     "SELECT COALESCE(SUM(balance), 0) FROM erc20_balances
-                     WHERE LOWER(contract_address) = LOWER($1) AND balance > 0",
+                     WHERE contract_address = $1 AND balance > 0",
                 )
                 .bind(&address)
                 .fetch_optional(&state.pool)
@@ -152,7 +150,7 @@ pub async fn get_token_holders(
     let balances: Vec<Erc20Balance> = sqlx::query_as(
         "SELECT address, contract_address, balance, last_updated_block
          FROM erc20_balances
-         WHERE LOWER(contract_address) = LOWER($1) AND balance > 0
+         WHERE contract_address = $1 AND balance > 0
          ORDER BY balance DESC
          LIMIT $2 OFFSET $3",
     )
@@ -237,7 +235,7 @@ pub async fn get_address_tokens(
 
     let total: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM erc20_balances
-         WHERE LOWER(address) = LOWER($1) AND balance > 0",
+         WHERE address = $1 AND balance > 0",
     )
     .bind(&address)
     .fetch_one(&state.pool)

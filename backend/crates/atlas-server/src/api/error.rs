@@ -46,11 +46,47 @@ impl Deref for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        use atlas_common::AtlasError;
+
         let status =
             StatusCode::from_u16(self.0.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let body = Json(json!({
-            "error": self.0.to_string()
-        }));
+
+        // Determine the client-facing message based on error type.
+        // Internal details are logged server-side to avoid leaking stack traces or
+        // database internals to callers.
+        let client_message = match &self.0 {
+            // Safe to surface: meaningful to the caller
+            AtlasError::NotFound(msg) => msg.clone(),
+            AtlasError::InvalidInput(msg) => msg.clone(),
+            AtlasError::Validation(msg) => msg.clone(),
+            AtlasError::Unauthorized(msg) => msg.clone(),
+            AtlasError::Verification(msg) => msg.clone(),
+            AtlasError::BytecodeMismatch(msg) => msg.clone(),
+            AtlasError::Compilation(msg) => msg.clone(),
+            // Opaque: log full detail, return generic message
+            AtlasError::Database(inner) => {
+                tracing::error!(error = %inner, "Database error");
+                "Internal server error".to_string()
+            }
+            AtlasError::Internal(inner) => {
+                tracing::error!(error = %inner, "Internal error");
+                "Internal server error".to_string()
+            }
+            AtlasError::Config(inner) => {
+                tracing::error!(error = %inner, "Configuration error");
+                "Internal server error".to_string()
+            }
+            AtlasError::Rpc(inner) => {
+                tracing::error!(error = %inner, "RPC error");
+                "Service unavailable".to_string()
+            }
+            AtlasError::MetadataFetch(inner) => {
+                tracing::error!(error = %inner, "Metadata fetch error");
+                "Service unavailable".to_string()
+            }
+        };
+
+        let body = Json(json!({ "error": client_message }));
         (status, body).into_response()
     }
 }

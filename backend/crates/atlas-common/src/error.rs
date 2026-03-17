@@ -14,6 +14,9 @@ pub enum AtlasError {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
@@ -40,7 +43,7 @@ impl AtlasError {
     pub fn status_code(&self) -> u16 {
         match self {
             AtlasError::NotFound(_) => 404,
-            AtlasError::InvalidInput(_) => 400,
+            AtlasError::InvalidInput(_) | AtlasError::Validation(_) => 400,
             AtlasError::Unauthorized(_) => 401,
             AtlasError::Database(_) | AtlasError::Internal(_) => 500,
             AtlasError::Rpc(_) | AtlasError::MetadataFetch(_) => 502,
