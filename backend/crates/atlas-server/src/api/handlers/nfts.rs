@@ -351,15 +351,16 @@ async fn validate_resolved_host(url: &str) -> Result<(), AtlasError> {
     let port = parsed.port_or_known_default().unwrap_or(80);
     let addr_str = format!("{}:{}", host, port);
 
-    let addrs = tokio::net::lookup_host(&addr_str)
-        .await
-        .map_err(|e| AtlasError::MetadataFetch(format!("DNS resolution failed for {}: {}", host, e)))?;
+    let addrs = tokio::net::lookup_host(&addr_str).await.map_err(|e| {
+        AtlasError::MetadataFetch(format!("DNS resolution failed for {}: {}", host, e))
+    })?;
 
     for addr in addrs {
         if is_non_public_ip(&addr.ip()) {
             return Err(AtlasError::Validation(format!(
                 "Metadata URL host {} resolves to non-public IP {}",
-                host, addr.ip()
+                host,
+                addr.ip()
             )));
         }
     }
