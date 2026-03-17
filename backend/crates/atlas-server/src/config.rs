@@ -97,3 +97,43 @@ impl Config {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn set_required_env() {
+        env::set_var("DATABASE_URL", "postgres://test@localhost/test");
+        env::set_var("RPC_URL", "http://localhost:8545");
+    }
+
+    #[test]
+    fn sse_replay_buffer_validation() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+
+        // Default
+        env::remove_var("SSE_REPLAY_BUFFER_BLOCKS");
+        assert_eq!(Config::from_env().unwrap().sse_replay_buffer_blocks, 4096);
+
+        // Valid custom value
+        env::set_var("SSE_REPLAY_BUFFER_BLOCKS", "12345");
+        assert_eq!(Config::from_env().unwrap().sse_replay_buffer_blocks, 12345);
+
+        // Out-of-range (0 and above max)
+        for val in ["0", "100001"] {
+            env::set_var("SSE_REPLAY_BUFFER_BLOCKS", val);
+            let err = Config::from_env().unwrap_err();
+            assert!(err.to_string().contains("must be between 1 and 100000"), "expected range error for {val}");
+        }
+
+        // Non-numeric
+        env::set_var("SSE_REPLAY_BUFFER_BLOCKS", "abc");
+        assert!(Config::from_env().unwrap_err().to_string().contains("Invalid SSE_REPLAY_BUFFER_BLOCKS"));
+
+        env::remove_var("SSE_REPLAY_BUFFER_BLOCKS");
+    }
+}

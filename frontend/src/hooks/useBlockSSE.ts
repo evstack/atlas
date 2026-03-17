@@ -62,6 +62,7 @@ export default function useBlockSSE(): BlockSSEState {
   const blockLogRef = useRef<BlockLog>([]);
   const pollTimerRef = useRef<number | null>(null);
   const connectedRef = useRef(false);
+  const highestSeenRef = useRef<number>(-1);
 
   // --- Drain: emit one block per chain-rate interval ---
 
@@ -96,6 +97,9 @@ export default function useBlockSSE(): BlockSSEState {
   }, [drainOne]);
 
   const enqueue = useCallback((data: NewBlockEvent) => {
+    if (data.block.number <= highestSeenRef.current) return;
+    highestSeenRef.current = data.block.number;
+
     // Update bps from on-chain block timestamps
     const log = blockLogRef.current;
     log.push({ num: data.block.number, ts: data.block.timestamp });
@@ -130,7 +134,8 @@ export default function useBlockSSE(): BlockSSEState {
     const poll = async () => {
       try {
         const status = await getStatus();
-        if (typeof status?.block_height === 'number' && !connectedRef.current) {
+        if (typeof status?.block_height === 'number' && !connectedRef.current && status.block_height > highestSeenRef.current) {
+          highestSeenRef.current = status.block_height;
           setHeight(status.block_height);
           setLastUpdatedAt(Date.now());
         }

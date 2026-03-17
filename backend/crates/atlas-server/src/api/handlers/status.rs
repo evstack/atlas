@@ -23,15 +23,15 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Ch
     }
 
     // Fallback: single key-value lookup from indexer_state (sub-ms, avoids blocks table)
-    let row: Option<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT value, updated_at FROM indexer_state WHERE key = 'last_indexed_block'",
+    let row: Option<(i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT value::bigint, updated_at FROM indexer_state WHERE key = 'last_indexed_block'",
     )
     .fetch_optional(&state.pool)
     .await?;
 
-    if let Some((value, updated_at)) = row {
+    if let Some((block_height, updated_at)) = row {
         return Ok(Json(ChainStatus {
-            block_height: value.parse().unwrap_or(0),
+            block_height,
             indexed_at: Some(updated_at.to_rfc3339()),
         }));
     }
@@ -40,4 +40,65 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Ch
         block_height: 0,
         indexed_at: None,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::head::HeadTracker;
+    use atlas_common::Block;
+    use chrono::Utc;
+
+    fn sample_block(number: i64) -> Block {
+        Block {
+            number,
+            hash: format!("0x{:064x}", number),
+            parent_hash: format!("0x{:064x}", number.saturating_sub(1)),
+            timestamp: 1_700_000_000 + number,
+            gas_used: 21_000,
+            gas_limit: 30_000_000,
+            transaction_count: 1,
+            indexed_at: Utc::now(),
+        }
+    }
+
+    fn test_state(head_tracker: Arc<HeadTracker>) -> State<Arc<AppState>> {
+        let (tx, _) = tokio::sync::broadcast::channel(1);
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://test@localhost:5432/test")
+            .expect("lazy pool");
+        State(Arc::new(AppState {
+            pool,
+            block_events_tx: tx,
+            head_tracker,
+            rpc_url: String::new(),
+        }))
+    }
+
+    #[tokio::test]
+    async fn status_returns_head_tracker_block() {
+        let tracker = Arc::new(HeadTracker::empty(10));
+        tracker
+            .publish_committed_batch(vec![sample_block(42)])
+            .await;
+
+        let result = get_status(test_state(tracker)).await;
+        let Json(status) = result.unwrap_or_else(|_| panic!("get_status should not fail"));
+
+        assert_eq!(status.block_height, 42);
+        assert!(status.indexed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn status_returns_latest_head_after_multiple_publishes() {
+        let tracker = Arc::new(HeadTracker::empty(10));
+        tracker
+            .publish_committed_batch(vec![sample_block(10), sample_block(11), sample_block(12)])
+            .await;
+
+        let result = get_status(test_state(tracker)).await;
+        let Json(status) = result.unwrap_or_else(|_| panic!("get_status should not fail"));
+
+        assert_eq!(status.block_height, 12);
+    }
 }

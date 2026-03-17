@@ -12,7 +12,9 @@ use tokio::sync::broadcast;
 
 use crate::api::handlers::get_latest_block;
 use crate::api::AppState;
+use crate::head::HeadTracker;
 use atlas_common::Block;
+use sqlx::PgPool;
 use tracing::warn;
 
 type SseStream = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
@@ -22,16 +24,13 @@ struct NewBlockEvent {
     block: Block,
 }
 
-/// GET /api/events — Server-Sent Events stream for live committed block updates.
-/// New connections receive only the current latest block and then stream
-/// forward from in-memory committed head state. Historical catch-up stays on
-/// the canonical block endpoints.
-pub async fn block_events(State(state): State<Arc<AppState>>) -> Sse<SseStream> {
-    let pool = state.pool.clone();
-    let head_tracker = state.head_tracker.clone();
-    let mut rx = state.block_events_tx.subscribe();
-
-    let stream = async_stream::stream! {
+/// Build the SSE block stream. Separated from the handler for testability.
+fn make_block_stream(
+    pool: PgPool,
+    head_tracker: Arc<HeadTracker>,
+    mut rx: broadcast::Receiver<()>,
+) -> impl Stream<Item = Result<Event, Infallible>> + Send {
+    async_stream::stream! {
         let mut last_block_number: Option<i64> = None;
 
         match head_tracker.latest().await {
@@ -88,8 +87,19 @@ pub async fn block_events(State(state): State<Arc<AppState>>) -> Sse<SseStream> 
                 Some(_) | None => {}
             }
         }
-    };
+    }
+}
 
+/// GET /api/events — Server-Sent Events stream for live committed block updates.
+/// New connections receive only the current latest block and then stream
+/// forward from in-memory committed head state. Historical catch-up stays on
+/// the canonical block endpoints.
+pub async fn block_events(State(state): State<Arc<AppState>>) -> Sse<SseStream> {
+    let stream = make_block_stream(
+        state.pool.clone(),
+        state.head_tracker.clone(),
+        state.block_events_tx.subscribe(),
+    );
     sse_response(stream)
 }
 
@@ -116,7 +126,9 @@ fn block_to_event(block: Block) -> Option<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::head::HeadTracker;
     use chrono::Utc;
+    use futures::StreamExt;
 
     fn sample_block(number: i64) -> Block {
         Block {
@@ -129,6 +141,13 @@ mod tests {
             transaction_count: 1,
             indexed_at: Utc::now(),
         }
+    }
+
+    /// Lazy PgPool that never connects — safe for tests that don't hit the DB.
+    fn dummy_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://test@localhost:5432/test")
+            .expect("lazy pool creation should not fail")
     }
 
     #[test]
@@ -172,5 +191,106 @@ mod tests {
                 "block JSON missing field: {field}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn stream_seeds_from_head_tracker() {
+        let tracker = Arc::new(HeadTracker::empty(10));
+        tracker
+            .publish_committed_batch(vec![sample_block(42)])
+            .await;
+
+        let (tx, _) = broadcast::channel::<()>(16);
+        let rx = tx.subscribe();
+        let stream = make_block_stream(dummy_pool(), tracker, rx);
+        tokio::pin!(stream);
+
+        // Drop sender so loop terminates after the initial seed
+        drop(tx);
+
+        let first = tokio::time::timeout(Duration::from_secs(1), stream.next()).await;
+        assert!(
+            first.is_ok(),
+            "stream should yield initial event without blocking"
+        );
+        assert!(
+            first.unwrap().is_some(),
+            "stream should yield at least one event"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_replays_new_blocks_after_broadcast() {
+        let tracker = Arc::new(HeadTracker::empty(10));
+        tracker
+            .publish_committed_batch(vec![sample_block(42)])
+            .await;
+
+        let (tx, _) = broadcast::channel::<()>(16);
+        let rx = tx.subscribe();
+        let stream = make_block_stream(dummy_pool(), tracker.clone(), rx);
+        tokio::pin!(stream);
+
+        // Consume initial seed
+        let _ = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .unwrap();
+
+        // Publish a new block and broadcast
+        tracker
+            .publish_committed_batch(vec![sample_block(43)])
+            .await;
+        tx.send(()).unwrap();
+
+        let second = tokio::time::timeout(Duration::from_secs(1), stream.next()).await;
+        assert!(second.is_ok(), "stream should yield event after broadcast");
+        assert!(
+            second.unwrap().is_some(),
+            "broadcast should trigger a new event"
+        );
+
+        drop(tx);
+    }
+
+    #[tokio::test]
+    async fn stream_terminates_when_client_behind_tail() {
+        // Buffer capacity 3: only keeps 3 most recent blocks
+        let tracker = Arc::new(HeadTracker::empty(3));
+        tracker
+            .publish_committed_batch(vec![sample_block(10), sample_block(11), sample_block(12)])
+            .await;
+
+        let (tx, _) = broadcast::channel::<()>(16);
+        let rx = tx.subscribe();
+        let stream = make_block_stream(dummy_pool(), tracker.clone(), rx);
+        tokio::pin!(stream);
+
+        // Consume initial seed (latest = block 12)
+        let _ = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .unwrap();
+
+        // Advance buffer far ahead: client cursor=12, buffer will be [23,24,25]
+        tracker
+            .publish_committed_batch(vec![
+                sample_block(20),
+                sample_block(21),
+                sample_block(22),
+                sample_block(23),
+                sample_block(24),
+                sample_block(25),
+            ])
+            .await;
+        tx.send(()).unwrap();
+
+        // Stream should detect behind-tail and terminate
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            while (stream.next().await).is_some() {}
+        })
+        .await;
+        assert!(
+            result.is_ok(),
+            "stream should terminate when client falls behind replay tail"
+        );
     }
 }
