@@ -22,13 +22,7 @@ pub struct AppState {
 /// Build the Axum router.
 ///
 /// `cors_origin`: when `Some`, restrict CORS to that exact origin; when `None`,
-/// allow any origin (backwards-compatible default for development / self-hosted
-/// deployments).
-///
-/// NOTE: Rate limiting has not yet been added here. The `tower_governor` crate
-/// (v0.8, backed by `governor` v0.10) is incompatible with the `governor` v0.6
-/// already used by the indexer. Once the indexer's governor dependency is
-/// upgraded to v0.10, add a `GovernorLayer` with a per-IP burst of ~50 req/s.
+/// allow any origin for development / self-hosted deployments.
 pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router {
     // SSE route — excluded from TimeoutLayer so connections stay alive
     let sse_routes = Router::new()
@@ -163,8 +157,7 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
 /// Construct the CORS layer.
 ///
 /// When `cors_origin` is `Some`, restrict to that exact origin.
-/// When `None`, allow any origin so that self-hosted and development deployments
-/// work out of the box without requiring the env var.
+/// When `None`, allow any origin.
 fn build_cors_layer(cors_origin: Option<String>) -> CorsLayer {
     let origin = match cors_origin {
         Some(origin) => {
