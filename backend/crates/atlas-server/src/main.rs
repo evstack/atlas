@@ -6,6 +6,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod api;
 mod config;
+mod head;
 mod indexer;
 
 /// Retry delays for exponential backoff (in seconds)
@@ -42,16 +43,27 @@ async fn main() -> Result<()> {
 
     // Shared broadcast channel for SSE notifications
     let (block_events_tx, _) = broadcast::channel(1024);
+    let head_tracker = Arc::new(if config.reindex {
+        head::HeadTracker::empty(config.sse_replay_buffer_blocks)
+    } else {
+        head::HeadTracker::bootstrap(&api_pool, config.sse_replay_buffer_blocks).await?
+    });
 
     // Build AppState for API
     let state = Arc::new(api::AppState {
         pool: api_pool,
         block_events_tx: block_events_tx.clone(),
+        head_tracker: head_tracker.clone(),
         rpc_url: config.rpc_url.clone(),
     });
 
     // Spawn indexer task with retry logic
-    let indexer = indexer::Indexer::new(indexer_pool.clone(), config.clone(), block_events_tx);
+    let indexer = indexer::Indexer::new(
+        indexer_pool.clone(),
+        config.clone(),
+        block_events_tx,
+        head_tracker,
+    );
     tokio::spawn(async move {
         if let Err(e) = run_with_retry(|| indexer.run()).await {
             tracing::error!("Indexer terminated with error: {}", e);

@@ -29,22 +29,41 @@ Response format:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/height` | Current block height and indexer timestamp (lightweight, safe to poll frequently) |
-| GET | `/api/status` | Full chain status: chain ID, chain name, block height, total transactions, total addresses |
+| GET | `/api/status` | Current indexed block height and index timestamp (lightweight, safe to poll frequently) |
+| GET | `/api/events` | SSE stream of committed `new_block` events |
 | GET | `/health` | Health check (returns "OK") |
 
 **`/api/status` response:**
 ```json
 {
-  "chain_id": 1,
-  "chain_name": "My Chain",
   "block_height": 1000000,
-  "total_transactions": 5000000,
-  "total_addresses": 200000,
   "indexed_at": "2026-01-01T00:00:00+00:00"
 }
 ```
-`chain_name` is set via the `CHAIN_NAME` environment variable.
+
+`block_height` and `indexed_at` refer to the latest committed/indexed head.
+
+**`/api/events` SSE details:**
+
+- Event name: `new_block`
+- Payload:
+
+```json
+{
+  "block": {
+    "number": 1000000,
+    "hash": "0x...",
+    "parent_hash": "0x...",
+    "timestamp": 1700000000,
+    "gas_used": 21000,
+    "gas_limit": 30000000,
+    "transaction_count": 1,
+    "indexed_at": "2026-01-01T00:00:00+00:00"
+  }
+}
+```
+
+The stream represents the committed indexed head, not a speculative node-observed head. It is a head/tail stream, not a history replay API: new or reconnected clients resume from the current live tail, while canonical catch-up stays on `/api/blocks` and `/api/status`.
 
 ### Blocks
 

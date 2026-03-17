@@ -304,11 +304,6 @@ fn decode_abi_string(data: &[u8]) -> Option<String> {
 /// Only `http` and `https` are permitted after IPFS/Arweave resolution.
 /// `file://`, `ftp://`, `gopher://`, and other schemes are blocked to prevent
 /// SSRF via non-HTTP channels.
-///
-/// TODO: also block requests to private/RFC-1918 IP ranges (10.x, 172.16-31.x,
-/// 192.168.x, 127.x, 169.254.x) and IPv6 loopback/ULA addresses. This requires
-/// async DNS resolution before the HTTP request is issued so that the resolved
-/// address can be checked — add that once a suitable resolver is integrated.
 fn validate_metadata_url_scheme(url: &str) -> Result<(), AtlasError> {
     let scheme_end = url
         .find("://")
@@ -323,14 +318,65 @@ fn validate_metadata_url_scheme(url: &str) -> Result<(), AtlasError> {
     }
 }
 
+/// Returns true if the IP address is in a private, loopback, link-local, or
+/// other non-public range that should not be reachable from metadata fetches.
+fn is_non_public_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()          // 127.0.0.0/8
+                || v4.is_private()    // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local() // 169.254/16
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64/10 (CGNAT)
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()       // ::1
+                || v6.is_unspecified()
+                || (v6.segments()[0] & 0xFFC0) == 0xFE80 // fe80::/10 link-local
+                || (v6.segments()[0] & 0xFE00) == 0xFC00 // fc00::/7 ULA
+        }
+    }
+}
+
+/// Resolve the host from a URL and reject non-public IP addresses to prevent SSRF.
+async fn validate_resolved_host(url: &str) -> Result<(), AtlasError> {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|e| AtlasError::Validation(format!("Invalid metadata URL: {}", e)))?;
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AtlasError::Validation("Metadata URL has no host".to_string()))?;
+
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    let addr_str = format!("{}:{}", host, port);
+
+    let addrs = tokio::net::lookup_host(&addr_str)
+        .await
+        .map_err(|e| AtlasError::MetadataFetch(format!("DNS resolution failed for {}: {}", host, e)))?;
+
+    for addr in addrs {
+        if is_non_public_ip(&addr.ip()) {
+            return Err(AtlasError::Validation(format!(
+                "Metadata URL host {} resolves to non-public IP {}",
+                host, addr.ip()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// Fetch metadata JSON from a URI (handles IPFS)
 async fn fetch_metadata_from_uri(uri: &str) -> Result<NftMetadata, AtlasError> {
     let url = resolve_ipfs_url(uri);
 
     validate_metadata_url_scheme(&url)?;
+    validate_resolved_host(&url).await?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| AtlasError::MetadataFetch(e.to_string()))?;
 

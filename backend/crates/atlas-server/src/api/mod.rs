@@ -10,9 +10,12 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::head::HeadTracker;
+
 pub struct AppState {
     pub pool: PgPool,
     pub block_events_tx: broadcast::Sender<()>,
+    pub head_tracker: Arc<HeadTracker>,
     pub rpc_url: String,
 }
 

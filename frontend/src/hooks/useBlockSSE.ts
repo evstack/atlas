@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Block } from '../types';
 import { API_BASE_URL } from '../api/client';
+import { getStatus } from '../api/status';
 
 export interface NewBlockEvent {
   block: Block;
@@ -12,16 +13,14 @@ export interface BlockSSEState {
   connected: boolean;
   error: string | null;
   bps: number | null;
+  lastUpdatedAt: number | null;
 }
 
 type BlockLog = { num: number; ts: number }[];
-type QueuedBlock = { event: NewBlockEvent; receivedAt: number };
 
-const MIN_DRAIN_INTERVAL_MS = 30;
-const MAX_DRAIN_INTERVAL_MS = 500;
-const STREAM_BUFFER_BLOCKS = 3;
-const MAX_BUFFER_WAIT_MS = 320;
-const MAX_BURST_LEAD_IN_MS = 320;
+const MIN_DRAIN_MS = 30;
+const MAX_DRAIN_MS = 500;
+const POLL_INTERVAL_MS = 2000;
 
 /**
  * Compute bps from a rolling log of (blockNumber, blockTimestamp) samples.
@@ -39,32 +38,13 @@ function computeBpsFromLog(log: BlockLog, minSpan: number, fallbackMinSpan: numb
   return null;
 }
 
-function getDrainInterval(baseInterval: number, queueLength: number): number {
-  let interval = baseInterval;
-
-  // Speed up gently when backlog builds, but avoid collapsing back into bursts.
-  if (queueLength > 24) interval *= 0.62;
-  else if (queueLength > 12) interval *= 0.72;
-  else if (queueLength > 6) interval *= 0.82;
-  else if (queueLength > 2) interval *= 0.9;
-
-  return Math.max(MIN_DRAIN_INTERVAL_MS, interval);
-}
-
 /**
- * Connects to the SSE endpoint and delivers block events one-by-one.
+ * Connects to the SSE endpoint and delivers block events at the chain's natural
+ * cadence. Falls back to polling /api/status when SSE disconnects.
  *
- * SSE events can still arrive in bursts when the backend indexes a backlog.
- * React batching would collapse rapid setState calls, so we buffer into a
- * ref-based queue and drain one at a time at a steadier visual cadence.
- *
- * The drain interval is derived from the chain's true block time, computed
- * from on-chain block timestamps (not arrival/indexed times). We collect a
- * rolling window of (blockNumber, blockTimestamp) samples and compute
- * bps = deltaBlocks / deltaTimestamp. Since timestamps have second-level
- * granularity, we require at least 2 seconds of block-time span for accuracy.
- * This makes the visual cadence match the chain's actual speed, regardless of
- * indexer lag, network batching, or SSE delivery timing.
+ * The drain queue rate-limits setState calls so React doesn't collapse rapid
+ * arrivals from backend batch commits. The interval is derived from on-chain
+ * block timestamps (not arrival times), making visual cadence match the chain.
  */
 export default function useBlockSSE(): BlockSSEState {
   const [latestBlock, setLatestBlock] = useState<NewBlockEvent | null>(null);
@@ -72,165 +52,146 @@ export default function useBlockSSE(): BlockSSEState {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bps, setBps] = useState<number | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+
   const esRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
-  const queueRef = useRef<QueuedBlock[]>([]);
+  const queueRef = useRef<NewBlockEvent[]>([]);
   const drainTimerRef = useRef<number | null>(null);
-  const lastDrainAtRef = useRef<number>(0);
-  // Rolling window of (blockNumber, blockTimestamp) for chain-rate calculation.
-  // We keep up to 500 samples (~45s at 11 bps) and use two windows:
-  //  - 30s of block-time for the displayed bps (very stable)
-  //  - 10s of block-time for drain pacing (responsive enough to adapt)
-  const blockLogRef = useRef<BlockLog>([]);
-  // Cached drain interval in ms, derived from chain block timestamps
+  const drainOneRef = useRef<(() => void) | null>(null);
   const drainIntervalRef = useRef<number>(90); // initial guess ~11 bps
+  const blockLogRef = useRef<BlockLog>([]);
+  const pollTimerRef = useRef<number | null>(null);
+  const connectedRef = useRef(false);
+  const highestSeenRef = useRef<number>(-1);
 
-  const scheduleDrain = useCallback((fromBurstStart: boolean) => {
+  // --- Drain: emit one block per chain-rate interval ---
+
+  const scheduleDrain = useCallback(() => {
     if (drainTimerRef.current !== null || queueRef.current.length === 0) return;
-
-    const now = performance.now();
-    const queue = queueRef.current;
-    const interval = getDrainInterval(drainIntervalRef.current, queue.length);
-    const sinceLastDrain = lastDrainAtRef.current > 0 ? now - lastDrainAtRef.current : null;
-
-    let delay = 0;
-    if (sinceLastDrain !== null) {
-      delay = Math.max(0, interval - sinceLastDrain);
-    }
-
-    // Keep a small client-side buffer so the UI doesn't spend its final couple
-    // of items too early and expose the backend's batch cadence as a pause.
-    const oldestBufferedFor = now - queue[0].receivedAt;
-    if (queue.length < STREAM_BUFFER_BLOCKS && oldestBufferedFor < MAX_BUFFER_WAIT_MS) {
-      delay = Math.max(delay, Math.min(interval, MAX_BUFFER_WAIT_MS - oldestBufferedFor));
-    }
-
-    // When a backlog arrives after idle time, add a brief lead-in so the UI
-    // starts "dripping" rather than snapping to the first block immediately.
-    if (fromBurstStart && queue.length > 1) {
-      const burstLeadIn = Math.min(
-        MAX_BURST_LEAD_IN_MS,
-        interval * Math.min(queue.length - 1, STREAM_BUFFER_BLOCKS + 1),
-      );
-      delay = Math.max(delay, burstLeadIn);
-    }
-
-    drainTimerRef.current = window.setTimeout(drainOne, delay);
+    const interval = Math.max(MIN_DRAIN_MS, drainIntervalRef.current);
+    drainTimerRef.current = window.setTimeout(() => drainOneRef.current?.(), interval);
   }, []);
 
-  // Kick the drain loop when new items arrive.
-  const kickDrain = useCallback(() => {
-    scheduleDrain(true);
-  }, [scheduleDrain]);
+  const drainOne = useCallback(() => {
+    drainTimerRef.current = null;
+    const queue = queueRef.current;
+    if (queue.length === 0) return;
 
-  const connect = useCallback(function connectSSE() {
-    if (esRef.current) {
-      esRef.current.close();
+    // If queue backs up, skip to near the end
+    if (queue.length > 50) {
+      const skip = queue.splice(0, queue.length - 5);
+      const last = skip[skip.length - 1];
+      setHeight(last.block.number);
     }
 
-    const url = `${API_BASE_URL}/events`;
-    const es = new EventSource(url);
+    const next = queue.shift()!;
+    setLatestBlock(next);
+    setHeight(next.block.number);
+    setLastUpdatedAt(Date.now());
+
+    if (queue.length > 0) scheduleDrain();
+  }, [scheduleDrain]);
+
+  useEffect(() => {
+    drainOneRef.current = drainOne;
+  }, [drainOne]);
+
+  const enqueue = useCallback((data: NewBlockEvent) => {
+    if (data.block.number <= highestSeenRef.current) return;
+    highestSeenRef.current = data.block.number;
+
+    // Update bps from on-chain block timestamps
+    const log = blockLogRef.current;
+    log.push({ num: data.block.number, ts: data.block.timestamp });
+    if (log.length > 500) blockLogRef.current = log.slice(-500);
+
+    // Displayed bps: 30s window for stability, 5s fallback while bootstrapping
+    const displayBps = computeBpsFromLog(blockLogRef.current, 30, 5);
+    if (displayBps !== null) setBps(displayBps);
+
+    // Drain pacing: 10s window for moderate responsiveness, 2s fallback
+    const drainBps = computeBpsFromLog(blockLogRef.current, 10, 2);
+    if (drainBps !== null) {
+      drainIntervalRef.current = Math.max(MIN_DRAIN_MS, Math.min(MAX_DRAIN_MS, 1000 / drainBps));
+    }
+
+    queueRef.current.push(data);
+    scheduleDrain();
+  }, [scheduleDrain]);
+
+  // --- Polling fallback ---
+
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current !== null) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback(() => {
+    if (pollTimerRef.current !== null) return;
+
+    const poll = async () => {
+      try {
+        const status = await getStatus();
+        if (typeof status?.block_height === 'number' && !connectedRef.current && status.block_height > highestSeenRef.current) {
+          highestSeenRef.current = status.block_height;
+          setHeight(status.block_height);
+          setLastUpdatedAt(Date.now());
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+    poll();
+    pollTimerRef.current = window.setInterval(poll, POLL_INTERVAL_MS);
+  }, []);
+
+  // --- SSE connection ---
+
+  const connect = useCallback(() => {
+    if (esRef.current) esRef.current.close();
+
+    const es = new EventSource(`${API_BASE_URL}/events`);
     esRef.current = es;
 
     es.onopen = () => {
+      connectedRef.current = true;
       setConnected(true);
       setError(null);
+      stopPolling();
     };
 
     es.addEventListener('new_block', (e: MessageEvent) => {
       try {
-        const data: NewBlockEvent = JSON.parse(e.data);
-
-        // Log block number + on-chain timestamp for true chain-rate calculation
-        const log = blockLogRef.current;
-        log.push({ num: data.block.number, ts: data.block.timestamp });
-
-        // Keep last 500 samples (~45s at 11 bps)
-        if (log.length > 500) {
-          blockLogRef.current = log.slice(-500);
-        }
-
-        // Displayed bps: 30s window for stability, 5s fallback while bootstrapping
-        const displayBps = computeBpsFromLog(blockLogRef.current, 30, 5);
-        if (displayBps !== null) setBps(displayBps);
-
-        // Drain pacing: 10s window for moderate responsiveness, 2s fallback
-        const drainBps = computeBpsFromLog(blockLogRef.current, 10, 2);
-        if (drainBps !== null) {
-          drainIntervalRef.current = Math.max(
-            MIN_DRAIN_INTERVAL_MS,
-            Math.min(MAX_DRAIN_INTERVAL_MS, 1000 / drainBps),
-          );
-        }
-
-        // Push to ref queue — synchronous, never lost by React batching
-        queueRef.current.push({ event: data, receivedAt: performance.now() });
-        kickDrain();
+        enqueue(JSON.parse(e.data));
       } catch {
-        // Ignore malformed events
+        // ignore malformed events
       }
     });
 
     es.onerror = (e) => {
+      connectedRef.current = false;
       setConnected(false);
-      setError(`SSE ${e.type || 'error'}; retrying`);
-      es.close();
-      esRef.current = null;
-
-      if (reconnectTimeoutRef.current !== null) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      reconnectTimeoutRef.current = window.setTimeout(() => {
-        reconnectTimeoutRef.current = null;
-        connectSSE();
-      }, 2000);
+      setError(`SSE ${e.type || 'error'}; reconnecting`);
+      startPolling();
     };
-  }, [kickDrain]);
-
-  // Drain one block from the queue at the chain's natural cadence.
-  function drainOne() {
-    const queue = queueRef.current;
-    drainTimerRef.current = null;
-
-    if (queue.length === 0) return; // idle — kickDrain will restart when items arrive
-
-    // If queue is backing up (> 50 items), skip to near the end
-    if (queue.length > 50) {
-      const skip = queue.splice(0, queue.length - 5);
-      const lastSkipped = skip[skip.length - 1].event;
-      setHeight(lastSkipped.block.number);
-    }
-
-    const next = queue.shift()!.event;
-    setLatestBlock(next);
-    setHeight(next.block.number);
-    lastDrainAtRef.current = performance.now();
-
-    // Schedule next drain if more items remain
-    if (queue.length > 0) {
-      scheduleDrain(false);
-    }
-  }
+  }, [enqueue, stopPolling, startPolling]);
 
   useEffect(() => {
     connect();
-
     return () => {
       if (esRef.current) {
         esRef.current.close();
         esRef.current = null;
       }
-      if (reconnectTimeoutRef.current !== null) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
+      stopPolling();
       if (drainTimerRef.current !== null) {
         clearTimeout(drainTimerRef.current);
         drainTimerRef.current = null;
       }
-      lastDrainAtRef.current = 0;
     };
-  }, [connect]);
+  }, [connect, stopPolling]);
 
-  return { latestBlock, height, connected, error, bps };
+  return { latestBlock, height, connected, error, bps, lastUpdatedAt };
 }
