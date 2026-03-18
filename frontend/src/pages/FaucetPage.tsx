@@ -61,7 +61,7 @@ export default function FaucetPage() {
     return [
       {
         label: 'Balance',
-        value: `${formatEtherExact(faucetInfo.balance_wei)} ETH`,
+        value: `${formatEtherExact(faucetInfo.balance_wei).replace(/^(\d+\.\d{4})\d*$/, '$1')} ETH`,
         hint: 'Current faucet wallet balance',
       },
       {
@@ -166,7 +166,6 @@ export default function FaucetPage() {
                 Drips are rate-limited per address and per IP. Use this faucet for test networks only.
               </p>
             </div>
-            <span className="badge-chip">Optional</span>
           </div>
 
           <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
@@ -206,7 +205,7 @@ export default function FaucetPage() {
           {infoCards.map((card) => (
             <div key={card.label} className="card p-4">
               <p className="text-xs uppercase tracking-[0.24em] text-gray-500">{card.label}</p>
-              <p className="mt-2 text-lg font-semibold text-fg">{card.value}</p>
+              <p className="mt-2 text-lg font-semibold text-fg truncate" title={card.value}>{card.value}</p>
               <p className="mt-1 text-xs text-gray-500">{card.hint}</p>
             </div>
           ))}
