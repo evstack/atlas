@@ -14,7 +14,7 @@ pub struct HeightResponse {
 
 #[derive(Serialize)]
 pub struct ChainStatus {
-    pub chain_id: u64,
+    pub chain_id: String,
     pub chain_name: String,
     pub block_height: i64,
     pub total_transactions: i64,
@@ -59,7 +59,7 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Ch
     let total_addresses = get_table_count(&state.pool, "addresses").await?;
 
     Ok(Json(ChainStatus {
-        chain_id: state.chain_id,
+        chain_id: state.chain_id.to_string(),
         chain_name: state.chain_name.clone(),
         block_height,
         total_transactions,

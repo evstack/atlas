@@ -6,7 +6,7 @@ export interface HeightResponse {
 }
 
 export interface ChainStatusResponse {
-  chain_id: number;
+  chain_id: string;
   chain_name: string;
   block_height: number;
   total_transactions: number;
@@ -14,7 +14,7 @@ export interface ChainStatusResponse {
   indexed_at: string; // ISO timestamp
 }
 
-export async function getStatus(): Promise<HeightResponse> {
+export async function getHeight(): Promise<HeightResponse> {
   const response = await client.get<HeightResponse>('/height');
   return response.data;
 }

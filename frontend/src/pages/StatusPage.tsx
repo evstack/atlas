@@ -66,7 +66,7 @@ export default function StatusPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <StatusStat label="Chain ID" value={status ? status.chain_id.toString() : '—'} />
+            <StatusStat label="Chain ID" value={status?.chain_id || '—'} />
             <StatusStat label="Chain Name" value={status?.chain_name || 'Unknown'} />
             <StatusStat label="Block Height" value={liveBlockHeight !== null ? formatNumber(liveBlockHeight) : '—'} />
             <StatusStat label="Total Transactions" value={status ? formatNumber(status.total_transactions) : '—'} />
