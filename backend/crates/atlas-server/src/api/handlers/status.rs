@@ -111,6 +111,7 @@ mod tests {
             head_tracker,
             rpc_url: String::new(),
             da_tracking_enabled: false,
+            faucet: None,
             chain_id: 1,
             chain_name: "Test Chain".to_string(),
         }))

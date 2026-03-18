@@ -4,8 +4,12 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use alloy::providers::ProviderBuilder;
+use alloy::signers::local::PrivateKeySigner;
+
 mod api;
 mod config;
+mod faucet;
 mod head;
 mod indexer;
 
@@ -55,6 +59,30 @@ async fn main() -> Result<()> {
     // Load configuration
     dotenvy::dotenv().ok();
     let config = config::Config::from_env()?;
+    let faucet_config = config::FaucetConfig::from_env()?;
+
+    let faucet = if faucet_config.enabled {
+        tracing::info!("Faucet enabled");
+        let private_key = faucet_config
+            .private_key
+            .as_ref()
+            .expect("validated faucet private key");
+        let signer: PrivateKeySigner = private_key.parse().expect("validated faucet private key");
+        let rpc_url: reqwest::Url = config
+            .rpc_url
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid RPC_URL for faucet: {e}"))?;
+        let provider = ProviderBuilder::new().wallet(signer).connect_http(rpc_url);
+        Some(Arc::new(faucet::FaucetService::new(
+            provider,
+            faucet_config.amount_wei.expect("validated faucet amount"),
+            faucet_config
+                .cooldown_minutes
+                .expect("validated faucet cooldown"),
+        )) as Arc<dyn faucet::FaucetBackend>)
+    } else {
+        None
+    };
 
     tracing::info!("Fetching chain ID from RPC");
     let chain_id = fetch_chain_id(&config.rpc_url).await?;
@@ -88,6 +116,7 @@ async fn main() -> Result<()> {
         head_tracker: head_tracker.clone(),
         rpc_url: config.rpc_url.clone(),
         da_tracking_enabled: config.da_tracking_enabled,
+        faucet,
         chain_id,
         chain_name: config.chain_name.clone(),
     });

@@ -2,15 +2,19 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useMemo } from 'react';
 import SearchBar from './SearchBar';
 import useBlockSSE from '../hooks/useBlockSSE';
+import useFaucetInfo from '../hooks/useFaucetInfo';
 import SmoothCounter from './SmoothCounter';
 import logoImg from '../assets/logo.png';
 import { BlockStatsContext } from '../context/BlockStatsContext';
+import { FaucetInfoContext } from '../context/FaucetInfoContext';
 import { useTheme } from '../hooks/useTheme';
 
 export default function Layout() {
   const location = useLocation();
   const isHome = location.pathname === '/';
   const sse = useBlockSSE();
+  const faucetInfoResult = useFaucetInfo();
+  const { faucetInfo } = faucetInfoResult;
 
   const blockTimeLabel = useMemo(() => {
     if (sse.bps !== null && sse.bps > 0) {
@@ -64,6 +68,11 @@ export default function Layout() {
               <NavLink to="/status" className={navLinkClass}>
                 Status
               </NavLink>
+              {faucetInfo && (
+                <NavLink to="/faucet" className={navLinkClass}>
+                  Faucet
+                </NavLink>
+              )}
             </nav>
 
             {/* Right status: latest height + live pulse */}
@@ -139,6 +148,11 @@ export default function Layout() {
             <NavLink to="/status" className={navLinkClass}>
               Status
             </NavLink>
+            {faucetInfo && (
+              <NavLink to="/faucet" className={navLinkClass}>
+                Faucet
+              </NavLink>
+            )}
             <button
               type="button"
               onClick={toggleTheme}
@@ -202,7 +216,9 @@ export default function Layout() {
               subscribeDaResync: sse.subscribeDaResync,
             }}
           >
-            <Outlet />
+            <FaucetInfoContext.Provider value={faucetInfoResult}>
+              <Outlet />
+            </FaucetInfoContext.Provider>
           </BlockStatsContext.Provider>
         </div>
       </main>

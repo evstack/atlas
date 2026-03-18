@@ -5,6 +5,7 @@ import { Pagination, TxHashLink, BlockLink, StatusBadge, AddressLink, CopyButton
 import ImageIpfs from '../components/ImageIpfs';
 import { formatNumber, formatTimeAgo, formatEtherExact, formatTokenAmount, formatUsd, formatTokenAmountExact } from '../utils';
 import { useEthPrice } from '../hooks';
+import { getToken } from '../api/tokens';
 
 type TabType = 'transactions' | 'tokens' | 'nfts' | 'transfers';
 
@@ -37,7 +38,6 @@ export default function AddressPage() {
 
   // Fetch ERC-20 decimals for transfers on this page
   // Keeps UI exact for token amounts; defaults to 18 if unavailable
-  // Use dynamic import for tokens API to avoid circular imports at module scope
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -47,7 +47,6 @@ export default function AddressPage() {
           .map(t => t.contract_address.toLowerCase())
       ));
       if (unique.length === 0) return;
-      const { getToken } = await import('../api/tokens');
       const updates: Record<string, { decimals: number }> = {};
       for (const addr of unique) {
         try {
