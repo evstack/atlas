@@ -53,7 +53,7 @@ impl Config {
             bail!("SSE_REPLAY_BUFFER_BLOCKS must be between 1 and 100000");
         }
 
-        let explicit_da_tracking_enabled: bool = env::var("ENABLE_DA_TRACKING")
+        let da_tracking_enabled: bool = env::var("ENABLE_DA_TRACKING")
             .unwrap_or_else(|_| "false".to_string())
             .parse()
             .context("Invalid ENABLE_DA_TRACKING")?;
@@ -62,8 +62,6 @@ impl Config {
             .ok()
             .map(|url| url.trim().to_string())
             .filter(|url| !url.is_empty());
-
-        let da_tracking_enabled = explicit_da_tracking_enabled || raw_evnode_url.is_some();
 
         let evnode_url = if da_tracking_enabled {
             Some(raw_evnode_url.ok_or_else(|| {
@@ -224,7 +222,7 @@ mod tests {
         set_required_env();
         clear_da_env();
 
-        env::set_var("EVNODE_URL", "");
+        env::set_var("EVNODE_URL", "http://ev-node:7331");
         env::set_var("DA_WORKER_CONCURRENCY", "not-a-number");
         env::set_var("DA_RPC_REQUESTS_PER_SECOND", "not-a-number");
 
@@ -262,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn evnode_url_alone_enables_da_tracking() {
+    fn evnode_url_alone_does_not_enable_da_tracking() {
         let _lock = ENV_LOCK.lock().unwrap();
         set_required_env();
         clear_da_env();
@@ -270,8 +268,13 @@ mod tests {
         env::set_var("EVNODE_URL", "http://ev-node:7331");
 
         let config = Config::from_env().unwrap();
-        assert!(config.da_tracking_enabled);
-        assert_eq!(config.evnode_url.as_deref(), Some("http://ev-node:7331"));
+        assert!(!config.da_tracking_enabled);
+        assert!(config.evnode_url.is_none());
+        assert_eq!(config.da_worker_concurrency, DEFAULT_DA_WORKER_CONCURRENCY);
+        assert_eq!(
+            config.da_rpc_requests_per_second,
+            DEFAULT_DA_RPC_REQUESTS_PER_SECOND
+        );
 
         clear_da_env();
     }

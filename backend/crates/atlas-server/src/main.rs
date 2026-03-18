@@ -106,12 +106,12 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Spawn DA worker if EVNODE_URL is configured
+    // Spawn DA worker when DA tracking is explicitly enabled.
     if config.da_tracking_enabled {
         let evnode_url = config
             .evnode_url
             .as_deref()
-            .expect("ENABLE_DA_TRACKING requires EVNODE_URL");
+            .expect("DA tracking requires EVNODE_URL");
         tracing::info!(
             "DA tracking enabled (workers: {}, rate_limit: {} req/s)",
             config.da_worker_concurrency,

@@ -89,7 +89,7 @@ pub struct AppState {
 ```
 
 ### DA tracking (optional)
-When DA tracking is enabled, a background DA worker queries ev-node for Celestia inclusion heights per block. Updates are pushed to SSE clients via an in-process `broadcast::Sender<Vec<DaSseUpdate>>`. The SSE handler streams `da_batch` events for incremental updates and emits `da_resync` when a client falls behind and should refetch visible DA state.
+When `ENABLE_DA_TRACKING=true`, a background DA worker queries ev-node for Celestia inclusion heights per block. `EVNODE_URL` is required only in that mode. Updates are pushed to SSE clients via an in-process `broadcast::Sender<Vec<DaSseUpdate>>`. The SSE handler streams `da_batch` events for incremental updates and emits `da_resync` when a client falls behind and should refetch visible DA state.
 
 ### Frontend API client
 - Base URL: `/api` (proxied by nginx to `atlas-server:3000`)
