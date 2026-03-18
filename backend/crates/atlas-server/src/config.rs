@@ -3,9 +3,17 @@ use std::env;
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    // Shared
     pub database_url: String,
-    pub db_max_connections: u32,
     pub rpc_url: String,
+
+    // Indexer pool
+    pub indexer_db_max_connections: u32,
+
+    // API pool
+    pub api_db_max_connections: u32,
+
+    // Indexer-specific
     pub rpc_requests_per_second: u32,
     pub start_block: u64,
     pub batch_size: u64,
@@ -15,21 +23,31 @@ pub struct Config {
     pub metadata_retry_attempts: u32,
     pub fetch_workers: u32,
     pub rpc_batch_size: u32,
-    /// ev-node Connect RPC URL for DA status tracking. None = DA feature disabled.
+
+    // DA tracking (optional)
     pub evnode_url: Option<String>,
-    /// Number of concurrent requests to ev-node for DA status backfill.
     pub da_worker_concurrency: u32,
+
+    // API-specific
+    pub api_host: String,
+    pub api_port: u16,
 }
 
 impl Config {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             database_url: env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
-            db_max_connections: env::var("DB_MAX_CONNECTIONS")
+            rpc_url: env::var("RPC_URL").context("RPC_URL must be set")?,
+
+            indexer_db_max_connections: env::var("DB_MAX_CONNECTIONS")
                 .unwrap_or_else(|_| "20".to_string())
                 .parse()
                 .context("Invalid DB_MAX_CONNECTIONS")?,
-            rpc_url: env::var("RPC_URL").context("RPC_URL must be set")?,
+            api_db_max_connections: env::var("API_DB_MAX_CONNECTIONS")
+                .unwrap_or_else(|_| "20".to_string())
+                .parse()
+                .context("Invalid API_DB_MAX_CONNECTIONS")?,
+
             rpc_requests_per_second: env::var("RPC_REQUESTS_PER_SECOND")
                 .unwrap_or_else(|_| "100".to_string())
                 .parse()
@@ -64,11 +82,18 @@ impl Config {
                 .unwrap_or_else(|_| "20".to_string())
                 .parse()
                 .context("Invalid RPC_BATCH_SIZE")?,
+
             evnode_url: env::var("EVNODE_URL").ok(),
             da_worker_concurrency: env::var("DA_WORKER_CONCURRENCY")
                 .unwrap_or_else(|_| "50".to_string())
                 .parse()
                 .context("Invalid DA_WORKER_CONCURRENCY")?,
+
+            api_host: env::var("API_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
+            api_port: env::var("API_PORT")
+                .unwrap_or_else(|_| "3000".to_string())
+                .parse()
+                .context("Invalid API_PORT")?,
         })
     }
 }

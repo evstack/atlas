@@ -5,8 +5,8 @@ use axum::{
 use serde::Serialize;
 use std::sync::Arc;
 
-use crate::error::ApiResult;
-use crate::AppState;
+use crate::api::error::ApiResult;
+use crate::api::AppState;
 use atlas_common::{AtlasError, Block, BlockDaStatus, PaginatedResponse, Pagination, Transaction};
 
 /// Block response with optional DA status.
@@ -41,7 +41,7 @@ pub async fn list_blocks(
          FROM blocks
          WHERE number <= $2
          ORDER BY number DESC
-         LIMIT $1"
+         LIMIT $1",
     )
     .bind(limit)
     .bind(cursor)
@@ -85,16 +85,13 @@ pub async fn get_block(
     let block: Block = sqlx::query_as(
         "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
          FROM blocks
-         WHERE number = $1"
+         WHERE number = $1",
     )
     .bind(number)
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| AtlasError::NotFound(format!("Block {} not found", number)))?;
 
-    // Always query DA status — returns None when no row exists (DA worker hasn't checked yet,
-    // or EVNODE_URL is not configured). The frontend uses the features.da_tracking flag from
-    // /api/status to decide whether to display DA information.
     let da_status: Option<BlockDaStatus> = sqlx::query_as(
         "SELECT block_number, header_da_height, data_da_height, updated_at
          FROM block_da_status
@@ -122,7 +119,7 @@ pub async fn get_block_transactions(
          FROM transactions
          WHERE block_number = $1
          ORDER BY block_index ASC
-         LIMIT $2 OFFSET $3"
+         LIMIT $2 OFFSET $3",
     )
     .bind(number)
     .bind(pagination.limit())

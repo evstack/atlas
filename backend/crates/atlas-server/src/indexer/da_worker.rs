@@ -24,15 +24,16 @@
 //!
 //! A block flows: backfill (phase 1) → update-pending (phase 2) → done.
 //!
-//! After each batch, a PostgreSQL NOTIFY is sent on the `atlas_da_updates` channel
-//! so the API's SSE handler can push live DA status changes to connected frontends.
+//! After each batch, the worker sends updated block numbers through an in-process
+//! broadcast channel so the SSE handler can push live DA status changes to clients.
 
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
 use sqlx::PgPool;
 use std::time::Duration;
+use tokio::sync::broadcast;
 
-use crate::evnode::EvnodeClient;
+use super::evnode::EvnodeClient;
 
 /// Total RPC budget per cycle, split between backfill and pending.
 const BATCH_SIZE: i64 = 100;
@@ -40,21 +41,25 @@ const BATCH_SIZE: i64 = 100;
 /// Sleep when idle (no work in either phase).
 const IDLE_SLEEP: Duration = Duration::from_millis(500);
 
-/// PostgreSQL NOTIFY channel for DA status updates.
-const DA_EVENT_CHANNEL: &str = "atlas_da_updates";
-
 pub struct DaWorker {
     pool: PgPool,
     client: EvnodeClient,
     concurrency: usize,
+    da_events_tx: broadcast::Sender<Vec<i64>>,
 }
 
 impl DaWorker {
-    pub fn new(pool: PgPool, evnode_url: &str, concurrency: u32) -> Result<Self> {
+    pub fn new(
+        pool: PgPool,
+        evnode_url: &str,
+        concurrency: u32,
+        da_events_tx: broadcast::Sender<Vec<i64>>,
+    ) -> Result<Self> {
         Ok(Self {
             pool,
             client: EvnodeClient::new(evnode_url),
             concurrency: concurrency as usize,
+            da_events_tx,
         })
     }
 
@@ -86,21 +91,12 @@ impl DaWorker {
         }
     }
 
-    /// Send a PostgreSQL NOTIFY with the block numbers that were updated,
-    /// so the API SSE handler can push live updates to frontends.
-    async fn notify_da_updates(&self, block_numbers: &[i64]) {
+    /// Notify SSE subscribers of DA status changes via in-process broadcast channel.
+    fn notify_da_updates(&self, block_numbers: &[i64]) {
         if block_numbers.is_empty() {
             return;
         }
-        let payload = serde_json::to_string(block_numbers).unwrap_or_default();
-        if let Err(e) = sqlx::query("SELECT pg_notify($1, $2)")
-            .bind(DA_EVENT_CHANNEL)
-            .bind(&payload)
-            .execute(&self.pool)
-            .await
-        {
-            tracing::warn!("Failed to send DA update notification: {}", e);
-        }
+        let _ = self.da_events_tx.send(block_numbers.to_vec());
     }
 
     /// Phase 1: Find blocks missing from block_da_status and query ev-node.
@@ -167,7 +163,7 @@ impl DaWorker {
             .await;
 
         let updated_blocks: Vec<i64> = results.into_iter().flatten().collect();
-        self.notify_da_updates(&updated_blocks).await;
+        self.notify_da_updates(&updated_blocks);
 
         Ok(count)
     }
@@ -232,7 +228,7 @@ impl DaWorker {
             .await;
 
         let updated_blocks: Vec<i64> = results.into_iter().flatten().collect();
-        self.notify_da_updates(&updated_blocks).await;
+        self.notify_da_updates(&updated_blocks);
 
         Ok(count)
     }

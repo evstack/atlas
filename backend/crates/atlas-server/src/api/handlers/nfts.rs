@@ -6,8 +6,8 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::error::ApiResult;
-use crate::AppState;
+use crate::api::error::ApiResult;
+use crate::api::AppState;
 use atlas_common::{AtlasError, NftContract, NftToken, NftTransfer, PaginatedResponse, Pagination};
 
 /// NFT metadata JSON structure (ERC-721 standard)

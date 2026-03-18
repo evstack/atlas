@@ -1,10 +1,10 @@
 [package]
-name = "atlas-api"
+name = "atlas-server"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "atlas-api"
+name = "atlas-server"
 path = "src/main.rs"
 
 [dependencies]
@@ -16,6 +16,7 @@ sqlx = { workspace = true }
 alloy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+reqwest = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
@@ -24,7 +25,14 @@ dotenvy = { workspace = true }
 bigdecimal = { workspace = true }
 hex = { workspace = true }
 chrono = { workspace = true }
-reqwest = { workspace = true }
 tokio-stream = { workspace = true }
 futures = { workspace = true }
 async-stream = { workspace = true }
+# Indexer-specific
+num-bigint = "0.4"
+async-channel = "2.3"
+governor = "0.6"
+tokio-postgres = { version = "0.7" }
+tokio-postgres-rustls = "0.12"
+rustls = "0.23"
+webpki-roots = "0.26"

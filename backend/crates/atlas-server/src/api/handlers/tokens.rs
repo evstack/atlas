@@ -4,8 +4,8 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::error::ApiResult;
-use crate::AppState;
+use crate::api::error::ApiResult;
+use crate::api::AppState;
 use atlas_common::{
     AtlasError, Erc20Balance, Erc20Contract, Erc20Holder, Erc20Transfer, PaginatedResponse,
     Pagination,

@@ -5,17 +5,16 @@
 
 use alloy::providers::{Provider, ProviderBuilder};
 use axum::{
-    extract::{Form, Query, State},
+    extract::{Query, State},
     Json,
 };
 use bigdecimal::BigDecimal;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::error::ApiResult;
-use crate::handlers::contracts;
-use crate::AppState;
-use atlas_common::{AtlasError, ContractAbi, Transaction, VerifyContractRequest};
+use crate::api::error::ApiResult;
+use crate::api::AppState;
+use atlas_common::{AtlasError, ContractAbi, Transaction};
 
 /// Etherscan API response wrapper
 #[derive(Debug, Serialize)]
@@ -73,47 +72,6 @@ pub struct EtherscanQuery {
     pub _apikey: Option<String>,
 }
 
-/// Etherscan-compatible contract verification request (form data)
-#[derive(Debug, Deserialize)]
-pub struct EtherscanVerifyRequest {
-    pub module: String,
-    pub action: String,
-    /// Contract address to verify
-    #[serde(rename = "contractaddress")]
-    pub contract_address: String,
-    /// Solidity source code
-    #[serde(rename = "sourceCode")]
-    pub source_code: String,
-    /// Contract name (e.g., "contracts/MyContract.sol:MyContract")
-    #[serde(rename = "contractname")]
-    pub contract_name: String,
-    /// Compiler version (e.g., "v0.8.20+commit.a1b2c3d4")
-    #[serde(rename = "compilerversion")]
-    pub compiler_version: String,
-    /// Optimization used (0 or 1)
-    #[serde(rename = "optimizationUsed", default)]
-    pub optimization_used: String,
-    /// Number of optimization runs
-    #[serde(default = "default_runs_str")]
-    pub runs: String,
-    /// Constructor arguments (hex encoded)
-    #[serde(rename = "constructorArguements", default)] // Note: Etherscan typo is intentional
-    pub constructor_arguments: String,
-    /// EVM version
-    #[serde(rename = "evmversion", default)]
-    pub evm_version: String,
-    /// License type (1-14 mapped to SPDX identifiers)
-    #[serde(rename = "licenseType", default)]
-    pub license_type: String,
-    /// API key
-    #[serde(default, rename = "apikey")]
-    pub _apikey: String,
-}
-
-fn default_runs_str() -> String {
-    "200".to_string()
-}
-
 /// Main Etherscan API router (GET requests)
 pub async fn etherscan_api(
     State(state): State<Arc<AppState>>,
@@ -129,117 +87,6 @@ pub async fn etherscan_api(
             format!("Unknown module: {}", query.module),
             serde_json::Value::Null,
         ))?)),
-    }
-}
-
-/// Etherscan API POST handler (for verification)
-pub async fn etherscan_api_post(
-    State(state): State<Arc<AppState>>,
-    Form(form): Form<EtherscanVerifyRequest>,
-) -> ApiResult<Json<serde_json::Value>> {
-    if form.module != "contract" {
-        return Ok(Json(serde_json::to_value(EtherscanResponse::error(
-            format!(
-                "POST only supported for contract module, got: {}",
-                form.module
-            ),
-            serde_json::Value::Null,
-        ))?));
-    }
-
-    match form.action.as_str() {
-        "verifysourcecode" => verify_source_code_etherscan(state, form).await,
-        _ => Ok(Json(serde_json::to_value(EtherscanResponse::error(
-            format!("Unknown action: {}", form.action),
-            serde_json::Value::Null,
-        ))?)),
-    }
-}
-
-/// Etherscan-compatible verifysourcecode implementation
-async fn verify_source_code_etherscan(
-    state: Arc<AppState>,
-    form: EtherscanVerifyRequest,
-) -> ApiResult<Json<serde_json::Value>> {
-    // Detect if source is standard JSON input
-    let is_standard_json = form.source_code.trim().starts_with('{')
-        && form.source_code.contains("\"language\"")
-        && form.source_code.contains("\"sources\"");
-
-    // Parse optimization setting
-    let optimization_enabled = form.optimization_used == "1";
-
-    // Parse runs
-    let optimization_runs: u32 = form.runs.parse().unwrap_or(200);
-
-    // Map license type number to SPDX identifier
-    let license_type = map_license_type(&form.license_type);
-
-    // Build the internal verification request
-    let request = VerifyContractRequest {
-        address: form.contract_address,
-        source_code: form.source_code,
-        contract_name: form.contract_name,
-        compiler_version: form.compiler_version,
-        optimization_enabled,
-        optimization_runs,
-        constructor_args: if form.constructor_arguments.is_empty() {
-            None
-        } else {
-            Some(form.constructor_arguments)
-        },
-        evm_version: if form.evm_version.is_empty() {
-            None
-        } else {
-            Some(form.evm_version)
-        },
-        license_type,
-        is_standard_json,
-    };
-
-    // Call the internal verification logic
-    match contracts::verify_contract(axum::extract::State(state), Json(request)).await {
-        Ok(Json(response)) => {
-            if response.success {
-                // Etherscan returns a GUID for async verification, we verify synchronously
-                // Return success with address as the "GUID"
-                Ok(Json(serde_json::to_value(EtherscanResponse::ok(
-                    response.address,
-                ))?))
-            } else {
-                Ok(Json(serde_json::to_value(EtherscanResponse::error(
-                    response
-                        .message
-                        .unwrap_or_else(|| "Verification failed".to_string()),
-                    serde_json::Value::Null,
-                ))?))
-            }
-        }
-        Err(e) => Ok(Json(serde_json::to_value(EtherscanResponse::error(
-            e.to_string(),
-            serde_json::Value::Null,
-        ))?)),
-    }
-}
-
-/// Map Etherscan license type numbers to SPDX identifiers
-fn map_license_type(license_num: &str) -> Option<String> {
-    match license_num {
-        "1" => Some("Unlicense".to_string()),
-        "2" => Some("MIT".to_string()),
-        "3" => Some("GPL-2.0".to_string()),
-        "4" => Some("GPL-3.0".to_string()),
-        "5" => Some("LGPL-2.1".to_string()),
-        "6" => Some("LGPL-3.0".to_string()),
-        "7" => Some("BSD-2-Clause".to_string()),
-        "8" => Some("BSD-3-Clause".to_string()),
-        "9" => Some("MPL-2.0".to_string()),
-        "10" => Some("OSL-3.0".to_string()),
-        "11" => Some("Apache-2.0".to_string()),
-        "12" => Some("AGPL-3.0".to_string()),
-        "13" => Some("BSL-1.1".to_string()),
-        "14" => Some("BUSL-1.1".to_string()),
-        _ => None,
     }
 }
 

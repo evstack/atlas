@@ -2,8 +2,8 @@ use axum::{extract::State, Json};
 use serde::Serialize;
 use std::sync::Arc;
 
-use crate::error::ApiResult;
-use crate::AppState;
+use crate::api::error::ApiResult;
+use crate::api::AppState;
 
 #[derive(Serialize)]
 pub struct ChainFeatures {
