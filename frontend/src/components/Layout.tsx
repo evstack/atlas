@@ -1,7 +1,6 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import SearchBar from './SearchBar';
-import useLatestBlockHeight from '../hooks/useLatestBlockHeight';
 import useBlockSSE from '../hooks/useBlockSSE';
 import SmoothCounter from './SmoothCounter';
 import logoImg from '../assets/logo.png';
@@ -12,99 +11,17 @@ export default function Layout() {
   const location = useLocation();
   const isHome = location.pathname === '/';
   const sse = useBlockSSE();
-  const { height, lastUpdatedAt, bps } = useLatestBlockHeight(2000, sse);
-  const [now, setNow] = useState(() => Date.now());
-  const recentlyUpdated = lastUpdatedAt ? (now - lastUpdatedAt) < 10000 : false;
-  const [displayedHeight, setDisplayedHeight] = useState<number | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const displayRafRef = useRef<number | null>(null);
-  const lastFrameRef = useRef<number>(0);
-  const displayedRef = useRef<number>(0);
-  const displayInitializedRef = useRef(false);
 
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  // Update displayed height
-  // When SSE is connected: show exact height from SSE (increments one-by-one)
-  // When polling: use bps prediction to smooth between poll intervals
-  useEffect(() => {
-    if (height == null) {
-      if (displayRafRef.current !== null) {
-        cancelAnimationFrame(displayRafRef.current);
-      }
-      displayRafRef.current = window.requestAnimationFrame(() => {
-        setDisplayedHeight(null);
-        displayInitializedRef.current = false;
-        displayRafRef.current = null;
-      });
-      return;
-    }
-
-    // Initialize displayed to at least current height on first run
-    if (!displayInitializedRef.current || height > displayedRef.current) {
-      displayedRef.current = Math.max(displayedRef.current || 0, height);
-      if (displayRafRef.current !== null) {
-        cancelAnimationFrame(displayRafRef.current);
-      }
-      displayRafRef.current = window.requestAnimationFrame(() => {
-        setDisplayedHeight(displayedRef.current);
-        displayInitializedRef.current = true;
-        displayRafRef.current = null;
-      });
-    }
-
-    // When SSE is connected, just track the real height directly — no prediction.
-    // The initialization block above already scheduled a RAF to call setDisplayedHeight
-    // whenever height changes, so no synchronous setState needed here.
-    if (sse.connected) {
-      displayedRef.current = height;
-      return;
-    }
-
-    // Polling mode: use bps prediction to smooth between poll intervals
-    const loop = (t: number) => {
-      if (!bps || bps <= 0) {
-        if (displayedRef.current !== height) {
-          displayedRef.current = height;
-          setDisplayedHeight(displayedRef.current);
-        }
-      } else {
-        const now = t || performance.now();
-        const dt = lastFrameRef.current ? (now - lastFrameRef.current) / 1000 : 0;
-        lastFrameRef.current = now;
-
-        const predicted = displayedRef.current + bps * dt;
-        const next = Math.max(height, Math.floor(predicted));
-        if (next !== displayedRef.current) {
-          displayedRef.current = next;
-          setDisplayedHeight(next);
-        }
-      }
-      rafRef.current = window.requestAnimationFrame(loop);
-    };
-
-    rafRef.current = window.requestAnimationFrame(loop);
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      if (displayRafRef.current) cancelAnimationFrame(displayRafRef.current);
-      rafRef.current = null;
-      displayRafRef.current = null;
-      lastFrameRef.current = 0;
-    };
-  }, [height, bps, sse.connected]);
   const blockTimeLabel = useMemo(() => {
-    if (bps !== null && bps > 0) {
-      const secs = 1 / bps;
+    if (sse.bps !== null && sse.bps > 0) {
+      const secs = 1 / sse.bps;
       if (secs < 1) {
         return `${Math.round(secs * 1000)} ms`;
       }
       return `${secs.toFixed(1)} s`;
     }
     return '—';
-  }, [bps]);
+  }, [sse.bps]);
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     `inline-flex items-center h-10 px-4 rounded-full leading-none transition-colors duration-150 ${
       isActive
@@ -185,10 +102,10 @@ export default function Layout() {
               </button>
               <div className="flex items-center gap-3 text-sm text-gray-300">
                 <span
-                  className={`inline-block w-2.5 h-2.5 rounded-full ${sse.connected ? 'bg-green-500 live-dot' : recentlyUpdated ? 'bg-red-500 live-dot' : 'bg-gray-600'}`}
-                  title={sse.connected ? 'SSE connected' : recentlyUpdated ? 'Polling' : 'Idle'}
+                  className={`inline-block w-2.5 h-2.5 rounded-full ${sse.connected ? 'bg-green-500 live-dot' : sse.height !== null ? 'bg-red-500 live-dot' : 'bg-gray-600'}`}
+                  title={sse.connected ? 'SSE connected' : sse.height !== null ? 'Polling' : 'Idle'}
                 />
-                <SmoothCounter value={displayedHeight} />
+                <SmoothCounter value={sse.height} />
                 <span className="text-gray-600">|</span>
                 <span
                   className="font-mono tabular-nums inline-block w-16 text-right whitespace-nowrap"
@@ -269,7 +186,16 @@ export default function Layout() {
       {/* Main content */}
       <main className="flex-1">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <BlockStatsContext.Provider value={{ bps, height: displayedHeight, latestBlockEvent: sse.latestBlock, latestDaUpdate: sse.latestDaUpdate, sseConnected: sse.connected, subscribeDa: sse.subscribeDa }}>
+          <BlockStatsContext.Provider
+            value={{
+              bps: sse.bps,
+              height: sse.height,
+              latestBlockEvent: sse.latestBlock,
+              latestDaUpdate: sse.latestDaUpdate,
+              sseConnected: sse.connected,
+              subscribeDa: sse.subscribeDa,
+            }}
+          >
             <Outlet />
           </BlockStatsContext.Provider>
         </div>

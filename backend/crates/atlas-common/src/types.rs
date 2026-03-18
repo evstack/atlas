@@ -238,6 +238,10 @@ pub struct ContractAbi {
     pub verified_at: DateTime<Utc>,
 }
 
+/// SQL column list for the `blocks` table, matching the field order in [`Block`].
+pub const BLOCK_COLUMNS: &str =
+    "number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at";
+
 /// Pagination parameters
 #[derive(Debug, Clone, Deserialize)]
 pub struct Pagination {
@@ -256,7 +260,7 @@ fn default_limit() -> u32 {
 
 impl Pagination {
     pub fn offset(&self) -> i64 {
-        ((self.page.saturating_sub(1)) * self.limit) as i64
+        (self.page.saturating_sub(1) as i64) * self.limit()
     }
 
     pub fn limit(&self) -> i64 {

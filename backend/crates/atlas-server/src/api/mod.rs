@@ -6,19 +6,26 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
+
+use crate::head::HeadTracker;
 
 pub struct AppState {
     pub pool: PgPool,
     pub block_events_tx: broadcast::Sender<()>,
     pub da_events_tx: broadcast::Sender<Vec<i64>>,
+    pub head_tracker: Arc<HeadTracker>,
     pub rpc_url: String,
     pub evnode_url: Option<String>,
 }
 
-pub fn build_router(state: Arc<AppState>) -> Router {
+/// Build the Axum router.
+///
+/// `cors_origin`: when `Some`, restrict CORS to that exact origin; when `None`,
+/// allow any origin for development / self-hosted deployments.
+pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router {
     // SSE route — excluded from TimeoutLayer so connections stay alive
     let sse_routes = Router::new()
         .route("/api/events", get(handlers::sse::block_events))
@@ -145,11 +152,26 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Merge SSE routes (no TimeoutLayer so connections stay alive)
         .merge(sse_routes)
         // Shared layers applied to all routes
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+        .layer(build_cors_layer(cors_origin))
         .layer(TraceLayer::new_for_http())
+}
+
+/// Construct the CORS layer.
+///
+/// When `cors_origin` is `Some`, restrict to that exact origin.
+/// When `None`, allow any origin.
+fn build_cors_layer(cors_origin: Option<String>) -> CorsLayer {
+    let origin = match cors_origin {
+        Some(origin) => {
+            let header_value = origin
+                .parse::<axum::http::HeaderValue>()
+                .expect("CORS_ORIGIN is not a valid HTTP header value");
+            AllowOrigin::exact(header_value)
+        }
+        None => AllowOrigin::any(),
+    };
+    CorsLayer::new()
+        .allow_origin(origin)
+        .allow_methods(Any)
+        .allow_headers(Any)
 }

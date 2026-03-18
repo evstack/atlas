@@ -1,32 +1,35 @@
-    # Architecture
+# Architecture
 
 ## Overview
 
-Atlas is a modular Ethereum L2 blockchain indexer and API server built in Rust. It indexes blocks, transactions, ERC-20 tokens, and NFTs from any EVM-compatible chain.
+Atlas is a modular Ethereum L2 blockchain indexer and API server built in Rust. The `atlas-server` process runs both the indexer and the HTTP API, indexing blocks, transactions, ERC-20 tokens, and NFTs from any EVM-compatible chain.
 
 ## System Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    PostgreSQL Database                       │
-│  (Partitioned tables for blocks, transactions, transfers)   │
-└─────────────────────────────────────────────────────────────┘
-         ↑                                           ↑
-         │ (Read-Write)                              │ (Read-Only)
-    ┌────────────────────┐              ┌────────────────────────┐
-    │  Atlas Indexer     │              │     Atlas API Server   │
-    │  ───────────────   │              │  ────────────────────  │
-    │ • Block Fetcher    │              │ • REST Endpoints       │
-    │ • TX Processing    │              │ • Contract ABIs        │
-    │ • Event Parsing    │              │ • Etherscan Compat     │
-    │ • Metadata Fetcher │              │ • Search               │
-    └────────────────────┘              └────────────────────────┘
-              │
-              ↓
-    ┌─────────────────────┐
-    │  Ethereum Node      │
-    │  (JSON-RPC)         │
-    └─────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                         atlas-server process                        │
+│                                                                    │
+│  ┌────────────────────┐      post-commit publish      ┌──────────┐ │
+│  │      Indexer       │ ────────────────────────────► │HeadTracker│ │
+│  │ • RPC block fetch  │                               │ latest    │ │
+│  │ • Batch assembly   │                               │ live tail │ │
+│  │ • DB writes        │                               └─────┬────┘ │
+│  └─────────┬──────────┘                                     │      │
+│            │                                                │      │
+│            ▼                                                ▼      │
+│  ┌────────────────────┐                           ┌────────────────┐│
+│  │ PostgreSQL         │                           │ HTTP API       ││
+│  │ canonical history  │                           │ • REST         ││
+│  │ blocks/indexes     │                           │ • SSE events   ││
+│  └────────────────────┘                           └────────────────┘│
+└────────────────────────────────────────────────────────────────────┘
+                             ▲
+                             │
+                    ┌─────────────────────┐
+                    │  Ethereum Node      │
+                    │  (JSON-RPC)         │
+                    └─────────────────────┘
 ```
 
 ## Project Structure
@@ -36,8 +39,7 @@ atlas/
 ├── backend/
 │   ├── crates/
 │   │   ├── atlas-common/     # Shared types, DB models, error handling
-│   │   ├── atlas-indexer/    # Block indexer + metadata fetcher
-│   │   └── atlas-api/        # REST API server (Axum)
+│   │   └── atlas-server/     # Combined indexer + API server (Axum)
 │   └── migrations/           # PostgreSQL migrations
 ├── frontend/                 # React frontend (Vite + Tailwind)
 └── docker-compose.yml

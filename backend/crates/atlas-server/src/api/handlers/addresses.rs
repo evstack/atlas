@@ -93,8 +93,8 @@ pub async fn list_addresses(
                 COALESCE(e.name, n.name) as name,
                 COALESCE(e.symbol, n.symbol) as symbol
             FROM addresses a
-            LEFT JOIN erc20_contracts e ON LOWER(a.address) = LOWER(e.address)
-            LEFT JOIN nft_contracts n ON LOWER(a.address) = LOWER(n.address)
+            LEFT JOIN erc20_contracts e ON a.address = e.address
+            LEFT JOIN nft_contracts n ON a.address = n.address
 
             UNION ALL
 
@@ -108,7 +108,7 @@ pub async fn list_addresses(
                 e.name,
                 e.symbol
             FROM erc20_contracts e
-            WHERE NOT EXISTS (SELECT 1 FROM addresses a WHERE LOWER(a.address) = LOWER(e.address))
+            WHERE NOT EXISTS (SELECT 1 FROM addresses a WHERE a.address = e.address)
 
             UNION ALL
 
@@ -122,7 +122,7 @@ pub async fn list_addresses(
                 n.name,
                 n.symbol
             FROM nft_contracts n
-            WHERE NOT EXISTS (SELECT 1 FROM addresses a WHERE LOWER(a.address) = LOWER(n.address))
+            WHERE NOT EXISTS (SELECT 1 FROM addresses a WHERE a.address = n.address)
         )
         SELECT * FROM all_addresses
     "#;
@@ -195,7 +195,7 @@ pub async fn get_address(
     let base_addr: Option<Address> = sqlx::query_as(
         "SELECT address, is_contract, first_seen_block, tx_count
          FROM addresses
-         WHERE LOWER(address) = LOWER($1)",
+         WHERE address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -205,7 +205,7 @@ pub async fn get_address(
     let nft_contract: Option<NftContractRow> = sqlx::query_as(
         "SELECT address, name, symbol, total_supply, first_seen_block
          FROM nft_contracts
-         WHERE LOWER(address) = LOWER($1)",
+         WHERE address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -215,7 +215,7 @@ pub async fn get_address(
     let erc20_contract: Option<Erc20ContractRow> = sqlx::query_as(
         "SELECT address, name, symbol, decimals, total_supply, first_seen_block
          FROM erc20_contracts
-         WHERE LOWER(address) = LOWER($1)",
+         WHERE address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)

@@ -157,7 +157,7 @@ async fn handle_proxy_module(
     state: Arc<AppState>,
     query: EtherscanQuery,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let provider = ProviderBuilder::new().on_http(
+    let provider = ProviderBuilder::new().connect_http(
         state
             .rpc_url
             .parse()
@@ -189,10 +189,7 @@ async fn handle_proxy_module(
                     .map_err(|_| AtlasError::InvalidInput("Invalid block number".to_string()))?
             };
             let block = provider
-                .get_block_by_number(
-                    alloy::rpc::types::BlockNumberOrTag::Number(block_num),
-                    alloy::rpc::types::BlockTransactionsKind::Full,
-                )
+                .get_block_by_number(alloy::rpc::types::BlockNumberOrTag::Number(block_num))
                 .await
                 .map_err(|e| AtlasError::Rpc(e.to_string()))?;
             Ok(Json(serde_json::to_value(EtherscanResponse::ok(block))?))
@@ -233,7 +230,7 @@ async fn get_balance(
     let address = normalize_address(address);
 
     // Get balance from RPC
-    let provider = ProviderBuilder::new().on_http(
+    let provider = ProviderBuilder::new().connect_http(
         state
             .rpc_url
             .parse()
@@ -263,7 +260,7 @@ async fn get_balance_multi(
         .as_ref()
         .ok_or_else(|| AtlasError::InvalidInput("address required".to_string()))?;
 
-    let provider = ProviderBuilder::new().on_http(
+    let provider = ProviderBuilder::new().connect_http(
         state
             .rpc_url
             .parse()
@@ -271,6 +268,13 @@ async fn get_balance_multi(
     );
 
     let addresses: Vec<&str> = addresses_str.split(',').collect();
+
+    if addresses.len() > 20 {
+        return Err(
+            AtlasError::Validation("Maximum 20 addresses allowed per request".into()).into(),
+        );
+    }
+
     let mut results = Vec::new();
 
     for addr_str in addresses {
@@ -336,7 +340,7 @@ async fn get_tx_list(
     let sql = format!(
         "SELECT hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used, input_data, status, contract_created, timestamp
          FROM transactions
-         WHERE LOWER(from_address) = LOWER($1) OR LOWER(to_address) = LOWER($1)
+         WHERE from_address = $1 OR to_address = $1
          ORDER BY block_number {}, block_index {}
          LIMIT $2 OFFSET $3",
         order, order
@@ -456,8 +460,8 @@ async fn get_token_tx_list(
         "SELECT t.id, t.tx_hash, t.log_index, t.contract_address, t.from_address, t.to_address, t.value, t.block_number, t.timestamp,
                 c.name, c.symbol, COALESCE(c.decimals, 18) as decimals
          FROM erc20_transfers t
-         LEFT JOIN erc20_contracts c ON LOWER(t.contract_address) = LOWER(c.address)
-         WHERE LOWER(t.from_address) = LOWER($1) OR LOWER(t.to_address) = LOWER($1)
+         LEFT JOIN erc20_contracts c ON t.contract_address = c.address
+         WHERE t.from_address = $1 OR t.to_address = $1
          ORDER BY t.block_number DESC, t.log_index DESC
          LIMIT $2 OFFSET $3",
     )
@@ -520,7 +524,7 @@ async fn get_token_balance(
 
     let balance: Option<(BigDecimal,)> = sqlx::query_as(
         "SELECT balance FROM erc20_balances
-         WHERE LOWER(address) = LOWER($1) AND LOWER(contract_address) = LOWER($2)",
+         WHERE address = $1 AND contract_address = $2",
     )
     .bind(&address)
     .bind(&contract_address)
@@ -553,7 +557,7 @@ async fn get_contract_abi(
     let abi: Option<ContractAbi> = sqlx::query_as(
         "SELECT address, abi, source_code, compiler_version, optimization_used, runs, verified_at
          FROM contract_abis
-         WHERE LOWER(address) = LOWER($1)",
+         WHERE address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -606,7 +610,7 @@ async fn get_source_code(
     let contract: Option<ContractAbi> = sqlx::query_as(
         "SELECT address, abi, source_code, compiler_version, optimization_used, runs, verified_at
          FROM contract_abis
-         WHERE LOWER(address) = LOWER($1)",
+         WHERE address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -615,7 +619,7 @@ async fn get_source_code(
     // Check if it's a proxy
     let proxy: Option<(String, String)> = sqlx::query_as(
         "SELECT proxy_type, implementation_address FROM proxy_contracts
-         WHERE LOWER(proxy_address) = LOWER($1)",
+         WHERE proxy_address = $1",
     )
     .bind(&address)
     .fetch_optional(&state.pool)
@@ -673,11 +677,10 @@ async fn get_tx_receipt_status(
         .ok_or_else(|| AtlasError::InvalidInput("txhash required".to_string()))?;
     let txhash = normalize_hash(txhash);
 
-    let status: Option<(bool,)> =
-        sqlx::query_as("SELECT status FROM transactions WHERE LOWER(hash) = LOWER($1)")
-            .bind(&txhash)
-            .fetch_optional(&state.pool)
-            .await?;
+    let status: Option<(bool,)> = sqlx::query_as("SELECT status FROM transactions WHERE hash = $1")
+        .bind(&txhash)
+        .fetch_optional(&state.pool)
+        .await?;
 
     match status {
         Some((success,)) => Ok(Json(serde_json::to_value(EtherscanResponse::ok(

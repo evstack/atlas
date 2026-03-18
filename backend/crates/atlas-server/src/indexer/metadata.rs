@@ -1,9 +1,8 @@
 use alloy::{
     network::Ethereum,
     primitives::{Address, U256},
-    providers::{ProviderBuilder, RootProvider},
+    providers::RootProvider,
     sol,
-    transports::http::{Client, Http},
 };
 use anyhow::Result;
 use bigdecimal::BigDecimal;
@@ -34,7 +33,7 @@ sol! {
     }
 }
 
-type HttpProvider = RootProvider<Http<Client>, Ethereum>;
+type HttpProvider = RootProvider<Ethereum>;
 
 pub struct MetadataFetcher {
     pool: PgPool,
@@ -50,7 +49,7 @@ impl MetadataFetcher {
             .build()
             .expect("Failed to create HTTP client");
 
-        let provider = Arc::new(ProviderBuilder::new().on_http(config.rpc_url.parse()?));
+        let provider = Arc::new(RootProvider::new_http(config.rpc_url.parse()?));
 
         Ok(Self {
             pool,
@@ -252,10 +251,10 @@ async fn fetch_nft_contract_metadata(
     let contract = IERC721Metadata::new(address, provider);
 
     // Fetch name (optional - some contracts don't implement it)
-    let name = contract.name().call().await.ok().map(|r| r._0);
+    let name = contract.name().call().await.ok();
 
     // Fetch symbol (optional)
-    let symbol = contract.symbol().call().await.ok().map(|r| r._0);
+    let symbol = contract.symbol().call().await.ok();
 
     // Fetch totalSupply (optional - ERC-721 doesn't require it)
     let total_supply = contract
@@ -263,7 +262,7 @@ async fn fetch_nft_contract_metadata(
         .call()
         .await
         .ok()
-        .map(|r| r._0.try_into().unwrap_or(0i64));
+        .map(|r| r.try_into().unwrap_or(0i64));
 
     sqlx::query(
         "UPDATE nft_contracts SET
@@ -294,13 +293,13 @@ async fn fetch_erc20_contract_metadata(
     let contract = IERC20Metadata::new(address, provider);
 
     // Fetch name
-    let name = contract.name().call().await.ok().map(|r| r._0);
+    let name = contract.name().call().await.ok();
 
     // Fetch symbol
-    let symbol = contract.symbol().call().await.ok().map(|r| r._0);
+    let symbol = contract.symbol().call().await.ok();
 
     // Fetch decimals
-    let decimals = contract.decimals().call().await.ok().map(|r| r._0 as i16);
+    let decimals = contract.decimals().call().await.ok().map(|r| r as i16);
 
     // Fetch totalSupply
     let total_supply = contract
@@ -308,7 +307,7 @@ async fn fetch_erc20_contract_metadata(
         .call()
         .await
         .ok()
-        .map(|r| BigDecimal::from_str(&r._0.to_string()).unwrap_or_default());
+        .map(|r| BigDecimal::from_str(&r.to_string()).unwrap_or_default());
 
     sqlx::query(
         "UPDATE erc20_contracts SET
@@ -520,7 +519,7 @@ async fn fetch_token_uri(
     let contract = IERC721Metadata::new(address, provider);
     let uri = contract.tokenURI(token_id_u256).call().await?;
 
-    Ok(uri._0)
+    Ok(uri)
 }
 
 /// Resolve IPFS, Arweave, and other URI schemes to HTTP URLs
