@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { getChainStatus, type ChainStatusResponse } from '../api/status';
 import { formatNumber } from '../utils';
 import Loading from '../components/Loading';
+import { BlockStatsContext } from '../context/BlockStatsContext';
 
 export default function StatusPage() {
+  const blockStats = useContext(BlockStatsContext);
   const [status, setStatus] = useState<ChainStatusResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,8 +39,11 @@ export default function StatusPage() {
     };
   }, []);
 
-  const lastIndexed = status?.indexed_at
-    ? new Date(status.indexed_at).toLocaleString(undefined, {
+  const liveBlockHeight = blockStats.height ?? status?.block_height ?? null;
+  const liveIndexedAt = blockStats.latestBlockEvent?.block.indexed_at ?? status?.indexed_at ?? null;
+
+  const lastIndexed = liveIndexedAt
+    ? new Date(liveIndexedAt).toLocaleString(undefined, {
         timeStyle: 'medium',
         dateStyle: 'medium',
       })
@@ -63,7 +68,7 @@ export default function StatusPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <StatusStat label="Chain ID" value={status ? status.chain_id.toString() : '—'} />
             <StatusStat label="Chain Name" value={status?.chain_name || 'Unknown'} />
-            <StatusStat label="Block Height" value={status ? formatNumber(status.block_height) : '—'} />
+            <StatusStat label="Block Height" value={liveBlockHeight !== null ? formatNumber(liveBlockHeight) : '—'} />
             <StatusStat label="Total Transactions" value={status ? formatNumber(status.total_transactions) : '—'} />
             <StatusStat label="Total Addresses" value={status ? formatNumber(status.total_addresses) : '—'} />
             <StatusStat label="Last Indexed" value={lastIndexed} />
