@@ -1,7 +1,7 @@
 use axum::{
     extract::State,
-    response::IntoResponse,
     response::sse::{Event, Sse},
+    response::IntoResponse,
 };
 use futures::stream::Stream;
 use serde::Serialize;
