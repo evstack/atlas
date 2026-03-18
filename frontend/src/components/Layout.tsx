@@ -63,6 +63,9 @@ export default function Layout() {
               <NavLink to="/nfts" className={navLinkClass}>
                 NFTs
               </NavLink>
+              <NavLink to="/status" className={navLinkClass}>
+                Status
+              </NavLink>
               {faucetInfo && (
                 <NavLink to="/faucet" className={navLinkClass}>
                   Faucet
@@ -139,6 +142,9 @@ export default function Layout() {
             </NavLink>
             <NavLink to="/nfts" className={navLinkClass}>
               NFTs
+            </NavLink>
+            <NavLink to="/status" className={navLinkClass}>
+              Status
             </NavLink>
             {faucetInfo && (
               <NavLink to="/faucet" className={navLinkClass}>

@@ -19,6 +19,8 @@ pub struct AppState {
     pub head_tracker: Arc<HeadTracker>,
     pub rpc_url: String,
     pub faucet: Option<SharedFaucetBackend>,
+    pub chain_id: u64,
+    pub chain_name: String,
 }
 
 /// Build the Axum router.
@@ -141,6 +143,7 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         // Search
         .route("/api/search", get(handlers::search::search))
         // Status
+        .route("/api/height", get(handlers::status::get_height))
         .route("/api/status", get(handlers::status::get_status))
         // Health
         .route("/health", get(|| async { "OK" }));
@@ -166,7 +169,6 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
-
 /// Construct the CORS layer.
 ///
 /// When `cors_origin` is `Some`, restrict to that exact origin.
@@ -240,6 +242,8 @@ mod tests {
             head_tracker,
             rpc_url: String::new(),
             faucet,
+            chain_id: 1,
+            chain_name: "Test Chain".to_string(),
         })
     }
 

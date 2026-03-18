@@ -17,6 +17,7 @@ import {
   SearchResultsPage,
   AddressesPage,
   FaucetPage,
+  StatusPage,
 } from './pages';
 import { ThemeProvider } from './context/ThemeContext';
 
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="nfts" element={<NFTsPage />} />
             <Route path="nfts/:contract" element={<NFTContractPage />} />
             <Route path="nfts/:contract/:tokenId" element={<NFTTokenPage />} />
+            <Route path="status" element={<StatusPage />} />
             <Route path="tokens" element={<TokensPage />} />
             <Route path="tokens/:address" element={<TokenDetailPage />} />
             <Route path="faucet" element={<FaucetPage />} />
