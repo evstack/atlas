@@ -170,11 +170,11 @@
 
 /* DA dot pulse when status changes via SSE */
 .animate-da-pulse {
-  animation: daPulse 1.5s ease-out;
+  animation: da-pulse 1.5s ease-out;
 }
 
-@keyframes daPulse {
-  0% { transform: scale(2.2); opacity: 0.5; box-shadow: 0 0 8px currentColor; }
+@keyframes da-pulse {
+  0% { transform: scale(2.2); opacity: 0.5; box-shadow: 0 0 8px currentcolor; }
   40% { transform: scale(1.4); opacity: 0.8; }
   100% { transform: scale(1); opacity: 1; box-shadow: none; }
 }

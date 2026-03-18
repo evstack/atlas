@@ -79,19 +79,20 @@ For large tables (transactions, addresses), use `pg_class.reltuples` instead of 
 pub struct AppState {
     pub pool: PgPool,                                // API pool only
     pub block_events_tx: broadcast::Sender<()>,      // shared with indexer
-    pub da_events_tx: broadcast::Sender<Vec<i64>>,   // shared with DA worker
+    pub da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>, // shared with DA worker
+    pub head_tracker: Arc<HeadTracker>,
     pub rpc_url: String,
-    pub evnode_url: Option<String>,                   // DA feature flag
+    pub da_tracking_enabled: bool,
 }
 ```
 
 ### DA tracking (optional)
-When `EVNODE_URL` is set, a background DA worker queries ev-node for Celestia inclusion heights per block. Updates are pushed to SSE clients via an in-process `broadcast::Sender<Vec<i64>>` (block numbers that were updated). The SSE handler fetches DA status from the database and streams `da_batch` events.
+When DA tracking is enabled, a background DA worker queries ev-node for Celestia inclusion heights per block. Updates are pushed to SSE clients via an in-process `broadcast::Sender<Vec<DaSseUpdate>>`. The SSE handler streams `da_batch` events for incremental updates and emits `da_resync` when a client falls behind and should refetch visible DA state.
 
 ### Frontend API client
 - Base URL: `/api` (proxied by nginx to `atlas-server:3000`)
-- `GET /api/status` → `{ block_height, indexed_at, features: { da_tracking } }` — single key-value lookup from `indexer_state`, sub-ms. Used by the navbar as a polling fallback when SSE is disconnected.
-- `GET /api/events` → SSE stream of `new_block` and `da_batch` events. Primary live-update path for navbar counter, blocks page, and DA status. Falls back to `/api/status` polling on disconnect.
+- `GET /api/status` → `{ block_height, indexed_at, features: { da_tracking } }` — serves from `head_tracker` first and falls back to `indexer_state` when the in-memory head is empty. Used by the navbar as a polling fallback when SSE is disconnected.
+- `GET /api/events` → SSE stream of `new_block`, `da_batch`, and `da_resync` events. Primary live-update path for navbar counter, blocks page, and DA status. Falls back to `/api/status` polling on disconnect.
 
 ## Important Conventions
 
@@ -118,7 +119,9 @@ Key vars (see `.env.example` for full list):
 | `ADMIN_API_KEY` | API | none |
 | `API_HOST` | API | `127.0.0.1` |
 | `API_PORT` | API | `3000` |
-| `EVNODE_URL` | server | none (DA tracking disabled) |
+| `ENABLE_DA_TRACKING` | server | `false` |
+| `EVNODE_URL` | server | none |
+| `DA_RPC_REQUESTS_PER_SECOND` | DA worker | `50` |
 | `DA_WORKER_CONCURRENCY` | DA worker | `50` |
 
 ## Running Locally

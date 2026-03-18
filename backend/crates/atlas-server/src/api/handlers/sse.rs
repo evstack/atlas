@@ -34,6 +34,11 @@ struct DaBatchEvent {
     updates: Vec<DaUpdateEvent>,
 }
 
+#[derive(Serialize, Debug)]
+struct DaResyncEvent {
+    required: bool,
+}
+
 /// Build the SSE stream. Separated from the handler for testability.
 fn make_event_stream(
     pool: PgPool,
@@ -112,8 +117,14 @@ fn make_event_stream(
                                 yield Ok(event);
                             }
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {
-                            // Missed some DA updates; frontend catches up via next fetch/poll.
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            warn!(
+                                skipped,
+                                "sse da: client fell behind DA update stream; requesting resync"
+                            );
+                            if let Some(event) = da_resync_event() {
+                                yield Ok(event);
+                            }
                         }
                         Err(broadcast::error::RecvError::Closed) => break,
                     }
@@ -168,6 +179,12 @@ fn da_batch_to_event(updates: &[DaSseUpdate]) -> Option<Event> {
         .map(|json| Event::default().event("da_batch").data(json))
 }
 
+fn da_resync_event() -> Option<Event> {
+    serde_json::to_string(&DaResyncEvent { required: true })
+        .ok()
+        .map(|json| Event::default().event("da_resync").data(json))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +202,14 @@ mod tests {
             gas_limit: 30_000_000,
             transaction_count: 1,
             indexed_at: Utc::now(),
+        }
+    }
+
+    fn sample_da_update(block_number: i64) -> DaSseUpdate {
+        DaSseUpdate {
+            block_number,
+            header_da_height: block_number * 10,
+            data_da_height: block_number * 10 + 1,
         }
     }
 
@@ -236,6 +261,13 @@ mod tests {
                 "block JSON missing field: {field}"
             );
         }
+    }
+
+    #[test]
+    fn da_resync_event_serializes_with_required_flag() {
+        let event = da_resync_event().expect("event should serialize");
+        let debug = format!("{event:?}");
+        assert!(debug.contains("da_resync"));
     }
 
     #[tokio::test]
@@ -349,6 +381,37 @@ mod tests {
             result.is_ok(),
             "stream should terminate when client falls behind replay tail"
         );
+
+        drop(tx);
+        drop(da_tx);
+    }
+
+    #[tokio::test]
+    async fn stream_emits_da_resync_when_da_updates_lag() {
+        let tracker = Arc::new(HeadTracker::empty(10));
+        tracker
+            .publish_committed_batch(vec![sample_block(42)])
+            .await;
+
+        let (tx, _) = broadcast::channel::<()>(16);
+        let (da_tx, _) = broadcast::channel::<Vec<DaSseUpdate>>(1);
+        let stream = make_event_stream(dummy_pool(), tracker, tx.subscribe(), da_tx.subscribe());
+        tokio::pin!(stream);
+
+        let _ = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .unwrap();
+
+        da_tx.send(vec![sample_da_update(100)]).unwrap();
+        da_tx.send(vec![sample_da_update(101)]).unwrap();
+
+        let next = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let debug = format!("{next:?}");
+        assert!(debug.contains("da_resync"));
 
         drop(tx);
         drop(da_tx);

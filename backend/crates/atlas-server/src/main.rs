@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
             da_events_tx,
         )?;
         tokio::spawn(async move {
-            if let Err(e) = da_worker.run().await {
+            if let Err(e) = run_with_retry(|| da_worker.run()).await {
                 tracing::error!("DA worker terminated with error: {}", e);
             }
         });

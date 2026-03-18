@@ -92,27 +92,29 @@ impl EvnodeClient {
             match self.do_request(height).await {
                 Ok((h, d)) => return Ok((h, d)),
                 Err(e) => {
-                    let delay_ms = RETRY_DELAYS_MS
-                        .get(attempt)
-                        .copied()
-                        .unwrap_or(*RETRY_DELAYS_MS.last().unwrap());
-
-                    tracing::warn!(
-                        "ev-node GetBlock failed for height {} (attempt {}): {}. Retrying in {}ms",
-                        height,
-                        attempt + 1,
-                        e,
-                        delay_ms,
-                    );
-
                     last_error = Some(e);
-                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    if attempt + 1 < MAX_RETRIES {
+                        let delay_ms = RETRY_DELAYS_MS
+                            .get(attempt)
+                            .copied()
+                            .unwrap_or(*RETRY_DELAYS_MS.last().unwrap());
+
+                        tracing::warn!(
+                            "ev-node GetBlock failed for height {} (attempt {}): {}. Retrying in {}ms",
+                            height,
+                            attempt + 1,
+                            last_error.as_ref().unwrap(),
+                            delay_ms,
+                        );
+
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    }
                 }
             }
         }
 
         bail!(
-            "ev-node GetBlock failed for height {} after {} retries: {}",
+            "ev-node GetBlock failed for height {} after {} attempts: {}",
             height,
             MAX_RETRIES,
             last_error.unwrap()

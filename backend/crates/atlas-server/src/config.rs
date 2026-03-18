@@ -52,7 +52,7 @@ impl Config {
             bail!("SSE_REPLAY_BUFFER_BLOCKS must be between 1 and 100000");
         }
 
-        let da_tracking_enabled: bool = env::var("ENABLE_DA_TRACKING")
+        let explicit_da_tracking_enabled: bool = env::var("ENABLE_DA_TRACKING")
             .unwrap_or_else(|_| "false".to_string())
             .parse()
             .context("Invalid ENABLE_DA_TRACKING")?;
@@ -62,9 +62,11 @@ impl Config {
             .map(|url| url.trim().to_string())
             .filter(|url| !url.is_empty());
 
+        let da_tracking_enabled = explicit_da_tracking_enabled || raw_evnode_url.is_some();
+
         let evnode_url = if da_tracking_enabled {
             Some(raw_evnode_url.ok_or_else(|| {
-                anyhow::anyhow!("EVNODE_URL must be set when ENABLE_DA_TRACKING=true")
+                anyhow::anyhow!("EVNODE_URL must be set when DA tracking is enabled")
             })?)
         } else {
             None
@@ -246,13 +248,28 @@ mod tests {
         let err = Config::from_env().unwrap_err();
         assert!(err
             .to_string()
-            .contains("EVNODE_URL must be set when ENABLE_DA_TRACKING=true"));
+            .contains("EVNODE_URL must be set when DA tracking is enabled"));
 
         env::set_var("EVNODE_URL", "   ");
         let err = Config::from_env().unwrap_err();
         assert!(err
             .to_string()
-            .contains("EVNODE_URL must be set when ENABLE_DA_TRACKING=true"));
+            .contains("EVNODE_URL must be set when DA tracking is enabled"));
+
+        clear_da_env();
+    }
+
+    #[test]
+    fn evnode_url_alone_enables_da_tracking() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        clear_da_env();
+
+        env::set_var("EVNODE_URL", "http://ev-node:7331");
+
+        let config = Config::from_env().unwrap();
+        assert!(config.da_tracking_enabled);
+        assert_eq!(config.evnode_url.as_deref(), Some("http://ev-node:7331"));
 
         clear_da_env();
     }

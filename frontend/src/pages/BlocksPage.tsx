@@ -25,11 +25,14 @@ export default function BlocksPage() {
   const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: BLOCKS_PAGE_SIZE });
   const features = useFeatures();
   const hasLoaded = !loading || pagination !== null;
-  const { latestBlockEvent, sseConnected, subscribeDa } = useContext(BlockStatsContext);
+  const { latestBlockEvent, sseConnected, subscribeDa, subscribeDaResync } = useContext(BlockStatsContext);
   const [daOverrides, setDaOverrides] = useState<Map<number, BlockDaStatus>>(new Map());
   const [daHighlight, setDaHighlight] = useState<Set<number>>(new Set());
+  const daOverridesRef = useRef<Map<number, BlockDaStatus>>(new Map());
+  const daOverridesSyncRafRef = useRef<number | null>(null);
   const daHighlightTimeoutsRef = useRef<Map<number, number>>(new Map());
   const baseDaIncludedRef = useRef<Map<number, boolean>>(new Map());
+  const visibleDaBlocksRef = useRef<Set<number>>(new Set());
   const [, setTick] = useState(0);
   const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
   const lastSseBlockRef = useRef<number | null>(null);
@@ -92,59 +95,133 @@ export default function BlocksPage() {
   }, [fetchedBlocks, fetchedNumberSet, sseBlocks, page]);
 
   useEffect(() => {
+    if (!features.da_tracking) {
+      baseDaIncludedRef.current = new Map();
+      visibleDaBlocksRef.current = new Set();
+      if (daOverridesRef.current.size > 0) {
+        const empty = new Map<number, BlockDaStatus>();
+        daOverridesRef.current = empty;
+        if (daOverridesSyncRafRef.current !== null) {
+          cancelAnimationFrame(daOverridesSyncRafRef.current);
+        }
+        daOverridesSyncRafRef.current = window.requestAnimationFrame(() => {
+          setDaOverrides(empty);
+          daOverridesSyncRafRef.current = null;
+        });
+      }
+      return;
+    }
+
+    const visible = new Set<number>();
     const next = new Map<number, boolean>();
     for (const block of blocks) {
+      visible.add(block.number);
       next.set(block.number, isDaIncluded(block.da_status));
     }
     baseDaIncludedRef.current = next;
-  }, [blocks]);
+    visibleDaBlocksRef.current = visible;
+
+    let changed = false;
+    const nextOverrides = new Map<number, BlockDaStatus>();
+    for (const [blockNumber, status] of daOverridesRef.current) {
+      if (!visible.has(blockNumber)) {
+        changed = true;
+        continue;
+      }
+      nextOverrides.set(blockNumber, status);
+    }
+
+    if (changed || nextOverrides.size !== daOverridesRef.current.size) {
+      daOverridesRef.current = nextOverrides;
+      if (daOverridesSyncRafRef.current !== null) {
+        cancelAnimationFrame(daOverridesSyncRafRef.current);
+      }
+      daOverridesSyncRafRef.current = window.requestAnimationFrame(() => {
+        setDaOverrides(nextOverrides);
+        daOverridesSyncRafRef.current = null;
+      });
+    }
+  }, [blocks, features.da_tracking]);
 
   // Subscribe to DA updates from SSE. setState is called inside the subscription
   // callback (not synchronously in the effect body), satisfying react-hooks/set-state-in-effect.
   useEffect(() => {
+    if (!features.da_tracking) return;
     return subscribeDa((updates) => {
-      const transitionedToIncluded = new Set<number>();
-      setDaOverrides(prev => {
-        const next = new Map(prev);
-        for (const u of updates) {
-          const prevStatus = prev.get(u.block_number);
-          const wasIncluded = prevStatus
-            ? isDaIncluded(prevStatus)
-            : (baseDaIncludedRef.current.get(u.block_number) ?? false);
-          const nextStatus = {
-            block_number: u.block_number,
-            header_da_height: u.header_da_height,
-            data_da_height: u.data_da_height,
-            updated_at: new Date().toISOString(),
-          };
-          const nowIncluded = isDaIncluded(nextStatus);
-          if (!wasIncluded && nowIncluded) {
-            transitionedToIncluded.add(u.block_number);
-          }
-          next.set(u.block_number, {
-            ...nextStatus,
-          });
+      const visible = visibleDaBlocksRef.current;
+      if (visible.size === 0) return;
+
+      const next = new Map<number, BlockDaStatus>();
+      for (const [blockNumber, status] of daOverridesRef.current) {
+        if (visible.has(blockNumber)) {
+          next.set(blockNumber, status);
         }
-        return next;
-      });
+      }
+
+      const transitionedToIncluded: number[] = [];
+      let changed = next.size !== daOverridesRef.current.size;
+
+      for (const update of updates) {
+        if (!visible.has(update.block_number)) continue;
+
+        const prevStatus = next.get(update.block_number);
+        const wasIncluded = prevStatus
+          ? isDaIncluded(prevStatus)
+          : (baseDaIncludedRef.current.get(update.block_number) ?? false);
+        const nextStatus = {
+          block_number: update.block_number,
+          header_da_height: update.header_da_height,
+          data_da_height: update.data_da_height,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (
+          prevStatus?.header_da_height === nextStatus.header_da_height
+          && prevStatus?.data_da_height === nextStatus.data_da_height
+        ) {
+          continue;
+        }
+
+        if (!wasIncluded && isDaIncluded(nextStatus)) {
+          transitionedToIncluded.push(update.block_number);
+        }
+
+        next.set(update.block_number, nextStatus);
+        changed = true;
+      }
+
+      if (!changed) return;
+
+      daOverridesRef.current = next;
+      setDaOverrides(next);
 
       // Flash dots for 1.5s only when status transitions from pending -> included.
-      for (const bn of transitionedToIncluded) {
-        setDaHighlight(prev => new Set(prev).add(bn));
-        const existing = daHighlightTimeoutsRef.current.get(bn);
+      for (const blockNumber of transitionedToIncluded) {
+        setDaHighlight((prev) => new Set(prev).add(blockNumber));
+        const existing = daHighlightTimeoutsRef.current.get(blockNumber);
         if (existing !== undefined) clearTimeout(existing);
         const t = window.setTimeout(() => {
-          setDaHighlight(p => {
-            const next = new Set(p);
-            next.delete(bn);
-            return next;
+          setDaHighlight((prev) => {
+            const nextHighlight = new Set(prev);
+            nextHighlight.delete(blockNumber);
+            return nextHighlight;
           });
-          daHighlightTimeoutsRef.current.delete(bn);
+          daHighlightTimeoutsRef.current.delete(blockNumber);
         }, 1500);
-        daHighlightTimeoutsRef.current.set(bn, t);
+        daHighlightTimeoutsRef.current.set(blockNumber, t);
       }
     });
-  }, [subscribeDa]);
+  }, [features.da_tracking, subscribeDa]);
+
+  useEffect(() => {
+    if (!features.da_tracking) return;
+    return subscribeDaResync(() => {
+      const empty = new Map<number, BlockDaStatus>();
+      daOverridesRef.current = empty;
+      setDaOverrides(empty);
+      void refetch();
+    });
+  }, [features.da_tracking, refetch, subscribeDaResync]);
 
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
@@ -275,6 +352,10 @@ export default function BlocksPage() {
       if (highlightRafRef.current !== null) {
         window.cancelAnimationFrame(highlightRafRef.current);
         highlightRafRef.current = null;
+      }
+      if (daOverridesSyncRafRef.current !== null) {
+        cancelAnimationFrame(daOverridesSyncRafRef.current);
+        daOverridesSyncRafRef.current = null;
       }
       if (ssePrependRafRef.current !== null) {
         cancelAnimationFrame(ssePrependRafRef.current);

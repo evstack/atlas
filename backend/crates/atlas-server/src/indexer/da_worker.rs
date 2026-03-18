@@ -144,7 +144,6 @@ impl DaWorker {
             return Ok(0);
         }
 
-        let count = missing.len();
         let pool = &self.pool;
         let client = &self.client;
         let rate_limiter = &self.rate_limiter;
@@ -198,7 +197,7 @@ impl DaWorker {
         let updates: Vec<DaSseUpdate> = results.into_iter().flatten().collect();
         self.notify_da_updates(&updates);
 
-        Ok(count)
+        Ok(updates.len())
     }
 
     /// Phase 2: Re-check blocks where DA heights are still 0.
@@ -218,7 +217,6 @@ impl DaWorker {
             return Ok(0);
         }
 
-        let count = pending.len();
         let pool = &self.pool;
         let client = &self.client;
         let rate_limiter = &self.rate_limiter;
@@ -228,10 +226,11 @@ impl DaWorker {
                 rate_limiter.until_ready().await;
                 match client.get_da_status(block_number as u64).await {
                     Ok((header_da, data_da)) => {
-                        if let Err(e) = sqlx::query(
+                        match sqlx::query(
                             "UPDATE block_da_status
                              SET header_da_height = $2, data_da_height = $3, updated_at = NOW()
-                             WHERE block_number = $1",
+                             WHERE block_number = $1
+                               AND (header_da_height, data_da_height) IS DISTINCT FROM ($2, $3)",
                         )
                         .bind(block_number)
                         .bind(header_da as i64)
@@ -239,18 +238,21 @@ impl DaWorker {
                         .execute(pool)
                         .await
                         {
-                            tracing::warn!(
-                                "Failed to update DA status for block {}: {}",
+                            Ok(result) if result.rows_affected() > 0 => Some(DaSseUpdate {
                                 block_number,
-                                e
-                            );
-                            return None;
+                                header_da_height: header_da as i64,
+                                data_da_height: data_da as i64,
+                            }),
+                            Ok(_) => None,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to update DA status for block {}: {}",
+                                    block_number,
+                                    e
+                                );
+                                None
+                            }
                         }
-                        Some(DaSseUpdate {
-                            block_number,
-                            header_da_height: header_da as i64,
-                            data_da_height: data_da as i64,
-                        })
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -269,6 +271,6 @@ impl DaWorker {
         let updates: Vec<DaSseUpdate> = results.into_iter().flatten().collect();
         self.notify_da_updates(&updates);
 
-        Ok(count)
+        Ok(updates.len())
     }
 }

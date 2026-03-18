@@ -28,15 +28,16 @@ function formatDaStatus(daHeight: number): ReactNode {
 export default function BlockDetailPage() {
   const { number } = useParams<{ number: string }>();
   const blockNumber = number ? parseInt(number, 10) : undefined;
-  const { block, loading: blockLoading, error: blockError } = useBlock(blockNumber);
+  const { block, loading: blockLoading, error: blockError, refetch: refetchBlock } = useBlock(blockNumber);
   const features = useFeatures();
   const [txPage, setTxPage] = useState(1);
   const { transactions, pagination, loading } = useBlockTransactions(blockNumber, { page: txPage, limit: 20 });
-  const { subscribeDa } = useContext(BlockStatsContext);
+  const { subscribeDa, subscribeDaResync } = useContext(BlockStatsContext);
   const [daOverride, setDaOverride] = useState<BlockDaStatus | null>(null);
 
   // Persist DA updates for this block until navigation or a full refetch catches up.
   useEffect(() => {
+    if (!features.da_tracking) return;
     return subscribeDa((updates) => {
       const match = updates.find((update) => update.block_number === blockNumber);
       if (!match) return;
@@ -47,7 +48,15 @@ export default function BlockDetailPage() {
         updated_at: new Date().toISOString(),
       });
     });
-  }, [subscribeDa, blockNumber]);
+  }, [features.da_tracking, subscribeDa, blockNumber]);
+
+  useEffect(() => {
+    if (!features.da_tracking) return;
+    return subscribeDaResync(() => {
+      setDaOverride(null);
+      void refetchBlock();
+    });
+  }, [features.da_tracking, refetchBlock, subscribeDaResync]);
 
   const currentDaOverride = daOverride?.block_number === blockNumber ? daOverride : null;
 

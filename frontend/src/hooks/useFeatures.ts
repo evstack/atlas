@@ -3,24 +3,65 @@ import { getStatus } from '../api/status';
 import type { ChainFeatures } from '../types';
 
 const defaultFeatures: ChainFeatures = { da_tracking: false };
+type FeaturesListener = (features: ChainFeatures) => void;
+
+let cachedFeatures: ChainFeatures | null = null;
+let featuresPromise: Promise<ChainFeatures> | null = null;
+const listeners = new Set<FeaturesListener>();
+
+function notifyFeatures(features: ChainFeatures) {
+  for (const listener of listeners) {
+    listener(features);
+  }
+}
+
+function loadFeatures(): Promise<ChainFeatures> {
+  if (cachedFeatures) {
+    return Promise.resolve(cachedFeatures);
+  }
+
+  if (!featuresPromise) {
+    featuresPromise = getStatus()
+      .then((status) => status.features ?? defaultFeatures)
+      .catch(() => defaultFeatures)
+      .then((features) => {
+        cachedFeatures = features;
+        notifyFeatures(features);
+        return features;
+      })
+      .finally(() => {
+        featuresPromise = null;
+      });
+  }
+
+  return featuresPromise;
+}
 
 /**
- * Fetches chain feature flags from /api/status once on mount.
- * Returns the features object (defaults to all disabled until loaded).
+ * Returns cached chain feature flags, loading them only once per app session.
  */
 export default function useFeatures(): ChainFeatures {
-  const [features, setFeatures] = useState<ChainFeatures>(defaultFeatures);
+  const [features, setFeatures] = useState<ChainFeatures>(cachedFeatures ?? defaultFeatures);
 
   useEffect(() => {
-    let cancelled = false;
-    getStatus().then((status) => {
-      if (!cancelled && status.features) {
-        setFeatures(status.features);
+    let active = true;
+    const listener: FeaturesListener = (nextFeatures) => {
+      if (active) {
+        setFeatures(nextFeatures);
       }
-    }).catch(() => {
-      // Silently use defaults on error
+    };
+
+    listeners.add(listener);
+    void loadFeatures().then((nextFeatures) => {
+      if (active) {
+        setFeatures(nextFeatures);
+      }
     });
-    return () => { cancelled = true; };
+
+    return () => {
+      active = false;
+      listeners.delete(listener);
+    };
   }, []);
 
   return features;

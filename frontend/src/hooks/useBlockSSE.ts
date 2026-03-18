@@ -18,15 +18,16 @@ export interface DaBatchEvent {
 }
 
 export type DaSubscriber = (updates: DaUpdateEvent[]) => void;
+export type DaResyncSubscriber = () => void;
 
 export interface BlockSSEState {
   latestBlock: NewBlockEvent | null;
-  latestDaUpdate: DaUpdateEvent | null;
   height: number | null;
   connected: boolean;
   error: string | null;
   bps: number | null;
   subscribeDa: (cb: DaSubscriber) => () => void;
+  subscribeDaResync: (cb: DaResyncSubscriber) => () => void;
 }
 
 type BlockLog = { num: number; ts: number }[];
@@ -48,17 +49,23 @@ function computeBpsFromLog(log: BlockLog, minSpan: number, fallbackMinSpan: numb
 
 export default function useBlockSSE(): BlockSSEState {
   const [latestBlock, setLatestBlock] = useState<NewBlockEvent | null>(null);
-  const [latestDaUpdate, setLatestDaUpdate] = useState<DaUpdateEvent | null>(null);
   const [height, setHeight] = useState<number | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bps, setBps] = useState<number | null>(null);
 
   const daSubscribersRef = useRef<Set<DaSubscriber>>(new Set());
+  const daResyncSubscribersRef = useRef<Set<DaResyncSubscriber>>(new Set());
   const subscribeDa = useCallback((cb: DaSubscriber) => {
     daSubscribersRef.current.add(cb);
     return () => {
       daSubscribersRef.current.delete(cb);
+    };
+  }, []);
+  const subscribeDaResync = useCallback((cb: DaResyncSubscriber) => {
+    daResyncSubscribersRef.current.add(cb);
+    return () => {
+      daResyncSubscribersRef.current.delete(cb);
     };
   }, []);
 
@@ -172,12 +179,15 @@ export default function useBlockSSE(): BlockSSEState {
       try {
         const data: DaBatchEvent = JSON.parse(e.data);
         if (data.updates?.length) {
-          setLatestDaUpdate(data.updates[data.updates.length - 1]);
           for (const cb of daSubscribersRef.current) cb(data.updates);
         }
       } catch {
         // ignore malformed events
       }
+    });
+
+    es.addEventListener('da_resync', () => {
+      for (const cb of daResyncSubscribersRef.current) cb();
     });
 
     es.onerror = (e) => {
@@ -203,5 +213,5 @@ export default function useBlockSSE(): BlockSSEState {
     };
   }, [connect, stopPolling]);
 
-  return { latestBlock, latestDaUpdate, height, connected, error, bps, subscribeDa };
+  return { latestBlock, height, connected, error, bps, subscribeDa, subscribeDaResync };
 }

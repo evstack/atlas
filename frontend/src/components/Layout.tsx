@@ -191,9 +191,9 @@ export default function Layout() {
               bps: sse.bps,
               height: sse.height,
               latestBlockEvent: sse.latestBlock,
-              latestDaUpdate: sse.latestDaUpdate,
               sseConnected: sse.connected,
               subscribeDa: sse.subscribeDa,
+              subscribeDaResync: sse.subscribeDaResync,
             }}
           >
             <Outlet />
