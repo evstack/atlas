@@ -6,13 +6,15 @@ import useFaucetInfo from '../hooks/useFaucetInfo';
 import SmoothCounter from './SmoothCounter';
 import logoImg from '../assets/logo.png';
 import { BlockStatsContext } from '../context/BlockStatsContext';
+import { FaucetInfoContext } from '../context/FaucetInfoContext';
 import { useTheme } from '../hooks/useTheme';
 
 export default function Layout() {
   const location = useLocation();
   const isHome = location.pathname === '/';
   const sse = useBlockSSE();
-  const { faucetInfo } = useFaucetInfo();
+  const faucetInfoResult = useFaucetInfo();
+  const { faucetInfo } = faucetInfoResult;
 
   const blockTimeLabel = useMemo(() => {
     if (sse.bps !== null && sse.bps > 0) {
@@ -205,7 +207,9 @@ export default function Layout() {
       <main className="flex-1">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <BlockStatsContext.Provider value={{ bps: sse.bps, height: sse.height, latestBlockEvent: sse.latestBlock, sseConnected: sse.connected }}>
-            <Outlet />
+            <FaucetInfoContext.Provider value={faucetInfoResult}>
+              <Outlet />
+            </FaucetInfoContext.Provider>
           </BlockStatsContext.Provider>
         </div>
       </main>

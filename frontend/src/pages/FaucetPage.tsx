@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useContext, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { TxHashLink, Loading, Error } from '../components';
 import { formatEtherExact, formatNumber, toApiError } from '../utils';
 import type { ApiError } from '../types';
 import { requestFaucet } from '../api/faucet';
-import useFaucetInfo from '../hooks/useFaucetInfo';
+import { FaucetInfoContext } from '../context/FaucetInfoContext';
 import NotFoundPage from './NotFoundPage';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -29,7 +29,7 @@ function isValidAddress(address: string): boolean {
 }
 
 export default function FaucetPage() {
-  const { faucetInfo, loading, error, notFound, refetch } = useFaucetInfo();
+  const { faucetInfo, loading, error, notFound, refetch } = useContext(FaucetInfoContext);
   const [address, setAddress] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
