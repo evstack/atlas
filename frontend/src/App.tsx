@@ -18,6 +18,8 @@ const TokenDetailPage = lazy(() => import('./pages/TokenDetailPage'));
 const SearchResultsPage = lazy(() => import('./pages/SearchResultsPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 const WelcomePage = lazy(() => import('./pages/WelcomePage'));
+const FaucetPage = lazy(() => import('./pages/FaucetPage'));
+const StatusPage = lazy(() => import('./pages/StatusPage'));
 
 function PageLoader() {
   return (
@@ -45,8 +47,10 @@ export default function App() {
             <Route path="nfts" element={<Suspense fallback={<PageLoader />}><NFTsPage /></Suspense>} />
             <Route path="nfts/:contract" element={<Suspense fallback={<PageLoader />}><NFTContractPage /></Suspense>} />
             <Route path="nfts/:contract/:tokenId" element={<Suspense fallback={<PageLoader />}><NFTTokenPage /></Suspense>} />
+            <Route path="status" element={<Suspense fallback={<PageLoader />}><StatusPage /></Suspense>} />
             <Route path="tokens" element={<Suspense fallback={<PageLoader />}><TokensPage /></Suspense>} />
             <Route path="tokens/:address" element={<Suspense fallback={<PageLoader />}><TokenDetailPage /></Suspense>} />
+            <Route path="faucet" element={<Suspense fallback={<PageLoader />}><FaucetPage /></Suspense>} />
             <Route path="*" element={<Suspense fallback={<PageLoader />}><NotFoundPage /></Suspense>} />
           </Route>
         </Routes>

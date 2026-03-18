@@ -7,5 +7,6 @@ export * from './useTokens';
 export * from './useLogs';
 export * from './useTransfers';
 export * from './useProxies';
+export { default as useFaucetInfo } from './useFaucetInfo';
 export { default as useEthBalance } from './useEthBalance';
 export { default as useEthPrice } from './useEthPrice';

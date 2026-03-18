@@ -1,5 +1,5 @@
 use axum::{
-    http::StatusCode,
+    http::{header::RETRY_AFTER, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -63,6 +63,7 @@ impl IntoResponse for ApiError {
             AtlasError::Verification(msg) => msg.clone(),
             AtlasError::BytecodeMismatch(msg) => msg.clone(),
             AtlasError::Compilation(msg) => msg.clone(),
+            AtlasError::TooManyRequests { message, .. } => message.clone(),
             // Opaque: log full detail, return generic message
             AtlasError::Database(inner) => {
                 tracing::error!(error = %inner, "Database error");
@@ -86,9 +87,52 @@ impl IntoResponse for ApiError {
             }
         };
 
-        let body = Json(json!({ "error": client_message }));
-        (status, body).into_response()
+        let body = match &self.0 {
+            AtlasError::TooManyRequests {
+                retry_after_seconds,
+                ..
+            } => Json(json!({
+                "error": client_message,
+                "retry_after_seconds": retry_after_seconds,
+            })),
+            _ => Json(json!({ "error": client_message })),
+        };
+
+        let mut response = (status, body).into_response();
+        if let AtlasError::TooManyRequests {
+            retry_after_seconds,
+            ..
+        } = &self.0
+        {
+            if let Ok(header_value) = HeaderValue::from_str(&retry_after_seconds.to_string()) {
+                response.headers_mut().insert(RETRY_AFTER, header_value);
+            }
+        }
+        response
     }
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn too_many_requests_sets_retry_after_header_and_body() {
+        let response = ApiError(AtlasError::TooManyRequests {
+            message: "Faucet cooldown active".to_string(),
+            retry_after_seconds: 42,
+        })
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers().get(RETRY_AFTER).unwrap(), "42");
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"], "Faucet cooldown active");
+        assert_eq!(value["retry_after_seconds"], 42);
+    }
+}
