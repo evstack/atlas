@@ -143,11 +143,7 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         // Status
         .route("/api/status", get(handlers::status::get_status))
         // Health
-        .route("/health", get(|| async { "OK" }))
-        .layer(TimeoutLayer::with_status_code(
-            axum::http::StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(10),
-        ));
+        .route("/health", get(|| async { "OK" }));
 
     if state.faucet.is_some() {
         router = router
@@ -159,6 +155,10 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
     }
 
     router
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(10),
+        ))
         // Merge SSE routes (no TimeoutLayer so connections stay alive)
         .merge(sse_routes)
         // Shared layers applied to all routes

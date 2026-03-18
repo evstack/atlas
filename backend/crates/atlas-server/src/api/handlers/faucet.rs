@@ -44,26 +44,29 @@ pub async fn request_faucet(
 }
 
 fn extract_client_ip(headers: &HeaderMap) -> Result<String, AtlasError> {
-    if let Some(value) = headers.get("x-forwarded-for") {
-        let forwarded = value
-            .to_str()
-            .map_err(|_| AtlasError::InvalidInput("Invalid X-Forwarded-For header".to_string()))?;
-        if let Some(ip) = forwarded
-            .split(',')
-            .next()
-            .map(str::trim)
-            .filter(|ip| !ip.is_empty())
-        {
-            return normalize_ip(ip);
-        }
-    }
-
+    // Prefer X-Real-IP — set by nginx to $remote_addr (trustworthy, not spoofable)
     if let Some(value) = headers.get("x-real-ip") {
         let real_ip = value
             .to_str()
             .map_err(|_| AtlasError::InvalidInput("Invalid X-Real-IP header".to_string()))?;
         if !real_ip.trim().is_empty() {
             return normalize_ip(real_ip.trim());
+        }
+    }
+
+    // Fallback: rightmost X-Forwarded-For entry (the one nginx appended).
+    // The leftmost entry is attacker-controlled when nginx uses $proxy_add_x_forwarded_for.
+    if let Some(value) = headers.get("x-forwarded-for") {
+        let forwarded = value
+            .to_str()
+            .map_err(|_| AtlasError::InvalidInput("Invalid X-Forwarded-For header".to_string()))?;
+        if let Some(ip) = forwarded
+            .rsplit(',')
+            .next()
+            .map(str::trim)
+            .filter(|ip| !ip.is_empty())
+        {
+            return normalize_ip(ip);
         }
     }
 
@@ -292,5 +295,33 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["error"], "Faucet cooldown active");
         assert_eq!(value["retry_after_seconds"], 30);
+    }
+
+    #[test]
+    fn extract_client_ip_prefers_x_real_ip() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "10.0.0.1".parse().unwrap());
+        headers.insert("x-forwarded-for", "203.0.113.10, 10.0.0.1".parse().unwrap());
+
+        let ip = extract_client_ip(&headers).unwrap();
+        assert_eq!(ip, "10.0.0.1");
+    }
+
+    #[test]
+    fn extract_client_ip_uses_rightmost_xff_when_no_real_ip() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.10, 127.0.0.1".parse().unwrap());
+
+        let ip = extract_client_ip(&headers).unwrap();
+        assert_eq!(ip, "127.0.0.1");
+    }
+
+    #[test]
+    fn extract_client_ip_parses_ipv6() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "::1".parse().unwrap());
+
+        let ip = extract_client_ip(&headers).unwrap();
+        assert_eq!(ip, "::1");
     }
 }
