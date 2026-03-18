@@ -11,11 +11,12 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::head::HeadTracker;
+use crate::indexer::DaSseUpdate;
 
 pub struct AppState {
     pub pool: PgPool,
     pub block_events_tx: broadcast::Sender<()>,
-    pub da_events_tx: broadcast::Sender<Vec<i64>>,
+    pub da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>,
     pub head_tracker: Arc<HeadTracker>,
     pub rpc_url: String,
     pub evnode_url: Option<String>,

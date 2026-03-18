@@ -13,7 +13,8 @@ use tokio::sync::broadcast;
 use crate::api::handlers::get_latest_block;
 use crate::api::AppState;
 use crate::head::HeadTracker;
-use atlas_common::{Block, BlockDaStatus};
+use crate::indexer::DaSseUpdate;
+use atlas_common::Block;
 use sqlx::PgPool;
 use tracing::warn;
 
@@ -41,7 +42,7 @@ fn make_event_stream(
     pool: PgPool,
     head_tracker: Arc<HeadTracker>,
     mut block_rx: broadcast::Receiver<()>,
-    mut da_rx: broadcast::Receiver<Vec<i64>>,
+    mut da_rx: broadcast::Receiver<Vec<DaSseUpdate>>,
 ) -> impl Stream<Item = Result<Event, Infallible>> + Send {
     async_stream::stream! {
         let mut last_block_number: Option<i64> = None;
@@ -109,14 +110,9 @@ fn make_event_stream(
                 }
                 result = da_rx.recv() => {
                     match result {
-                        Ok(block_numbers) => {
-                            match fetch_da_status(&pool, &block_numbers).await {
-                                Ok(rows) => {
-                                    if let Some(event) = da_batch_to_event(&rows) {
-                                        yield Ok(event);
-                                    }
-                                }
-                                Err(e) => warn!(error = ?e, "sse: failed to fetch DA status for update"),
+                        Ok(updates) => {
+                            if let Some(event) = da_batch_to_event(&updates) {
+                                yield Ok(event);
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {
@@ -158,20 +154,6 @@ where
     )
 }
 
-async fn fetch_da_status(
-    pool: &PgPool,
-    block_numbers: &[i64],
-) -> Result<Vec<BlockDaStatus>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT block_number, header_da_height, data_da_height, updated_at
-         FROM block_da_status
-         WHERE block_number = ANY($1)",
-    )
-    .bind(block_numbers)
-    .fetch_all(pool)
-    .await
-}
-
 fn block_to_event(block: Block) -> Option<Event> {
     let event = NewBlockEvent { block };
     serde_json::to_string(&event)
@@ -179,12 +161,12 @@ fn block_to_event(block: Block) -> Option<Event> {
         .map(|json| Event::default().event("new_block").data(json))
 }
 
-fn da_batch_to_event(rows: &[BlockDaStatus]) -> Option<Event> {
-    if rows.is_empty() {
+fn da_batch_to_event(updates: &[DaSseUpdate]) -> Option<Event> {
+    if updates.is_empty() {
         return None;
     }
     let batch = DaBatchEvent {
-        updates: rows
+        updates: updates
             .iter()
             .map(|da| DaUpdateEvent {
                 block_number: da.block_number,
@@ -271,10 +253,12 @@ mod tests {
     #[tokio::test]
     async fn stream_seeds_from_head_tracker() {
         let tracker = Arc::new(HeadTracker::empty(10));
-        tracker.publish_committed_batch(vec![sample_block(42)]).await;
+        tracker
+            .publish_committed_batch(vec![sample_block(42)])
+            .await;
 
         let (tx, _) = broadcast::channel::<()>(16);
-        let (da_tx, _) = broadcast::channel::<Vec<i64>>(16);
+        let (da_tx, _) = broadcast::channel::<Vec<DaSseUpdate>>(16);
         let stream = make_event_stream(dummy_pool(), tracker, tx.subscribe(), da_tx.subscribe());
         tokio::pin!(stream);
 
@@ -296,10 +280,12 @@ mod tests {
     #[tokio::test]
     async fn stream_replays_new_blocks_after_broadcast() {
         let tracker = Arc::new(HeadTracker::empty(10));
-        tracker.publish_committed_batch(vec![sample_block(42)]).await;
+        tracker
+            .publish_committed_batch(vec![sample_block(42)])
+            .await;
 
         let (tx, _) = broadcast::channel::<()>(16);
-        let (da_tx, _) = broadcast::channel::<Vec<i64>>(16);
+        let (da_tx, _) = broadcast::channel::<Vec<DaSseUpdate>>(16);
         let stream = make_event_stream(
             dummy_pool(),
             tracker.clone(),
@@ -314,7 +300,9 @@ mod tests {
             .unwrap();
 
         // Publish a new block and broadcast
-        tracker.publish_committed_batch(vec![sample_block(43)]).await;
+        tracker
+            .publish_committed_batch(vec![sample_block(43)])
+            .await;
         tx.send(()).unwrap();
 
         let second = tokio::time::timeout(Duration::from_secs(1), stream.next()).await;
@@ -337,7 +325,7 @@ mod tests {
             .await;
 
         let (tx, _) = broadcast::channel::<()>(16);
-        let (da_tx, _) = broadcast::channel::<Vec<i64>>(16);
+        let (da_tx, _) = broadcast::channel::<Vec<DaSseUpdate>>(16);
         let stream = make_event_stream(
             dummy_pool(),
             tracker.clone(),

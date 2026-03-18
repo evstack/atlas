@@ -41,11 +41,18 @@ const BATCH_SIZE: i64 = 100;
 /// Sleep when idle (no work in either phase).
 const IDLE_SLEEP: Duration = Duration::from_millis(500);
 
+#[derive(Clone, Debug)]
+pub struct DaSseUpdate {
+    pub block_number: i64,
+    pub header_da_height: i64,
+    pub data_da_height: i64,
+}
+
 pub struct DaWorker {
     pool: PgPool,
     client: EvnodeClient,
     concurrency: usize,
-    da_events_tx: broadcast::Sender<Vec<i64>>,
+    da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>,
 }
 
 impl DaWorker {
@@ -53,7 +60,7 @@ impl DaWorker {
         pool: PgPool,
         evnode_url: &str,
         concurrency: u32,
-        da_events_tx: broadcast::Sender<Vec<i64>>,
+        da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>,
     ) -> Result<Self> {
         Ok(Self {
             pool,
@@ -92,11 +99,11 @@ impl DaWorker {
     }
 
     /// Notify SSE subscribers of DA status changes via in-process broadcast channel.
-    fn notify_da_updates(&self, block_numbers: &[i64]) {
-        if block_numbers.is_empty() {
+    fn notify_da_updates(&self, updates: &[DaSseUpdate]) {
+        if updates.is_empty() {
             return;
         }
-        let _ = self.da_events_tx.send(block_numbers.to_vec());
+        let _ = self.da_events_tx.send(updates.to_vec());
     }
 
     /// Phase 1: Find blocks missing from block_da_status and query ev-node.
@@ -121,7 +128,7 @@ impl DaWorker {
         let pool = &self.pool;
         let client = &self.client;
 
-        let results: Vec<Option<i64>> = stream::iter(missing)
+        let results: Vec<Option<DaSseUpdate>> = stream::iter(missing)
             .map(|(block_number,)| async move {
                 match client.get_da_status(block_number as u64).await {
                     Ok((header_da, data_da)) => {
@@ -146,7 +153,11 @@ impl DaWorker {
                             );
                             return None;
                         }
-                        Some(block_number)
+                        Some(DaSseUpdate {
+                            block_number,
+                            header_da_height: header_da as i64,
+                            data_da_height: data_da as i64,
+                        })
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -162,8 +173,8 @@ impl DaWorker {
             .collect()
             .await;
 
-        let updated_blocks: Vec<i64> = results.into_iter().flatten().collect();
-        self.notify_da_updates(&updated_blocks);
+        let updates: Vec<DaSseUpdate> = results.into_iter().flatten().collect();
+        self.notify_da_updates(&updates);
 
         Ok(count)
     }
@@ -189,7 +200,7 @@ impl DaWorker {
         let pool = &self.pool;
         let client = &self.client;
 
-        let results: Vec<Option<i64>> = stream::iter(pending)
+        let results: Vec<Option<DaSseUpdate>> = stream::iter(pending)
             .map(|(block_number,)| async move {
                 match client.get_da_status(block_number as u64).await {
                     Ok((header_da, data_da)) => {
@@ -211,7 +222,11 @@ impl DaWorker {
                             );
                             return None;
                         }
-                        Some(block_number)
+                        Some(DaSseUpdate {
+                            block_number,
+                            header_da_height: header_da as i64,
+                            data_da_height: data_da as i64,
+                        })
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -227,8 +242,8 @@ impl DaWorker {
             .collect()
             .await;
 
-        let updated_blocks: Vec<i64> = results.into_iter().flatten().collect();
-        self.notify_da_updates(&updated_blocks);
+        let updates: Vec<DaSseUpdate> = results.into_iter().flatten().collect();
+        self.notify_da_updates(&updates);
 
         Ok(count)
     }

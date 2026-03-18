@@ -7,6 +7,6 @@ pub(crate) mod fetcher;
 pub mod indexer;
 pub mod metadata;
 
-pub use da_worker::DaWorker;
+pub use da_worker::{DaSseUpdate, DaWorker};
 pub use indexer::Indexer;
 pub use metadata::MetadataFetcher;

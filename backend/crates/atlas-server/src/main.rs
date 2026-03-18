@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
 
     // Shared broadcast channels for SSE notifications
     let (block_events_tx, _) = broadcast::channel(1024);
-    let (da_events_tx, _) = broadcast::channel::<Vec<i64>>(256);
+    let (da_events_tx, _) = broadcast::channel::<Vec<indexer::DaSseUpdate>>(256);
     let head_tracker = Arc::new(if config.reindex {
         head::HeadTracker::empty(config.sse_replay_buffer_blocks)
     } else {
