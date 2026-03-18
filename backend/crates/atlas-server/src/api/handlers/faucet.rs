@@ -167,6 +167,8 @@ mod tests {
             head_tracker,
             rpc_url: String::new(),
             faucet,
+            chain_id: 1,
+            chain_name: "Test Chain".to_string(),
         })
     }
 
