@@ -2,6 +2,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useMemo } from 'react';
 import SearchBar from './SearchBar';
 import useBlockSSE from '../hooks/useBlockSSE';
+import useFaucetInfo from '../hooks/useFaucetInfo';
 import SmoothCounter from './SmoothCounter';
 import logoImg from '../assets/logo.png';
 import { BlockStatsContext } from '../context/BlockStatsContext';
@@ -11,6 +12,7 @@ export default function Layout() {
   const location = useLocation();
   const isHome = location.pathname === '/';
   const sse = useBlockSSE();
+  const { faucetInfo } = useFaucetInfo();
 
   const blockTimeLabel = useMemo(() => {
     if (sse.bps !== null && sse.bps > 0) {
@@ -61,6 +63,11 @@ export default function Layout() {
               <NavLink to="/nfts" className={navLinkClass}>
                 NFTs
               </NavLink>
+              {faucetInfo && (
+                <NavLink to="/faucet" className={navLinkClass}>
+                  Faucet
+                </NavLink>
+              )}
             </nav>
 
             {/* Right status: latest height + live pulse */}
@@ -133,6 +140,11 @@ export default function Layout() {
             <NavLink to="/nfts" className={navLinkClass}>
               NFTs
             </NavLink>
+            {faucetInfo && (
+              <NavLink to="/faucet" className={navLinkClass}>
+                Faucet
+              </NavLink>
+            )}
             <button
               type="button"
               onClick={toggleTheme}

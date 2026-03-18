@@ -16,6 +16,7 @@ import {
   WelcomePage,
   SearchResultsPage,
   AddressesPage,
+  FaucetPage,
 } from './pages';
 import { ThemeProvider } from './context/ThemeContext';
 
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="nfts/:contract/:tokenId" element={<NFTTokenPage />} />
             <Route path="tokens" element={<TokensPage />} />
             <Route path="tokens/:address" element={<TokenDetailPage />} />
+            <Route path="faucet" element={<FaucetPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>

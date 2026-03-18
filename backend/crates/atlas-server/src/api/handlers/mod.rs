@@ -1,6 +1,7 @@
 pub mod addresses;
 pub mod blocks;
 pub mod etherscan;
+pub mod faucet;
 pub mod logs;
 pub mod nfts;
 pub mod proxy;

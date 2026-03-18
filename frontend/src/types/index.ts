@@ -166,6 +166,19 @@ export interface SearchResponse {
 
 export interface ApiError {
   error: string;
+  status?: number;
+  retryAfterSeconds?: number;
+}
+
+// Faucet types
+export interface FaucetInfo {
+  amount_wei: string;
+  balance_wei: string;
+  cooldown_minutes: number;
+}
+
+export interface FaucetRequestResponse {
+  tx_hash: string;
 }
 
 // ERC-20 Token types

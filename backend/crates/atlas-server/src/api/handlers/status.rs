@@ -72,6 +72,7 @@ mod tests {
             block_events_tx: tx,
             head_tracker,
             rpc_url: String::new(),
+            faucet: None,
         }))
     }
 
