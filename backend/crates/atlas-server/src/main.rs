@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
         da_events_tx: da_events_tx.clone(),
         head_tracker: head_tracker.clone(),
         rpc_url: config.rpc_url.clone(),
-        evnode_url: config.evnode_url.clone(),
+        da_tracking_enabled: config.da_tracking_enabled,
     });
 
     // Spawn indexer task with retry logic
@@ -75,12 +75,21 @@ async fn main() -> Result<()> {
     });
 
     // Spawn DA worker if EVNODE_URL is configured
-    if let Some(ref evnode_url) = config.evnode_url {
-        tracing::info!("DA tracking enabled (EVNODE_URL set)");
+    if config.da_tracking_enabled {
+        let evnode_url = config
+            .evnode_url
+            .as_deref()
+            .expect("ENABLE_DA_TRACKING requires EVNODE_URL");
+        tracing::info!(
+            "DA tracking enabled (workers: {}, rate_limit: {} req/s)",
+            config.da_worker_concurrency,
+            config.da_rpc_requests_per_second
+        );
         let da_worker = indexer::DaWorker::new(
             da_pool,
             evnode_url,
             config.da_worker_concurrency,
+            config.da_rpc_requests_per_second,
             da_events_tx,
         )?;
         tokio::spawn(async move {

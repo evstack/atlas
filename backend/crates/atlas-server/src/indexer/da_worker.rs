@@ -29,7 +29,10 @@
 
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
+use governor::{Quota, RateLimiter};
 use sqlx::PgPool;
+use std::num::NonZeroU32;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -52,6 +55,14 @@ pub struct DaWorker {
     pool: PgPool,
     client: EvnodeClient,
     concurrency: usize,
+    requests_per_second: u32,
+    rate_limiter: Arc<
+        RateLimiter<
+            governor::state::NotKeyed,
+            governor::state::InMemoryState,
+            governor::clock::DefaultClock,
+        >,
+    >,
     da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>,
 }
 
@@ -60,18 +71,27 @@ impl DaWorker {
         pool: PgPool,
         evnode_url: &str,
         concurrency: u32,
+        requests_per_second: u32,
         da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>,
     ) -> Result<Self> {
+        let rate = NonZeroU32::new(requests_per_second)
+            .ok_or_else(|| anyhow::anyhow!("DA_RPC_REQUESTS_PER_SECOND must be greater than 0"))?;
         Ok(Self {
             pool,
             client: EvnodeClient::new(evnode_url),
             concurrency: concurrency as usize,
+            requests_per_second,
+            rate_limiter: Arc::new(RateLimiter::direct(Quota::per_second(rate))),
             da_events_tx,
         })
     }
 
     pub async fn run(&self) -> Result<()> {
-        tracing::info!("DA worker started (concurrency: {})", self.concurrency);
+        tracing::info!(
+            "DA worker started (concurrency: {}, rate_limit: {} req/s)",
+            self.concurrency,
+            self.requests_per_second
+        );
 
         loop {
             // Phase 1: backfill gets first pick of the budget
@@ -127,9 +147,11 @@ impl DaWorker {
         let count = missing.len();
         let pool = &self.pool;
         let client = &self.client;
+        let rate_limiter = &self.rate_limiter;
 
         let results: Vec<Option<DaSseUpdate>> = stream::iter(missing)
             .map(|(block_number,)| async move {
+                rate_limiter.until_ready().await;
                 match client.get_da_status(block_number as u64).await {
                     Ok((header_da, data_da)) => {
                         if let Err(e) = sqlx::query(
@@ -199,9 +221,11 @@ impl DaWorker {
         let count = pending.len();
         let pool = &self.pool;
         let client = &self.client;
+        let rate_limiter = &self.rate_limiter;
 
         let results: Vec<Option<DaSseUpdate>> = stream::iter(pending)
             .map(|(block_number,)| async move {
+                rate_limiter.until_ready().await;
                 match client.get_da_status(block_number as u64).await {
                     Ok((header_da, data_da)) => {
                         if let Err(e) = sqlx::query(

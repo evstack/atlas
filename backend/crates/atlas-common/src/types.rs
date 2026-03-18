@@ -17,7 +17,7 @@ pub struct Block {
 }
 
 /// DA (Data Availability) status for a block on L2 chains using Celestia.
-/// Only populated when EVNODE_URL is configured and the DA worker has checked the block.
+/// Only populated when DA tracking is enabled and the DA worker has checked the block.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct BlockDaStatus {
     pub block_number: i64,

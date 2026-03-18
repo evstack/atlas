@@ -22,7 +22,7 @@ pub struct ChainStatus {
 /// Returns in <1ms, optimized for frequent polling
 pub async fn get_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<ChainStatus>> {
     let features = ChainFeatures {
-        da_tracking: state.evnode_url.is_some(),
+        da_tracking: state.da_tracking_enabled,
     };
 
     if let Some(block) = state.head_tracker.latest().await {
@@ -87,7 +87,7 @@ mod tests {
             da_events_tx: da_tx,
             head_tracker,
             rpc_url: String::new(),
-            evnode_url: None,
+            da_tracking_enabled: false,
         }))
     }
 

@@ -19,7 +19,7 @@ pub struct AppState {
     pub da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>,
     pub head_tracker: Arc<HeadTracker>,
     pub rpc_url: String,
-    pub evnode_url: Option<String>,
+    pub da_tracking_enabled: bool,
 }
 
 /// Build the Axum router.
