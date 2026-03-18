@@ -33,6 +33,7 @@ export default function BlocksPage() {
   const daHighlightTimeoutsRef = useRef<Map<number, number>>(new Map());
   const baseDaIncludedRef = useRef<Map<number, boolean>>(new Map());
   const visibleDaBlocksRef = useRef<Set<number>>(new Set());
+  const bufferedDaBlocksRef = useRef<Set<number>>(new Set());
   const [, setTick] = useState(0);
   const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
   const lastSseBlockRef = useRef<number | null>(null);
@@ -55,6 +56,7 @@ export default function BlocksPage() {
     if (lastSseBlockRef.current != null && block.number <= lastSseBlockRef.current) return;
     lastSseBlockRef.current = block.number;
     pendingSseBlocksRef.current.push(block);
+    bufferedDaBlocksRef.current.add(block.number);
     if (ssePrependRafRef.current !== null) return; // RAF already scheduled; block is buffered
     ssePrependRafRef.current = window.requestAnimationFrame(() => {
       const pending = pendingSseBlocksRef.current;
@@ -73,6 +75,19 @@ export default function BlocksPage() {
       ssePrependRafRef.current = null;
     });
   }, [latestBlockEvent, page, autoRefresh]);
+
+  useEffect(() => {
+    if (page !== 1 || !autoRefresh) {
+      bufferedDaBlocksRef.current = new Set();
+      return;
+    }
+
+    const next = new Set<number>(sseBlocks.map((block) => block.number));
+    for (const block of pendingSseBlocksRef.current) {
+      next.add(block.number);
+    }
+    bufferedDaBlocksRef.current = next;
+  }, [autoRefresh, page, sseBlocks]);
 
   // Drop SSE blocks that are now present in fetchedBlocks to avoid duplicates,
   // but keep any that haven't been fetched yet.
@@ -120,11 +135,12 @@ export default function BlocksPage() {
     }
     baseDaIncludedRef.current = next;
     visibleDaBlocksRef.current = visible;
+    const buffered = bufferedDaBlocksRef.current;
 
     let changed = false;
     const nextOverrides = new Map<number, BlockDaStatus>();
     for (const [blockNumber, status] of daOverridesRef.current) {
-      if (!visible.has(blockNumber)) {
+      if (!visible.has(blockNumber) && !buffered.has(blockNumber)) {
         changed = true;
         continue;
       }
@@ -149,11 +165,12 @@ export default function BlocksPage() {
     if (!features.da_tracking) return;
     return subscribeDa((updates) => {
       const visible = visibleDaBlocksRef.current;
-      if (visible.size === 0) return;
+      const buffered = bufferedDaBlocksRef.current;
+      if (visible.size === 0 && buffered.size === 0) return;
 
       const next = new Map<number, BlockDaStatus>();
       for (const [blockNumber, status] of daOverridesRef.current) {
-        if (visible.has(blockNumber)) {
+        if (visible.has(blockNumber) || buffered.has(blockNumber)) {
           next.set(blockNumber, status);
         }
       }
@@ -162,7 +179,7 @@ export default function BlocksPage() {
       let changed = next.size !== daOverridesRef.current.size;
 
       for (const update of updates) {
-        if (!visible.has(update.block_number)) continue;
+        if (!visible.has(update.block_number) && !buffered.has(update.block_number)) continue;
 
         const prevStatus = next.get(update.block_number);
         const wasIncluded = prevStatus

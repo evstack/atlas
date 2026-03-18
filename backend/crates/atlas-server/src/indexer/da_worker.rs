@@ -44,6 +44,30 @@ const BATCH_SIZE: i64 = 100;
 /// Sleep when idle (no work in either phase).
 const IDLE_SLEEP: Duration = Duration::from_millis(500);
 
+const SELECT_MISSING_BLOCKS_SQL: &str = "SELECT b.number FROM blocks b
+             LEFT JOIN block_da_status d ON d.block_number = b.number
+             WHERE d.block_number IS NULL
+             ORDER BY b.number DESC
+             LIMIT $1";
+
+const INSERT_DA_STATUS_SQL: &str =
+    "INSERT INTO block_da_status (block_number, header_da_height, data_da_height)
+                             VALUES ($1, $2, $3)
+                             ON CONFLICT (block_number) DO UPDATE SET
+                                header_da_height = EXCLUDED.header_da_height,
+                                data_da_height = EXCLUDED.data_da_height,
+                                updated_at = NOW()";
+
+const SELECT_PENDING_BLOCKS_SQL: &str = "SELECT block_number FROM block_da_status
+             WHERE header_da_height = 0 OR data_da_height = 0
+             ORDER BY block_number DESC
+             LIMIT $1";
+
+const UPDATE_PENDING_DA_STATUS_SQL: &str = "UPDATE block_da_status
+                             SET header_da_height = $2, data_da_height = $3, updated_at = NOW()
+                             WHERE block_number = $1
+                               AND (header_da_height, data_da_height) IS DISTINCT FROM ($2, $3)";
+
 #[derive(Clone, Debug)]
 pub struct DaSseUpdate {
     pub block_number: i64,
@@ -74,12 +98,14 @@ impl DaWorker {
         requests_per_second: u32,
         da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>,
     ) -> Result<Self> {
+        let concurrency = NonZeroU32::new(concurrency)
+            .ok_or_else(|| anyhow::anyhow!("DA_WORKER_CONCURRENCY must be greater than 0"))?;
         let rate = NonZeroU32::new(requests_per_second)
             .ok_or_else(|| anyhow::anyhow!("DA_RPC_REQUESTS_PER_SECOND must be greater than 0"))?;
         Ok(Self {
             pool,
             client: EvnodeClient::new(evnode_url),
-            concurrency: concurrency as usize,
+            concurrency: concurrency.get() as usize,
             requests_per_second,
             rate_limiter: Arc::new(RateLimiter::direct(Quota::per_second(rate))),
             da_events_tx,
@@ -129,16 +155,10 @@ impl DaWorker {
     /// Phase 1: Find blocks missing from block_da_status and query ev-node.
     /// Returns the number of blocks processed.
     async fn backfill_new_blocks(&self, limit: i64) -> Result<usize> {
-        let missing: Vec<(i64,)> = sqlx::query_as(
-            "SELECT b.number FROM blocks b
-             LEFT JOIN block_da_status d ON d.block_number = b.number
-             WHERE d.block_number IS NULL
-             ORDER BY b.number DESC
-             LIMIT $1",
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let missing: Vec<(i64,)> = sqlx::query_as(SELECT_MISSING_BLOCKS_SQL)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
 
         if missing.is_empty() {
             return Ok(0);
@@ -153,19 +173,12 @@ impl DaWorker {
                 rate_limiter.until_ready().await;
                 match client.get_da_status(block_number as u64).await {
                     Ok((header_da, data_da)) => {
-                        if let Err(e) = sqlx::query(
-                            "INSERT INTO block_da_status (block_number, header_da_height, data_da_height)
-                             VALUES ($1, $2, $3)
-                             ON CONFLICT (block_number) DO UPDATE SET
-                                header_da_height = EXCLUDED.header_da_height,
-                                data_da_height = EXCLUDED.data_da_height,
-                                updated_at = NOW()",
-                        )
-                        .bind(block_number)
-                        .bind(header_da as i64)
-                        .bind(data_da as i64)
-                        .execute(pool)
-                        .await
+                        if let Err(e) = sqlx::query(INSERT_DA_STATUS_SQL)
+                            .bind(block_number)
+                            .bind(header_da as i64)
+                            .bind(data_da as i64)
+                            .execute(pool)
+                            .await
                         {
                             tracing::warn!(
                                 "Failed to insert DA status for block {}: {}",
@@ -203,15 +216,10 @@ impl DaWorker {
     /// Phase 2: Re-check blocks where DA heights are still 0.
     /// Returns the number of blocks processed.
     async fn update_pending_blocks(&self, limit: i64) -> Result<usize> {
-        let pending: Vec<(i64,)> = sqlx::query_as(
-            "SELECT block_number FROM block_da_status
-             WHERE header_da_height = 0 OR data_da_height = 0
-             ORDER BY block_number DESC
-             LIMIT $1",
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let pending: Vec<(i64,)> = sqlx::query_as(SELECT_PENDING_BLOCKS_SQL)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
 
         if pending.is_empty() {
             return Ok(0);
@@ -226,17 +234,12 @@ impl DaWorker {
                 rate_limiter.until_ready().await;
                 match client.get_da_status(block_number as u64).await {
                     Ok((header_da, data_da)) => {
-                        match sqlx::query(
-                            "UPDATE block_da_status
-                             SET header_da_height = $2, data_da_height = $3, updated_at = NOW()
-                             WHERE block_number = $1
-                               AND (header_da_height, data_da_height) IS DISTINCT FROM ($2, $3)",
-                        )
-                        .bind(block_number)
-                        .bind(header_da as i64)
-                        .bind(data_da as i64)
-                        .execute(pool)
-                        .await
+                        match sqlx::query(UPDATE_PENDING_DA_STATUS_SQL)
+                            .bind(block_number)
+                            .bind(header_da as i64)
+                            .bind(data_da as i64)
+                            .execute(pool)
+                            .await
                         {
                             Ok(result) if result.rows_affected() > 0 => Some(DaSseUpdate {
                                 block_number,
@@ -272,5 +275,89 @@ impl DaWorker {
         self.notify_da_updates(&updates);
 
         Ok(updates.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://test@localhost:5432/test")
+            .expect("lazy pool creation should not fail")
+    }
+
+    #[tokio::test]
+    async fn new_rejects_zero_concurrency() {
+        let (tx, _) = broadcast::channel(1);
+        let err = DaWorker::new(test_pool(), "http://localhost:7331", 0, 50, tx)
+            .err()
+            .expect("zero concurrency should fail");
+
+        assert!(err
+            .to_string()
+            .contains("DA_WORKER_CONCURRENCY must be greater than 0"));
+    }
+
+    #[tokio::test]
+    async fn new_rejects_zero_rate_limit() {
+        let (tx, _) = broadcast::channel(1);
+        let err = DaWorker::new(test_pool(), "http://localhost:7331", 4, 0, tx)
+            .err()
+            .expect("zero rate limit should fail");
+
+        assert!(err
+            .to_string()
+            .contains("DA_RPC_REQUESTS_PER_SECOND must be greater than 0"));
+    }
+
+    #[tokio::test]
+    async fn notify_da_updates_sends_full_batch() {
+        let (tx, mut rx) = broadcast::channel(1);
+        let worker = DaWorker::new(test_pool(), "http://localhost:7331", 4, 50, tx).unwrap();
+        let updates = vec![
+            DaSseUpdate {
+                block_number: 10,
+                header_da_height: 100,
+                data_da_height: 101,
+            },
+            DaSseUpdate {
+                block_number: 11,
+                header_da_height: 110,
+                data_da_height: 111,
+            },
+        ];
+
+        worker.notify_da_updates(&updates);
+
+        let received = rx.recv().await.expect("batch should be broadcast");
+        assert_eq!(received.len(), 2);
+        assert_eq!(received[0].block_number, 10);
+        assert_eq!(received[1].data_da_height, 111);
+    }
+
+    #[tokio::test]
+    async fn notify_da_updates_skips_empty_batch() {
+        let (tx, mut rx) = broadcast::channel(1);
+        let worker = DaWorker::new(test_pool(), "http://localhost:7331", 4, 50, tx).unwrap();
+
+        worker.notify_da_updates(&[]);
+
+        let result = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await;
+        assert!(result.is_err(), "empty batch should not be broadcast");
+    }
+
+    #[test]
+    fn scheduler_queries_prioritize_newest_blocks() {
+        assert!(SELECT_MISSING_BLOCKS_SQL.contains("ORDER BY b.number DESC"));
+        assert!(SELECT_PENDING_BLOCKS_SQL.contains("ORDER BY block_number DESC"));
+        assert!(SELECT_MISSING_BLOCKS_SQL.contains("LIMIT $1"));
+        assert!(SELECT_PENDING_BLOCKS_SQL.contains("LIMIT $1"));
+    }
+
+    #[test]
+    fn pending_update_sql_suppresses_noop_writes() {
+        assert!(UPDATE_PENDING_DA_STATUS_SQL.contains("IS DISTINCT FROM"));
     }
 }
