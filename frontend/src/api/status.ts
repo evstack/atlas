@@ -1,13 +1,27 @@
 import client from './client';
 import type { ChainFeatures } from '../types';
 
-export interface StatusResponse {
+export interface HeightResponse {
   block_height: number;
   indexed_at?: string; // ISO timestamp, absent when no blocks indexed
   features: ChainFeatures;
 }
 
-export async function getStatus(): Promise<StatusResponse> {
-  const response = await client.get<StatusResponse>('/status');
+export interface ChainStatusResponse {
+  chain_id: string;
+  chain_name: string;
+  block_height: number;
+  total_transactions: number;
+  total_addresses: number;
+  indexed_at: string; // ISO timestamp
+}
+
+export async function getHeight(): Promise<HeightResponse> {
+  const response = await client.get<HeightResponse>('/height');
+  return response.data;
+}
+
+export async function getChainStatus(): Promise<ChainStatusResponse> {
+  const response = await client.get<ChainStatusResponse>('/status');
   return response.data;
 }

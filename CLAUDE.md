@@ -66,7 +66,7 @@ let cursor = (total_count - 1) - (pagination.page.saturating_sub(1) as i64) * li
 ### Row count estimation
 For large tables (transactions, addresses), use `pg_class.reltuples` instead of `COUNT(*)`:
 ```rust
-// handlers/mod.rs — get_table_count(pool)
+// handlers/mod.rs — get_table_count(pool, table_name)
 // Partition-aware: sums child reltuples, falls back to parent
 // For tables < 100k rows: falls back to exact COUNT(*)
 ```
@@ -83,6 +83,8 @@ pub struct AppState {
     pub head_tracker: Arc<HeadTracker>,
     pub rpc_url: String,
     pub da_tracking_enabled: bool,
+    pub chain_id: u64,
+    pub chain_name: String,
 }
 ```
 
@@ -91,8 +93,9 @@ When DA tracking is enabled, a background DA worker queries ev-node for Celestia
 
 ### Frontend API client
 - Base URL: `/api` (proxied by nginx to `atlas-server:3000`)
-- `GET /api/status` → `{ block_height, indexed_at, features: { da_tracking } }` — serves from `head_tracker` first and falls back to `indexer_state` when the in-memory head is empty. Used by the navbar as a polling fallback when SSE is disconnected.
-- `GET /api/events` → SSE stream of `new_block`, `da_batch`, and `da_resync` events. Primary live-update path for navbar counter, blocks page, and DA status. Falls back to `/api/status` polling on disconnect.
+- Fast polling endpoint: `GET /api/height` → `{ block_height, indexed_at, features: { da_tracking } }` — serves from `head_tracker` first and falls back to `indexer_state` when the in-memory head is empty. Used by the navbar as a polling fallback when SSE is disconnected and by feature-flag consumers.
+- Chain status: `GET /api/status` → `{ chain_id, chain_name, block_height, total_transactions, total_addresses, indexed_at }` — full chain info, fetched once on page load.
+- `GET /api/events` → SSE stream of `new_block`, `da_batch`, and `da_resync` events. Primary live-update path for navbar counter, blocks page, block detail DA status, and DA resync handling. Falls back to `/api/height` polling on disconnect.
 
 ## Important Conventions
 
@@ -112,6 +115,7 @@ Key vars (see `.env.example` for full list):
 |---|---|---|
 | `DATABASE_URL` | all | required |
 | `RPC_URL` | server | required |
+| `CHAIN_NAME` | server | `"Unknown"` |
 | `DB_MAX_CONNECTIONS` | indexer pool | `20` |
 | `API_DB_MAX_CONNECTIONS` | API pool | `20` |
 | `BATCH_SIZE` | indexer | `100` |

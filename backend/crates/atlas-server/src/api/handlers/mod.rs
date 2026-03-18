@@ -21,15 +21,26 @@ pub async fn get_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Erro
     .fetch_optional(pool)
     .await
 }
+fn exact_count_sql(table_name: &str) -> Result<&'static str, sqlx::Error> {
+    match table_name {
+        "transactions" => Ok("SELECT COUNT(*) FROM transactions"),
+        "addresses" => Ok("SELECT COUNT(*) FROM addresses"),
+        _ => Err(sqlx::Error::Protocol(format!(
+            "unsupported table for exact count: {table_name}"
+        ))),
+    }
+}
 
-/// Get transactions table row count efficiently.
+fn should_use_approximate_count(approx: i64) -> bool {
+    approx > 100_000
+}
+
+/// Get a table's row count efficiently.
 /// - For tables > 100k rows: uses PostgreSQL's approximate count (instant, ~99% accurate)
 /// - For smaller tables: uses exact COUNT(*) (fast enough)
 ///
 /// This avoids the slow COUNT(*) full table scan on large tables.
-pub async fn get_table_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
-    let table_name = "transactions";
-
+pub async fn get_table_count(pool: &PgPool, table_name: &str) -> Result<i64, sqlx::Error> {
     // Sum approximate reltuples across partitions if any, else use parent.
     // This is instant and reasonably accurate for large tables.
     // Cast to float8 (f64) since reltuples is float4 and SUM returns float4
@@ -57,13 +68,47 @@ pub async fn get_table_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
         parent.0.unwrap_or(0.0) as i64
     };
 
-    if approx > 100_000 {
+    if should_use_approximate_count(approx) {
         Ok(approx)
     } else {
         // Exact count for small tables
-        let exact: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions")
+        let exact: (i64,) = sqlx::query_as(exact_count_sql(table_name)?)
             .fetch_one(pool)
             .await?;
         Ok(exact.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_count_sql_whitelists_supported_tables() {
+        assert_eq!(
+            exact_count_sql("transactions").unwrap(),
+            "SELECT COUNT(*) FROM transactions"
+        );
+        assert_eq!(
+            exact_count_sql("addresses").unwrap(),
+            "SELECT COUNT(*) FROM addresses"
+        );
+    }
+
+    #[test]
+    fn exact_count_sql_rejects_unsupported_tables() {
+        let err = exact_count_sql("blocks").unwrap_err();
+        assert!(err.to_string().contains("unsupported table"));
+    }
+
+    #[test]
+    fn should_use_approximate_count_above_threshold() {
+        assert!(should_use_approximate_count(100_001));
+    }
+
+    #[test]
+    fn should_use_approximate_count_uses_exact_count_at_threshold_and_below() {
+        assert!(!should_use_approximate_count(100_000));
+        assert!(!should_use_approximate_count(42));
     }
 }

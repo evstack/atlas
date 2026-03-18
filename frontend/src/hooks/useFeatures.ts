@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getStatus } from '../api/status';
+import { getHeight } from '../api/status';
 import type { ChainFeatures } from '../types';
 
 const defaultFeatures: ChainFeatures = { da_tracking: false };
@@ -21,7 +21,7 @@ function loadFeatures(): Promise<ChainFeatures> {
   }
 
   if (!featuresPromise) {
-    featuresPromise = getStatus()
+    featuresPromise = getHeight()
       .then((status) => status.features ?? defaultFeatures)
       .catch(() => defaultFeatures)
       .then((features) => {

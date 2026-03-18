@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Block } from '../types';
 import { API_BASE_URL } from '../api/client';
-import { getStatus } from '../api/status';
+import { getHeight } from '../api/status';
 
 export interface NewBlockEvent {
   block: Block;
@@ -139,7 +139,7 @@ export default function useBlockSSE(): BlockSSEState {
 
     const poll = async () => {
       try {
-        const status = await getStatus();
+        const status = await getHeight();
         if (typeof status?.block_height === 'number' && !connectedRef.current && status.block_height > highestSeenRef.current) {
           highestSeenRef.current = status.block_height;
           setHeight(status.block_height);

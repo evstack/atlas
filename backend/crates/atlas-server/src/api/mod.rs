@@ -20,6 +20,8 @@ pub struct AppState {
     pub head_tracker: Arc<HeadTracker>,
     pub rpc_url: String,
     pub da_tracking_enabled: bool,
+    pub chain_id: u64,
+    pub chain_name: String,
 }
 
 /// Build the Axum router.
@@ -142,6 +144,7 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         // Search
         .route("/api/search", get(handlers::search::search))
         // Status
+        .route("/api/height", get(handlers::status::get_height))
         .route("/api/status", get(handlers::status::get_status))
         // Health
         .route("/health", get(|| async { "OK" }))
@@ -156,7 +159,6 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         .layer(build_cors_layer(cors_origin))
         .layer(TraceLayer::new_for_http())
 }
-
 /// Construct the CORS layer.
 ///
 /// When `cors_origin` is `Some`, restrict to that exact origin.

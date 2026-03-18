@@ -1,10 +1,12 @@
 use axum::{
     extract::State,
     response::sse::{Event, Sse},
+    response::IntoResponse,
 };
 use futures::stream::Stream;
 use serde::Serialize;
 use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -16,6 +18,8 @@ use crate::indexer::DaSseUpdate;
 use atlas_common::Block;
 use sqlx::PgPool;
 use tracing::warn;
+
+type SseStream = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
 
 #[derive(Serialize, Debug)]
 struct NewBlockEvent {
@@ -39,8 +43,8 @@ struct DaResyncEvent {
     required: bool,
 }
 
-/// Build the SSE stream. Separated from the handler for testability.
-fn make_event_stream(
+/// Build the SSE block stream. Separated from the handler for testability.
+fn make_block_stream(
     pool: PgPool,
     head_tracker: Arc<HeadTracker>,
     mut block_rx: broadcast::Receiver<()>,
@@ -135,17 +139,25 @@ fn make_event_stream(
 }
 
 /// GET /api/events — Server-Sent Events stream for live committed block updates.
-/// New connections receive the current latest block and then stream forward from
-/// in-memory committed head state, plus DA status update batches.
-pub async fn block_events(
-    State(state): State<Arc<AppState>>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let stream = make_event_stream(
+/// New connections receive the current latest block and then stream forward
+/// from in-memory committed head state, plus DA update batches and resync
+/// signals for DA consumers.
+pub async fn block_events(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let stream = make_block_stream(
         state.pool.clone(),
         state.head_tracker.clone(),
         state.block_events_tx.subscribe(),
         state.da_events_tx.subscribe(),
     );
+    sse_response(stream)
+}
+
+fn sse_response<S>(stream: S) -> impl IntoResponse
+where
+    S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
+{
+    let stream: SseStream = Box::pin(stream);
+
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(Duration::from_secs(15))
@@ -279,10 +291,9 @@ mod tests {
 
         let (tx, _) = broadcast::channel::<()>(16);
         let (da_tx, _) = broadcast::channel::<Vec<DaSseUpdate>>(16);
-        let stream = make_event_stream(dummy_pool(), tracker, tx.subscribe(), da_tx.subscribe());
+        let stream = make_block_stream(dummy_pool(), tracker, tx.subscribe(), da_tx.subscribe());
         tokio::pin!(stream);
 
-        // Drop sender so loop terminates after the initial seed
         drop(tx);
         drop(da_tx);
 
@@ -306,7 +317,7 @@ mod tests {
 
         let (tx, _) = broadcast::channel::<()>(16);
         let (da_tx, _) = broadcast::channel::<Vec<DaSseUpdate>>(16);
-        let stream = make_event_stream(
+        let stream = make_block_stream(
             dummy_pool(),
             tracker.clone(),
             tx.subscribe(),
@@ -314,12 +325,10 @@ mod tests {
         );
         tokio::pin!(stream);
 
-        // Consume initial seed
         let _ = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
             .unwrap();
 
-        // Publish a new block and broadcast
         tracker
             .publish_committed_batch(vec![sample_block(43)])
             .await;
@@ -338,7 +347,6 @@ mod tests {
 
     #[tokio::test]
     async fn stream_terminates_when_client_behind_tail() {
-        // Buffer capacity 3: only keeps 3 most recent blocks
         let tracker = Arc::new(HeadTracker::empty(3));
         tracker
             .publish_committed_batch(vec![sample_block(10), sample_block(11), sample_block(12)])
@@ -346,7 +354,7 @@ mod tests {
 
         let (tx, _) = broadcast::channel::<()>(16);
         let (da_tx, _) = broadcast::channel::<Vec<DaSseUpdate>>(16);
-        let stream = make_event_stream(
+        let stream = make_block_stream(
             dummy_pool(),
             tracker.clone(),
             tx.subscribe(),
@@ -354,12 +362,10 @@ mod tests {
         );
         tokio::pin!(stream);
 
-        // Consume initial seed (latest = block 12)
         let _ = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
             .unwrap();
 
-        // Advance buffer far ahead: client cursor=12, buffer will be [23,24,25]
         tracker
             .publish_committed_batch(vec![
                 sample_block(20),
@@ -372,7 +378,6 @@ mod tests {
             .await;
         tx.send(()).unwrap();
 
-        // Stream should detect behind-tail and terminate
         let result = tokio::time::timeout(Duration::from_secs(2), async {
             while (stream.next().await).is_some() {}
         })
@@ -395,7 +400,7 @@ mod tests {
 
         let (tx, _) = broadcast::channel::<()>(16);
         let (da_tx, _) = broadcast::channel::<Vec<DaSseUpdate>>(1);
-        let stream = make_event_stream(dummy_pool(), tracker, tx.subscribe(), da_tx.subscribe());
+        let stream = make_block_stream(dummy_pool(), tracker, tx.subscribe(), da_tx.subscribe());
         tokio::pin!(stream);
 
         let _ = tokio::time::timeout(Duration::from_secs(1), stream.next())

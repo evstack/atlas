@@ -40,6 +40,7 @@ pub struct Config {
     /// (backwards-compatible default for development / self-hosted deployments).
     pub cors_origin: Option<String>,
     pub sse_replay_buffer_blocks: usize,
+    pub chain_name: String,
 }
 
 impl Config {
@@ -158,6 +159,7 @@ impl Config {
                 .context("Invalid API_PORT")?,
             cors_origin: env::var("CORS_ORIGIN").ok(),
             sse_replay_buffer_blocks,
+            chain_name: env::var("CHAIN_NAME").unwrap_or_else(|_| "Unknown".to_string()),
         })
     }
 }
