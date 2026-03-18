@@ -5,4 +5,5 @@ export * from './nfts';
 export * from './tokens';
 export * from './logs';
 export * from './search';
+export * from './faucet';
 export { default as client } from './client';

@@ -37,6 +37,12 @@ pub enum AtlasError {
 
     #[error("Bytecode mismatch: {0}")]
     BytecodeMismatch(String),
+
+    #[error("Too many requests: {message} (retry after {retry_after_seconds}s)")]
+    TooManyRequests {
+        message: String,
+        retry_after_seconds: u64,
+    },
 }
 
 impl AtlasError {
@@ -50,6 +56,7 @@ impl AtlasError {
             AtlasError::Config(_) => 500,
             AtlasError::Verification(_) | AtlasError::BytecodeMismatch(_) => 400,
             AtlasError::Compilation(_) => 422,
+            AtlasError::TooManyRequests { .. } => 429,
         }
     }
 }

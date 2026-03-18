@@ -11,6 +11,7 @@ path = "src/main.rs"
 atlas-common = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
+tower = { workspace = true }
 tower-http = { workspace = true }
 sqlx = { workspace = true }
 alloy = { workspace = true }
