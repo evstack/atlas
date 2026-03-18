@@ -5,7 +5,6 @@ use axum::{
 use futures::stream::Stream;
 use serde::Serialize;
 use std::convert::Infallible;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -17,8 +16,6 @@ use crate::indexer::DaSseUpdate;
 use atlas_common::Block;
 use sqlx::PgPool;
 use tracing::warn;
-
-type SseStream = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
 
 #[derive(Serialize, Debug)]
 struct NewBlockEvent {
@@ -131,22 +128,13 @@ fn make_event_stream(
 /// in-memory committed head state, plus DA status update batches.
 pub async fn block_events(
     State(state): State<Arc<AppState>>,
-) -> Sse<axum::response::sse::KeepAliveStream<SseStream>> {
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let stream = make_event_stream(
         state.pool.clone(),
         state.head_tracker.clone(),
         state.block_events_tx.subscribe(),
         state.da_events_tx.subscribe(),
     );
-    sse_response(stream)
-}
-
-fn sse_response<S>(stream: S) -> Sse<axum::response::sse::KeepAliveStream<SseStream>>
-where
-    S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
-{
-    let stream: SseStream = Box::pin(stream);
-
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(Duration::from_secs(15))
