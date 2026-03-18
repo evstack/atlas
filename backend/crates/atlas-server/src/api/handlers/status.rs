@@ -106,7 +106,9 @@ mod tests {
     #[tokio::test]
     async fn height_returns_head_tracker_block() {
         let tracker = Arc::new(HeadTracker::empty(10));
-        tracker.publish_committed_batch(vec![sample_block(42)]).await;
+        tracker
+            .publish_committed_batch(vec![sample_block(42)])
+            .await;
 
         let result = get_height(test_state(tracker)).await;
         let Json(status) = result.unwrap_or_else(|_| panic!("get_height should not fail"));
