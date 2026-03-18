@@ -310,7 +310,10 @@ mod tests {
     #[test]
     fn extract_client_ip_uses_rightmost_xff_when_no_real_ip() {
         let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "203.0.113.10, 127.0.0.1".parse().unwrap());
+        headers.insert(
+            "x-forwarded-for",
+            "203.0.113.10, 127.0.0.1".parse().unwrap(),
+        );
 
         let ip = extract_client_ip(&headers).unwrap();
         assert_eq!(ip, "127.0.0.1");
