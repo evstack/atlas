@@ -63,11 +63,9 @@ impl Config {
             .filter(|url| !url.is_empty());
 
         let evnode_url = if da_tracking_enabled {
-            Some(
-                raw_evnode_url.ok_or_else(|| {
-                    anyhow::anyhow!("EVNODE_URL must be set when ENABLE_DA_TRACKING=true")
-                })?,
-            )
+            Some(raw_evnode_url.ok_or_else(|| {
+                anyhow::anyhow!("EVNODE_URL must be set when ENABLE_DA_TRACKING=true")
+            })?)
         } else {
             None
         };
@@ -246,17 +244,15 @@ mod tests {
 
         env::set_var("ENABLE_DA_TRACKING", "true");
         let err = Config::from_env().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("EVNODE_URL must be set when ENABLE_DA_TRACKING=true")
-        );
+        assert!(err
+            .to_string()
+            .contains("EVNODE_URL must be set when ENABLE_DA_TRACKING=true"));
 
         env::set_var("EVNODE_URL", "   ");
         let err = Config::from_env().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("EVNODE_URL must be set when ENABLE_DA_TRACKING=true")
-        );
+        assert!(err
+            .to_string()
+            .contains("EVNODE_URL must be set when ENABLE_DA_TRACKING=true"));
 
         clear_da_env();
     }

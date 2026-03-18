@@ -438,10 +438,13 @@ export default function BlocksPage() {
                     const daStatus = daOverrides.get(block.number) ?? block.da_status;
                     const flash = daHighlight.has(block.number);
                     const included = isDaIncluded(daStatus);
+                    const includedTitle = daStatus
+                      ? `Header: ${daStatus.header_da_height}, Data: ${daStatus.data_da_height}`
+                      : 'DA included';
                     return (
                       <td className="table-cell text-center">
                         {included ? (
-                          <span className={`w-2 h-2 rounded-full bg-green-400 inline-block${flash ? ' animate-da-pulse' : ''}`} title={`Header: ${daStatus.header_da_height}, Data: ${daStatus.data_da_height}`} />
+                          <span className={`w-2 h-2 rounded-full bg-green-400 inline-block${flash ? ' animate-da-pulse' : ''}`} title={includedTitle} />
                         ) : (
                           <span className={`w-2 h-2 rounded-full bg-yellow-400 inline-block${flash ? ' animate-da-pulse' : ''}`} title="Pending DA inclusion" />
                         )}
