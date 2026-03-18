@@ -6,6 +6,12 @@ import { formatNumber, formatTimeAgo, formatGas, truncateHash } from '../utils';
 import { BlockStatsContext } from '../context/BlockStatsContext';
 import type { BlockDaStatus } from '../types';
 
+const BLOCKS_PAGE_SIZE = 20;
+
+function isDaIncluded(status: Pick<BlockDaStatus, 'header_da_height' | 'data_da_height'> | null | undefined): boolean {
+  return !!status && status.header_da_height > 0 && status.data_da_height > 0;
+}
+
 export default function BlocksPage() {
   const [page, setPage] = useState(1);
   const [autoRefresh, setAutoRefresh] = useState<boolean>(() => {
@@ -16,13 +22,14 @@ export default function BlocksPage() {
       return true;
     }
   });
-  const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: 100 });
+  const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: BLOCKS_PAGE_SIZE });
   const features = useFeatures();
   const hasLoaded = !loading || pagination !== null;
   const { latestBlockEvent, sseConnected, subscribeDa } = useContext(BlockStatsContext);
   const [daOverrides, setDaOverrides] = useState<Map<number, BlockDaStatus>>(new Map());
   const [daHighlight, setDaHighlight] = useState<Set<number>>(new Set());
   const daHighlightTimeoutsRef = useRef<Map<number, number>>(new Map());
+  const baseDaIncludedRef = useRef<Map<number, boolean>>(new Map());
   const [, setTick] = useState(0);
   const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
   const lastSseBlockRef = useRef<number | null>(null);
@@ -58,7 +65,7 @@ export default function BlocksPage() {
           prepend.push(b);
         }
         prepend.reverse();
-        return [...prepend, ...prev].slice(0, 100);
+        return [...prepend, ...prev].slice(0, BLOCKS_PAGE_SIZE);
       });
       ssePrependRafRef.current = null;
     });
@@ -81,28 +88,48 @@ export default function BlocksPage() {
   const blocks = useMemo(() => {
     if (page !== 1 || !sseBlocks.length) return fetchedBlocks;
     const unique = sseBlocks.filter((b) => !fetchedNumberSet.has(b.number));
-    return [...unique, ...fetchedBlocks].slice(0, 100);
+    return [...unique, ...fetchedBlocks].slice(0, BLOCKS_PAGE_SIZE);
   }, [fetchedBlocks, fetchedNumberSet, sseBlocks, page]);
+
+  useEffect(() => {
+    const next = new Map<number, boolean>();
+    for (const block of blocks) {
+      next.set(block.number, isDaIncluded(block.da_status));
+    }
+    baseDaIncludedRef.current = next;
+  }, [blocks]);
 
   // Subscribe to DA updates from SSE. setState is called inside the subscription
   // callback (not synchronously in the effect body), satisfying react-hooks/set-state-in-effect.
   useEffect(() => {
     return subscribeDa((updates) => {
+      const transitionedToIncluded = new Set<number>();
       setDaOverrides(prev => {
         const next = new Map(prev);
         for (const u of updates) {
-          next.set(u.block_number, {
+          const prevStatus = prev.get(u.block_number);
+          const wasIncluded = prevStatus
+            ? isDaIncluded(prevStatus)
+            : (baseDaIncludedRef.current.get(u.block_number) ?? false);
+          const nextStatus = {
             block_number: u.block_number,
             header_da_height: u.header_da_height,
             data_da_height: u.data_da_height,
             updated_at: new Date().toISOString(),
+          };
+          const nowIncluded = isDaIncluded(nextStatus);
+          if (!wasIncluded && nowIncluded) {
+            transitionedToIncluded.add(u.block_number);
+          }
+          next.set(u.block_number, {
+            ...nextStatus,
           });
         }
         return next;
       });
-      // Flash dots for 1.5s
-      for (const u of updates) {
-        const bn = u.block_number;
+
+      // Flash dots for 1.5s only when status transitions from pending -> included.
+      for (const bn of transitionedToIncluded) {
         setDaHighlight(prev => new Set(prev).add(bn));
         const existing = daHighlightTimeoutsRef.current.get(bn);
         if (existing !== undefined) clearTimeout(existing);
@@ -410,7 +437,7 @@ export default function BlocksPage() {
                   {features.da_tracking && (() => {
                     const daStatus = daOverrides.get(block.number) ?? block.da_status;
                     const flash = daHighlight.has(block.number);
-                    const included = daStatus && daStatus.header_da_height > 0 && daStatus.data_da_height > 0;
+                    const included = isDaIncluded(daStatus);
                     return (
                       <td className="table-cell text-center">
                         {included ? (
