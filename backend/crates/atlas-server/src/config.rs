@@ -48,7 +48,10 @@ impl std::fmt::Debug for FaucetConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FaucetConfig")
             .field("enabled", &self.enabled)
-            .field("private_key", &self.private_key.as_ref().map(|_| "[redacted]"))
+            .field(
+                "private_key",
+                &self.private_key.as_ref().map(|_| "[redacted]"),
+            )
             .field("amount_wei", &self.amount_wei)
             .field("cooldown_minutes", &self.cooldown_minutes)
             .finish()
