@@ -1,5 +1,6 @@
 pub mod addresses;
 pub mod blocks;
+pub mod config;
 pub mod etherscan;
 pub mod faucet;
 pub mod logs;

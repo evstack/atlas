@@ -33,6 +33,12 @@ services:
       FAUCET_AMOUNT: ${FAUCET_AMOUNT:-}
       FAUCET_COOLDOWN_MINUTES: ${FAUCET_COOLDOWN_MINUTES:-}
       CHAIN_NAME: ${CHAIN_NAME:-Unknown}
+      CHAIN_LOGO_URL: ${CHAIN_LOGO_URL:-}
+      ACCENT_COLOR: ${ACCENT_COLOR:-}
+      BACKGROUND_COLOR_DARK: ${BACKGROUND_COLOR_DARK:-}
+      BACKGROUND_COLOR_LIGHT: ${BACKGROUND_COLOR_LIGHT:-}
+      SUCCESS_COLOR: ${SUCCESS_COLOR:-}
+      ERROR_COLOR: ${ERROR_COLOR:-}
       API_HOST: 0.0.0.0
       API_PORT: 3000
       RUST_LOG: atlas_server=info,tower_http=info
@@ -47,6 +53,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "80:8080"
+    volumes:
+      - ${BRANDING_DIR:-./branding}:/usr/share/nginx/html/branding:ro
     depends_on:
       - atlas-server
     restart: unless-stopped

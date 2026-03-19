@@ -34,6 +34,14 @@ pub struct Config {
     pub cors_origin: Option<String>,
     pub sse_replay_buffer_blocks: usize,
     pub chain_name: String,
+
+    // Branding / white-label
+    pub chain_logo_url: Option<String>,
+    pub accent_color: Option<String>,
+    pub background_color_dark: Option<String>,
+    pub background_color_light: Option<String>,
+    pub success_color: Option<String>,
+    pub error_color: Option<String>,
 }
 
 #[derive(Clone)]
@@ -123,7 +131,17 @@ impl Config {
                 .context("Invalid API_PORT")?,
             cors_origin: env::var("CORS_ORIGIN").ok(),
             sse_replay_buffer_blocks,
-            chain_name: env::var("CHAIN_NAME").unwrap_or_else(|_| "Unknown".to_string()),
+            chain_name: env::var("CHAIN_NAME")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "Unknown".to_string()),
+            chain_logo_url: parse_optional_env(env::var("CHAIN_LOGO_URL").ok()),
+            accent_color: parse_optional_env(env::var("ACCENT_COLOR").ok()),
+            background_color_dark: parse_optional_env(env::var("BACKGROUND_COLOR_DARK").ok()),
+            background_color_light: parse_optional_env(env::var("BACKGROUND_COLOR_LIGHT").ok()),
+            success_color: parse_optional_env(env::var("SUCCESS_COLOR").ok()),
+            error_color: parse_optional_env(env::var("ERROR_COLOR").ok()),
         })
     }
 }
@@ -173,6 +191,10 @@ impl FaucetConfig {
             cooldown_minutes: Some(cooldown_minutes),
         })
     }
+}
+
+fn parse_optional_env(val: Option<String>) -> Option<String> {
+    val.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 fn parse_faucet_amount_to_wei(amount: &str) -> Result<U256> {
@@ -238,6 +260,73 @@ mod tests {
         );
         env::set_var("FAUCET_AMOUNT", "1.5");
         env::set_var("FAUCET_COOLDOWN_MINUTES", "30");
+    }
+
+    #[test]
+    fn chain_name_defaults_to_unknown_when_unset() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        env::remove_var("CHAIN_NAME");
+        assert_eq!(Config::from_env().unwrap().chain_name, "Unknown");
+    }
+
+    #[test]
+    fn chain_name_defaults_to_unknown_when_empty() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        env::set_var("CHAIN_NAME", "");
+        assert_eq!(Config::from_env().unwrap().chain_name, "Unknown");
+        env::remove_var("CHAIN_NAME");
+    }
+
+    #[test]
+    fn chain_name_defaults_to_unknown_when_whitespace_only() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        env::set_var("CHAIN_NAME", "   ");
+        assert_eq!(Config::from_env().unwrap().chain_name, "Unknown");
+        env::remove_var("CHAIN_NAME");
+    }
+
+    #[test]
+    fn chain_name_uses_provided_value() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        env::set_var("CHAIN_NAME", "MyChain");
+        assert_eq!(Config::from_env().unwrap().chain_name, "MyChain");
+        env::remove_var("CHAIN_NAME");
+    }
+
+    #[test]
+    fn chain_name_trims_surrounding_whitespace() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        env::set_var("CHAIN_NAME", "  MyChain  ");
+        assert_eq!(Config::from_env().unwrap().chain_name, "MyChain");
+        env::remove_var("CHAIN_NAME");
+    }
+
+    #[test]
+    fn optional_env_returns_none_when_unset() {
+        assert_eq!(parse_optional_env(None), None);
+    }
+
+    #[test]
+    fn optional_env_returns_none_when_empty() {
+        assert_eq!(parse_optional_env(Some("".to_string())), None);
+    }
+
+    #[test]
+    fn optional_env_returns_none_when_whitespace_only() {
+        assert_eq!(parse_optional_env(Some("   ".to_string())), None);
+    }
+
+    #[test]
+    fn optional_env_trims_and_returns_value() {
+        assert_eq!(
+            parse_optional_env(Some("  #dc2626  ".to_string())),
+            Some("#dc2626".to_string())
+        );
     }
 
     #[test]

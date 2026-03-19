@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local branding symlink (created manually for dev, see docs/WHITE_LABELING.md)
+public/branding
