@@ -66,7 +66,7 @@ let cursor = (total_count - 1) - (pagination.page.saturating_sub(1) as i64) * li
 ### Row count estimation
 For large tables (transactions, addresses), use `pg_class.reltuples` instead of `COUNT(*)`:
 ```rust
-// handlers/mod.rs — get_table_count(pool)
+// handlers/mod.rs — get_table_count(pool, table_name)
 // Partition-aware: sums child reltuples, falls back to parent
 // For tables < 100k rows: falls back to exact COUNT(*)
 ```
@@ -77,19 +77,25 @@ For large tables (transactions, addresses), use `pg_class.reltuples` instead of 
 ### AppState (API)
 ```rust
 pub struct AppState {
-    pub pool: PgPool,                           // API pool only
-    pub block_events_tx: broadcast::Sender<()>, // shared with indexer
+    pub pool: PgPool,                                // API pool only
+    pub block_events_tx: broadcast::Sender<()>,      // shared with indexer
+    pub da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>, // shared with DA worker
+    pub head_tracker: Arc<HeadTracker>,
     pub rpc_url: String,
-    pub solc_path: String,
-    pub admin_api_key: Option<String>,
+    pub da_tracking_enabled: bool,
+    pub chain_id: u64,
+    pub chain_name: String,
 }
 ```
 
+### DA tracking (optional)
+When `ENABLE_DA_TRACKING=true`, a background DA worker queries ev-node for Celestia inclusion heights per block. `EVNODE_URL` is required only in that mode. Updates are pushed to SSE clients via an in-process `broadcast::Sender<Vec<DaSseUpdate>>`. The SSE handler streams `da_batch` events for incremental updates and emits `da_resync` when a client falls behind and should refetch visible DA state.
+
 ### Frontend API client
 - Base URL: `/api` (proxied by nginx to `atlas-server:3000`)
-- Fast polling endpoint: `GET /api/height` → `{ block_height, indexed_at }` — single key-value lookup from `indexer_state`, sub-ms. Used by the navbar as a polling fallback when SSE is disconnected.
+- Fast polling endpoint: `GET /api/height` → `{ block_height, indexed_at, features: { da_tracking } }` — serves from `head_tracker` first and falls back to `indexer_state` when the in-memory head is empty. Used by the navbar as a polling fallback when SSE is disconnected and by feature-flag consumers.
 - Chain status: `GET /api/status` → `{ chain_id, chain_name, block_height, total_transactions, total_addresses, indexed_at }` — full chain info, fetched once on page load.
-- `GET /api/events` → SSE stream of `new_block` events, one per block in order. Primary live-update path for navbar counter and blocks page. Falls back to `/api/height` polling on disconnect.
+- `GET /api/events` → SSE stream of `new_block`, `da_batch`, and `da_resync` events. Primary live-update path for navbar counter, blocks page, block detail DA status, and DA resync handling. Falls back to `/api/height` polling on disconnect.
 
 ## Important Conventions
 
@@ -109,6 +115,7 @@ Key vars (see `.env.example` for full list):
 |---|---|---|
 | `DATABASE_URL` | all | required |
 | `RPC_URL` | server | required |
+| `CHAIN_NAME` | server | `"Unknown"` |
 | `DB_MAX_CONNECTIONS` | indexer pool | `20` |
 | `API_DB_MAX_CONNECTIONS` | API pool | `20` |
 | `BATCH_SIZE` | indexer | `100` |
@@ -116,6 +123,10 @@ Key vars (see `.env.example` for full list):
 | `ADMIN_API_KEY` | API | none |
 | `API_HOST` | API | `127.0.0.1` |
 | `API_PORT` | API | `3000` |
+| `ENABLE_DA_TRACKING` | server | `false` |
+| `EVNODE_URL` | server | none |
+| `DA_RPC_REQUESTS_PER_SECOND` | DA worker | `50` |
+| `DA_WORKER_CONCURRENCY` | DA worker | `50` |
 
 ## Running Locally
 

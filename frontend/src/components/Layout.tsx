@@ -209,7 +209,16 @@ export default function Layout() {
       {/* Main content */}
       <main className="flex-1">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <BlockStatsContext.Provider value={{ bps: sse.bps, height: sse.height, latestBlockEvent: sse.latestBlock, sseConnected: sse.connected }}>
+          <BlockStatsContext.Provider
+            value={{
+              bps: sse.bps,
+              height: sse.height,
+              latestBlockEvent: sse.latestBlock,
+              sseConnected: sse.connected,
+              subscribeDa: sse.subscribeDa,
+              subscribeDaResync: sse.subscribeDaResync,
+            }}
+          >
             <FaucetInfoContext.Provider value={faucetInfoResult}>
               <Outlet />
             </FaucetInfoContext.Provider>

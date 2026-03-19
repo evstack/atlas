@@ -16,6 +16,18 @@ pub struct Block {
     pub indexed_at: DateTime<Utc>,
 }
 
+/// DA (Data Availability) status for a block on L2 chains using Celestia.
+/// Only populated when DA tracking is enabled and the DA worker has checked the block.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct BlockDaStatus {
+    pub block_number: i64,
+    /// Celestia height where the block header was submitted. 0 = pending.
+    pub header_da_height: i64,
+    /// Celestia height where the block data was submitted. 0 = pending.
+    pub data_da_height: i64,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// Transaction data as stored in the database
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Transaction {

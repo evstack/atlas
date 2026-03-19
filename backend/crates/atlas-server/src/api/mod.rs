@@ -12,12 +12,15 @@ use tower_http::trace::TraceLayer;
 
 use crate::faucet::SharedFaucetBackend;
 use crate::head::HeadTracker;
+use crate::indexer::DaSseUpdate;
 
 pub struct AppState {
     pub pool: PgPool,
     pub block_events_tx: broadcast::Sender<()>,
+    pub da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>,
     pub head_tracker: Arc<HeadTracker>,
     pub rpc_url: String,
+    pub da_tracking_enabled: bool,
     pub faucet: Option<SharedFaucetBackend>,
     pub chain_id: u64,
     pub chain_name: String,
@@ -244,11 +247,14 @@ mod tests {
             .expect("lazy pool");
         let head_tracker = Arc::new(crate::head::HeadTracker::empty(10));
         let (tx, _) = broadcast::channel(1);
+        let (da_tx, _) = broadcast::channel(1);
         Arc::new(AppState {
             pool,
             block_events_tx: tx,
+            da_events_tx: da_tx,
             head_tracker,
             rpc_url: String::new(),
+            da_tracking_enabled: false,
             faucet,
             chain_id: 1,
             chain_name: "Test Chain".to_string(),

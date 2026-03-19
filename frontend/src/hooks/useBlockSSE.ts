@@ -7,13 +7,27 @@ export interface NewBlockEvent {
   block: Block;
 }
 
+export interface DaUpdateEvent {
+  block_number: number;
+  header_da_height: number;
+  data_da_height: number;
+}
+
+export interface DaBatchEvent {
+  updates: DaUpdateEvent[];
+}
+
+export type DaSubscriber = (updates: DaUpdateEvent[]) => void;
+export type DaResyncSubscriber = () => void;
+
 export interface BlockSSEState {
   latestBlock: NewBlockEvent | null;
   height: number | null;
   connected: boolean;
   error: string | null;
   bps: number | null;
-  lastUpdatedAt: number | null;
+  subscribeDa: (cb: DaSubscriber) => () => void;
+  subscribeDaResync: (cb: DaResyncSubscriber) => () => void;
 }
 
 type BlockLog = { num: number; ts: number }[];
@@ -22,11 +36,6 @@ const MIN_DRAIN_MS = 30;
 const MAX_DRAIN_MS = 500;
 const POLL_INTERVAL_MS = 2000;
 
-/**
- * Compute bps from a rolling log of (blockNumber, blockTimestamp) samples.
- * Returns the rate from the first sample whose span >= minSpan, or from the
- * oldest sample if its span >= fallbackMinSpan. Returns null if insufficient data.
- */
 function computeBpsFromLog(log: BlockLog, minSpan: number, fallbackMinSpan: number): number | null {
   if (log.length < 2) return null;
   const newest = log[log.length - 1];
@@ -38,21 +47,27 @@ function computeBpsFromLog(log: BlockLog, minSpan: number, fallbackMinSpan: numb
   return null;
 }
 
-/**
- * Connects to the SSE endpoint and delivers block events at the chain's natural
- * cadence. Falls back to polling /api/status when SSE disconnects.
- *
- * The drain queue rate-limits setState calls so React doesn't collapse rapid
- * arrivals from backend batch commits. The interval is derived from on-chain
- * block timestamps (not arrival times), making visual cadence match the chain.
- */
 export default function useBlockSSE(): BlockSSEState {
   const [latestBlock, setLatestBlock] = useState<NewBlockEvent | null>(null);
   const [height, setHeight] = useState<number | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bps, setBps] = useState<number | null>(null);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+
+  const daSubscribersRef = useRef<Set<DaSubscriber>>(new Set());
+  const daResyncSubscribersRef = useRef<Set<DaResyncSubscriber>>(new Set());
+  const subscribeDa = useCallback((cb: DaSubscriber) => {
+    daSubscribersRef.current.add(cb);
+    return () => {
+      daSubscribersRef.current.delete(cb);
+    };
+  }, []);
+  const subscribeDaResync = useCallback((cb: DaResyncSubscriber) => {
+    daResyncSubscribersRef.current.add(cb);
+    return () => {
+      daResyncSubscribersRef.current.delete(cb);
+    };
+  }, []);
 
   const esRef = useRef<EventSource | null>(null);
   const queueRef = useRef<NewBlockEvent[]>([]);
@@ -63,8 +78,6 @@ export default function useBlockSSE(): BlockSSEState {
   const pollTimerRef = useRef<number | null>(null);
   const connectedRef = useRef(false);
   const highestSeenRef = useRef<number>(-1);
-
-  // --- Drain: emit one block per chain-rate interval ---
 
   const scheduleDrain = useCallback(() => {
     if (drainTimerRef.current !== null || queueRef.current.length === 0) return;
@@ -77,7 +90,6 @@ export default function useBlockSSE(): BlockSSEState {
     const queue = queueRef.current;
     if (queue.length === 0) return;
 
-    // If queue backs up, skip to near the end
     if (queue.length > 50) {
       const skip = queue.splice(0, queue.length - 5);
       const last = skip[skip.length - 1];
@@ -87,7 +99,6 @@ export default function useBlockSSE(): BlockSSEState {
     const next = queue.shift()!;
     setLatestBlock(next);
     setHeight(next.block.number);
-    setLastUpdatedAt(Date.now());
 
     if (queue.length > 0) scheduleDrain();
   }, [scheduleDrain]);
@@ -100,16 +111,13 @@ export default function useBlockSSE(): BlockSSEState {
     if (data.block.number <= highestSeenRef.current) return;
     highestSeenRef.current = data.block.number;
 
-    // Update bps from on-chain block timestamps
     const log = blockLogRef.current;
     log.push({ num: data.block.number, ts: data.block.timestamp });
     if (log.length > 500) blockLogRef.current = log.slice(-500);
 
-    // Displayed bps: 30s window for stability, 5s fallback while bootstrapping
     const displayBps = computeBpsFromLog(blockLogRef.current, 30, 5);
     if (displayBps !== null) setBps(displayBps);
 
-    // Drain pacing: 10s window for moderate responsiveness, 2s fallback
     const drainBps = computeBpsFromLog(blockLogRef.current, 10, 2);
     if (drainBps !== null) {
       drainIntervalRef.current = Math.max(MIN_DRAIN_MS, Math.min(MAX_DRAIN_MS, 1000 / drainBps));
@@ -118,8 +126,6 @@ export default function useBlockSSE(): BlockSSEState {
     queueRef.current.push(data);
     scheduleDrain();
   }, [scheduleDrain]);
-
-  // --- Polling fallback ---
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current !== null) {
@@ -137,17 +143,16 @@ export default function useBlockSSE(): BlockSSEState {
         if (typeof status?.block_height === 'number' && !connectedRef.current && status.block_height > highestSeenRef.current) {
           highestSeenRef.current = status.block_height;
           setHeight(status.block_height);
-          setLastUpdatedAt(Date.now());
         }
       } catch {
         // ignore polling errors
       }
     };
-    poll();
-    pollTimerRef.current = window.setInterval(poll, POLL_INTERVAL_MS);
+    void poll();
+    pollTimerRef.current = window.setInterval(() => {
+      void poll();
+    }, POLL_INTERVAL_MS);
   }, []);
-
-  // --- SSE connection ---
 
   const connect = useCallback(() => {
     if (esRef.current) esRef.current.close();
@@ -168,6 +173,21 @@ export default function useBlockSSE(): BlockSSEState {
       } catch {
         // ignore malformed events
       }
+    });
+
+    es.addEventListener('da_batch', (e: MessageEvent) => {
+      try {
+        const data: DaBatchEvent = JSON.parse(e.data);
+        if (data.updates?.length) {
+          for (const cb of daSubscribersRef.current) cb(data.updates);
+        }
+      } catch {
+        // ignore malformed events
+      }
+    });
+
+    es.addEventListener('da_resync', () => {
+      for (const cb of daResyncSubscribersRef.current) cb();
     });
 
     es.onerror = (e) => {
@@ -193,5 +213,5 @@ export default function useBlockSSE(): BlockSSEState {
     };
   }, [connect, stopPolling]);
 
-  return { latestBlock, height, connected, error, bps, lastUpdatedAt };
+  return { latestBlock, height, connected, error, bps, subscribeDa, subscribeDaResync };
 }
