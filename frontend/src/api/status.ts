@@ -17,11 +17,9 @@ export interface ChainStatusResponse {
 }
 
 export async function getHeight(): Promise<HeightResponse> {
-  const response = await client.get<HeightResponse>('/height');
-  return response.data;
+  return client.get<HeightResponse>('/height');
 }
 
 export async function getChainStatus(): Promise<ChainStatusResponse> {
-  const response = await client.get<ChainStatusResponse>('/status');
-  return response.data;
+  return client.get<ChainStatusResponse>('/status');
 }

@@ -8,28 +8,21 @@ export interface GetProxiesParams {
 
 export async function getProxies(params: GetProxiesParams = {}): Promise<PaginatedResponse<ProxyInfo>> {
   const { page = 1, limit = 20 } = params;
-  const response = await client.get<PaginatedResponse<ProxyInfo>>('/proxies', {
-    params: { page, limit },
-  });
-  return response.data;
+  return client.get<PaginatedResponse<ProxyInfo>>('/proxies', { params: { page, limit } });
 }
 
 export async function getContractProxy(address: string): Promise<ProxyInfo | null> {
   try {
-    const response = await client.get<ProxyInfo>(`/contracts/${address}/proxy`);
-    return response.data;
+    return await client.get<ProxyInfo>(`/contracts/${address}/proxy`);
   } catch {
-    // Return null if no proxy info exists
     return null;
   }
 }
 
 export async function getContractCombinedAbi(address: string): Promise<CombinedAbi | null> {
   try {
-    const response = await client.get<CombinedAbi>(`/contracts/${address}/combined-abi`);
-    return response.data;
+    return await client.get<CombinedAbi>(`/contracts/${address}/combined-abi`);
   } catch {
-    // Return null if no combined ABI exists
     return null;
   }
 }

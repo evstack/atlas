@@ -6,7 +6,7 @@ import { formatNumber, formatTimeAgo, formatGas, truncateHash } from '../utils';
 import { BlockStatsContext } from '../context/BlockStatsContext';
 import type { BlockDaStatus } from '../types';
 
-const BLOCKS_PAGE_SIZE = 20;
+const BLOCKS_PER_PAGE = 20;
 
 function isDaIncluded(status: Pick<BlockDaStatus, 'header_da_height' | 'data_da_height'> | null | undefined): boolean {
   return !!status && status.header_da_height > 0 && status.data_da_height > 0;
@@ -22,7 +22,7 @@ export default function BlocksPage() {
       return true;
     }
   });
-  const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: BLOCKS_PAGE_SIZE });
+  const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: BLOCKS_PER_PAGE });
   const features = useFeatures();
   const hasLoaded = !loading || pagination !== null;
   const { latestBlockEvent, sseConnected, subscribeDa, subscribeDaResync } = useContext(BlockStatsContext);
@@ -70,7 +70,7 @@ export default function BlocksPage() {
           prepend.push(b);
         }
         prepend.reverse();
-        return [...prepend, ...prev].slice(0, BLOCKS_PAGE_SIZE);
+        return [...prepend, ...prev].slice(0, BLOCKS_PER_PAGE);
       });
       ssePrependRafRef.current = null;
     });
@@ -106,7 +106,9 @@ export default function BlocksPage() {
   const blocks = useMemo(() => {
     if (page !== 1 || !sseBlocks.length) return fetchedBlocks;
     const unique = sseBlocks.filter((b) => !fetchedNumberSet.has(b.number));
-    return [...unique, ...fetchedBlocks].slice(0, BLOCKS_PAGE_SIZE);
+    return [...unique, ...fetchedBlocks]
+      .sort((a, b) => b.number - a.number)
+      .slice(0, BLOCKS_PER_PAGE);
   }, [fetchedBlocks, fetchedNumberSet, sseBlocks, page]);
 
   useEffect(() => {
@@ -557,7 +559,7 @@ export default function BlocksPage() {
         )}
       </div>
 
-      {/* Compact pager: centered, with First/Prev and Next/Last around the visible range */}
+      {/* Compact pager: centered, without a jump-to-oldest control. */}
       <div className="mt-4">
         <div className="flex items-center justify-center gap-2">
           <button
@@ -599,18 +601,6 @@ export default function BlocksPage() {
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-          <button
-            className="btn btn-secondary text-xs"
-            onClick={() => pagination && setPage(pagination.total_pages)}
-            disabled={!pagination || page === pagination?.total_pages}
-            aria-label="Last page"
-            title="Last page"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 5v14" />
             </svg>
           </button>
         </div>
