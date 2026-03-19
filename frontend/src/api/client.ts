@@ -1,81 +1,95 @@
-import axios from 'axios';
-import type { AxiosInstance, AxiosError } from 'axios';
 import type { ApiError } from '../types';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
 
-const client: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+const TIMEOUT_MS = 10_000;
 
-// Response interceptor for error handling
-client.interceptors.response.use(
-  (response) => response,
-  (error: AxiosError<ApiError>) => {
-    if (error.response) {
-      const data = error.response.data as Partial<ApiError> | undefined;
-      const retryAfterSeconds = parseRetryAfterSeconds(error.response.headers, data);
-      const apiError: ApiError = {
-        error: data?.error || error.message,
-        status: error.response.status,
-        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
-      };
-      return Promise.reject(apiError);
-    }
+function buildUrl(path: string, params?: Record<string, unknown>): string {
+  const base = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+  let url = base + path;
 
-    if (error.request) {
-      const networkError: ApiError = {
-        error: 'Unable to connect to the API server',
-      };
-      return Promise.reject(networkError);
-    }
-
-    return Promise.reject({
-      error: error.message,
-    } as ApiError);
-  }
-);
-
-function parseRetryAfterSeconds(
-  headers: unknown,
-  data: Partial<ApiError> | undefined
-): number | undefined {
-  const bodyRetryAfter = (data as { retry_after_seconds?: unknown } | undefined)?.retry_after_seconds;
-  const headerRetryAfter = getHeaderValue(headers, 'retry-after');
-  const rawRetryAfter = bodyRetryAfter ?? headerRetryAfter;
-
-  if (typeof rawRetryAfter === 'number' && Number.isFinite(rawRetryAfter) && rawRetryAfter >= 0) {
-    return rawRetryAfter;
+  if (params) {
+    const qs = Object.entries(params)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+      .join('&');
+    if (qs) url += '?' + qs;
   }
 
-  if (typeof rawRetryAfter === 'string') {
-    const parsed = Number(rawRetryAfter);
-    if (Number.isFinite(parsed) && parsed >= 0) {
-      return parsed;
-    }
+  return url;
+}
 
-    const retryDate = Date.parse(rawRetryAfter);
-    if (!Number.isNaN(retryDate)) {
-      return Math.max(0, Math.ceil((retryDate - Date.now()) / 1000));
+async function request<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  options: { params?: Record<string, unknown>; body?: unknown } = {}
+): Promise<T> {
+  const url = buildUrl(path, options.params);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: options.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw { error: 'Request timed out' } as ApiError;
     }
+    throw { error: 'Unable to connect to the API server' } as ApiError;
+  }
+
+  clearTimeout(timer);
+
+  if (!response.ok) {
+    let data: { error?: string; retry_after_seconds?: unknown } = {};
+    try {
+      data = await response.json();
+    } catch { /* ignore */ }
+
+    const retryAfterSeconds = parseRetryAfterSeconds(
+      response.headers.get('retry-after'),
+      data.retry_after_seconds
+    );
+
+    throw {
+      error: data.error ?? response.statusText,
+      status: response.status,
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+    } as ApiError;
+  }
+
+  return response.json() as Promise<T>;
+}
+
+function parseRetryAfterSeconds(header: string | null, body: unknown): number | undefined {
+  const raw = body ?? header;
+
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return raw;
+
+  if (typeof raw === 'string') {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+
+    const retryDate = Date.parse(raw);
+    if (!Number.isNaN(retryDate)) return Math.max(0, Math.ceil((retryDate - Date.now()) / 1000));
   }
 
   return undefined;
 }
 
-function getHeaderValue(headers: unknown, key: string): unknown {
-  if (!headers || typeof headers !== 'object') return undefined;
-  const headerObject = headers as { get?: (name: string) => unknown } & Record<string, unknown>;
-
-  if (typeof headerObject.get === 'function') {
-    return headerObject.get(key);
-  }
-
-  return headerObject[key] ?? headerObject[key.toLowerCase()] ?? headerObject[key.toUpperCase()];
-}
+const client = {
+  get<T>(path: string, options: { params?: Record<string, unknown> } = {}): Promise<T> {
+    return request<T>('GET', path, { params: options.params });
+  },
+  post<T>(path: string, body?: unknown): Promise<T> {
+    return request<T>('POST', path, { body });
+  },
+};
 
 export default client;

@@ -1,25 +1,33 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components';
-import {
-  BlocksPage,
-  BlockDetailPage,
-  BlockTransactionsPage,
-  TransactionsPage,
-  TransactionDetailPage,
-  AddressPage,
-  NFTsPage,
-  NFTContractPage,
-  NFTTokenPage,
-  TokensPage,
-  TokenDetailPage,
-  NotFoundPage,
-  WelcomePage,
-  SearchResultsPage,
-  AddressesPage,
-  FaucetPage,
-  StatusPage,
-} from './pages';
 import { ThemeProvider } from './context/ThemeContext';
+
+const BlocksPage = lazy(() => import('./pages/BlocksPage'));
+const BlockDetailPage = lazy(() => import('./pages/BlockDetailPage'));
+const BlockTransactionsPage = lazy(() => import('./pages/BlockTransactionsPage'));
+const TransactionsPage = lazy(() => import('./pages/TransactionsPage'));
+const TransactionDetailPage = lazy(() => import('./pages/TransactionDetailPage'));
+const AddressPage = lazy(() => import('./pages/AddressPage'));
+const AddressesPage = lazy(() => import('./pages/AddressesPage'));
+const NFTsPage = lazy(() => import('./pages/NFTsPage'));
+const NFTContractPage = lazy(() => import('./pages/NFTContractPage'));
+const NFTTokenPage = lazy(() => import('./pages/NFTTokenPage'));
+const TokensPage = lazy(() => import('./pages/TokensPage'));
+const TokenDetailPage = lazy(() => import('./pages/TokenDetailPage'));
+const SearchResultsPage = lazy(() => import('./pages/SearchResultsPage'));
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
+const WelcomePage = lazy(() => import('./pages/WelcomePage'));
+const FaucetPage = lazy(() => import('./pages/FaucetPage'));
+const StatusPage = lazy(() => import('./pages/StatusPage'));
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <span className="text-gray-500 text-sm">Loading...</span>
+    </div>
+  );
+}
 
 export default function App() {
   return (
@@ -27,23 +35,23 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
-            <Route index element={<WelcomePage />} />
-            <Route path="blocks" element={<BlocksPage />} />
-            <Route path="blocks/:number" element={<BlockDetailPage />} />
-            <Route path="blocks/:number/transactions" element={<BlockTransactionsPage />} />
-            <Route path="transactions" element={<TransactionsPage />} />
-            <Route path="search" element={<SearchResultsPage />} />
-            <Route path="addresses" element={<AddressesPage />} />
-            <Route path="tx/:hash" element={<TransactionDetailPage />} />
-            <Route path="address/:address" element={<AddressPage />} />
-            <Route path="nfts" element={<NFTsPage />} />
-            <Route path="nfts/:contract" element={<NFTContractPage />} />
-            <Route path="nfts/:contract/:tokenId" element={<NFTTokenPage />} />
-            <Route path="status" element={<StatusPage />} />
-            <Route path="tokens" element={<TokensPage />} />
-            <Route path="tokens/:address" element={<TokenDetailPage />} />
-            <Route path="faucet" element={<FaucetPage />} />
-            <Route path="*" element={<NotFoundPage />} />
+            <Route index element={<Suspense fallback={<PageLoader />}><WelcomePage /></Suspense>} />
+            <Route path="blocks" element={<Suspense fallback={<PageLoader />}><BlocksPage /></Suspense>} />
+            <Route path="blocks/:number" element={<Suspense fallback={<PageLoader />}><BlockDetailPage /></Suspense>} />
+            <Route path="blocks/:number/transactions" element={<Suspense fallback={<PageLoader />}><BlockTransactionsPage /></Suspense>} />
+            <Route path="transactions" element={<Suspense fallback={<PageLoader />}><TransactionsPage /></Suspense>} />
+            <Route path="search" element={<Suspense fallback={<PageLoader />}><SearchResultsPage /></Suspense>} />
+            <Route path="addresses" element={<Suspense fallback={<PageLoader />}><AddressesPage /></Suspense>} />
+            <Route path="tx/:hash" element={<Suspense fallback={<PageLoader />}><TransactionDetailPage /></Suspense>} />
+            <Route path="address/:address" element={<Suspense fallback={<PageLoader />}><AddressPage /></Suspense>} />
+            <Route path="nfts" element={<Suspense fallback={<PageLoader />}><NFTsPage /></Suspense>} />
+            <Route path="nfts/:contract" element={<Suspense fallback={<PageLoader />}><NFTContractPage /></Suspense>} />
+            <Route path="nfts/:contract/:tokenId" element={<Suspense fallback={<PageLoader />}><NFTTokenPage /></Suspense>} />
+            <Route path="status" element={<Suspense fallback={<PageLoader />}><StatusPage /></Suspense>} />
+            <Route path="tokens" element={<Suspense fallback={<PageLoader />}><TokensPage /></Suspense>} />
+            <Route path="tokens/:address" element={<Suspense fallback={<PageLoader />}><TokenDetailPage /></Suspense>} />
+            <Route path="faucet" element={<Suspense fallback={<PageLoader />}><FaucetPage /></Suspense>} />
+            <Route path="*" element={<Suspense fallback={<PageLoader />}><NotFoundPage /></Suspense>} />
           </Route>
         </Routes>
       </BrowserRouter>

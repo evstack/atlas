@@ -8,20 +8,15 @@ export interface GetBlocksParams {
 
 export async function getBlocks(params: GetBlocksParams = {}): Promise<PaginatedResponse<Block>> {
   const { page = 1, limit = 20 } = params;
-  const response = await client.get<PaginatedResponse<Block>>('/blocks', {
-    params: { page, limit },
-  });
-  return response.data;
+  return client.get<PaginatedResponse<Block>>('/blocks', { params: { page, limit } });
 }
 
 export async function getBlockByNumber(blockNumber: number): Promise<Block> {
-  const response = await client.get<Block>(`/blocks/${blockNumber}`);
-  return response.data;
+  return client.get<Block>(`/blocks/${blockNumber}`);
 }
 
 export async function getBlockByHash(blockHash: string): Promise<Block> {
-  const response = await client.get<Block>(`/blocks/hash/${blockHash}`);
-  return response.data;
+  return client.get<Block>(`/blocks/hash/${blockHash}`);
 }
 
 export async function getBlockTransactions(
@@ -29,9 +24,8 @@ export async function getBlockTransactions(
   params: GetBlocksParams = {}
 ): Promise<PaginatedResponse<Transaction>> {
   const { page = 1, limit = 20 } = params;
-  const response = await client.get<PaginatedResponse<Transaction>>(
+  return client.get<PaginatedResponse<Transaction>>(
     `/blocks/${blockNumber}/transactions`,
     { params: { page, limit } }
   );
-  return response.data;
 }

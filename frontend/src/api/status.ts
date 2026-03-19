@@ -2,7 +2,7 @@ import client from './client';
 
 export interface HeightResponse {
   block_height: number;
-  indexed_at?: string; // ISO timestamp, absent when no blocks indexed
+  indexed_at?: string;
 }
 
 export interface ChainStatusResponse {
@@ -15,11 +15,9 @@ export interface ChainStatusResponse {
 }
 
 export async function getHeight(): Promise<HeightResponse> {
-  const response = await client.get<HeightResponse>('/height');
-  return response.data;
+  return client.get<HeightResponse>('/height');
 }
 
 export async function getChainStatus(): Promise<ChainStatusResponse> {
-  const response = await client.get<ChainStatusResponse>('/status');
-  return response.data;
+  return client.get<ChainStatusResponse>('/status');
 }

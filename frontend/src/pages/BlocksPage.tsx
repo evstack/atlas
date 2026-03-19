@@ -5,6 +5,8 @@ import { CopyButton, Loading } from '../components';
 import { formatNumber, formatTimeAgo, formatGas, truncateHash } from '../utils';
 import { BlockStatsContext } from '../context/BlockStatsContext';
 
+const BLOCKS_PER_PAGE = 20;
+
 export default function BlocksPage() {
   const [page, setPage] = useState(1);
   const [autoRefresh, setAutoRefresh] = useState<boolean>(() => {
@@ -15,7 +17,7 @@ export default function BlocksPage() {
       return true;
     }
   });
-  const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: 20 });
+  const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: BLOCKS_PER_PAGE });
   const hasLoaded = !loading || pagination !== null;
   const { latestBlockEvent, sseConnected } = useContext(BlockStatsContext);
   const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
@@ -52,7 +54,7 @@ export default function BlocksPage() {
           prepend.push(b);
         }
         prepend.reverse();
-        return [...prepend, ...prev].slice(0, 20);
+        return [...prepend, ...prev].slice(0, BLOCKS_PER_PAGE);
       });
       ssePrependRafRef.current = null;
     });
@@ -75,7 +77,9 @@ export default function BlocksPage() {
   const blocks = useMemo(() => {
     if (page !== 1 || !sseBlocks.length) return fetchedBlocks;
     const unique = sseBlocks.filter((b) => !fetchedNumberSet.has(b.number));
-    return [...unique, ...fetchedBlocks].slice(0, 20);
+    return [...unique, ...fetchedBlocks]
+      .sort((a, b) => b.number - a.number)
+      .slice(0, BLOCKS_PER_PAGE);
   }, [fetchedBlocks, fetchedNumberSet, sseBlocks, page]);
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
@@ -369,7 +373,7 @@ export default function BlocksPage() {
         )}
       </div>
 
-      {/* Compact pager: centered, with First/Prev and Next/Last around the visible range */}
+      {/* Compact pager: centered, without a jump-to-oldest control. */}
       <div className="mt-4">
         <div className="flex items-center justify-center gap-2">
           <button
@@ -411,18 +415,6 @@ export default function BlocksPage() {
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-          <button
-            className="btn btn-secondary text-xs"
-            onClick={() => pagination && setPage(pagination.total_pages)}
-            disabled={!pagination || page === pagination?.total_pages}
-            aria-label="Last page"
-            title="Last page"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 5v14" />
             </svg>
           </button>
         </div>

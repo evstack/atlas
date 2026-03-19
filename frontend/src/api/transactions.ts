@@ -10,36 +10,31 @@ export interface GetTransactionsParams {
 
 export async function getTransactions(params: GetTransactionsParams = {}): Promise<PaginatedResponse<Transaction>> {
   const { page = 1, limit = 20, block_number, address } = params;
-  const response = await client.get<PaginatedResponse<Transaction>>('/transactions', {
+  return client.get<PaginatedResponse<Transaction>>('/transactions', {
     params: { page, limit, block_number, address },
   });
-  return response.data;
 }
 
 export async function getTransactionByHash(txHash: string): Promise<Transaction> {
-  const response = await client.get<Transaction>(`/transactions/${txHash}`);
-  return response.data;
+  return client.get<Transaction>(`/transactions/${txHash}`);
 }
 
 export async function getTransactionsByBlock(blockNumber: number, params: { page?: number; limit?: number } = {}): Promise<PaginatedResponse<Transaction>> {
   const { page = 1, limit = 20 } = params;
-  const response = await client.get<PaginatedResponse<Transaction>>(`/blocks/${blockNumber}/transactions`, {
+  return client.get<PaginatedResponse<Transaction>>(`/blocks/${blockNumber}/transactions`, {
     params: { page, limit },
   });
-  return response.data;
 }
 
 export async function getTransactionsByAddress(address: string, params: { page?: number; limit?: number } = {}): Promise<PaginatedResponse<Transaction>> {
   const { page = 1, limit = 20 } = params;
-  const response = await client.get<PaginatedResponse<Transaction>>(`/addresses/${address}/transactions`, {
+  return client.get<PaginatedResponse<Transaction>>(`/addresses/${address}/transactions`, {
     params: { page, limit },
   });
-  return response.data;
 }
 
 export async function getTxErc20Transfers(txHash: string): Promise<TxErc20Transfer[]> {
-  const response = await client.get(`/transactions/${txHash}/erc20-transfers`);
-  const body = response.data as unknown;
+  const body = await client.get<unknown>(`/transactions/${txHash}/erc20-transfers`);
   if (Array.isArray(body)) return body as TxErc20Transfer[];
   if (typeof body === 'object' && body !== null && 'data' in body) {
     const data = (body as { data?: unknown }).data;
@@ -49,8 +44,7 @@ export async function getTxErc20Transfers(txHash: string): Promise<TxErc20Transf
 }
 
 export async function getTxNftTransfers(txHash: string): Promise<TxNftTransfer[]> {
-  const response = await client.get(`/transactions/${txHash}/nft-transfers`);
-  const body = response.data as unknown;
+  const body = await client.get<unknown>(`/transactions/${txHash}/nft-transfers`);
   if (Array.isArray(body)) return body as TxNftTransfer[];
   if (typeof body === 'object' && body !== null && 'data' in body) {
     const data = (body as { data?: unknown }).data;

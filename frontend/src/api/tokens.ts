@@ -8,15 +8,11 @@ export interface GetTokensParams {
 
 export async function getTokens(params: GetTokensParams = {}): Promise<PaginatedResponse<Token>> {
   const { page = 1, limit = 20 } = params;
-  const response = await client.get<PaginatedResponse<Token>>('/tokens', {
-    params: { page, limit },
-  });
-  return response.data;
+  return client.get<PaginatedResponse<Token>>('/tokens', { params: { page, limit } });
 }
 
 export async function getToken(address: string): Promise<Token> {
-  const response = await client.get<Token>(`/tokens/${address}`);
-  return response.data;
+  return client.get<Token>(`/tokens/${address}`);
 }
 
 export interface GetTokenHoldersParams {
@@ -26,10 +22,9 @@ export interface GetTokenHoldersParams {
 
 export async function getTokenHolders(address: string, params: GetTokenHoldersParams = {}): Promise<PaginatedResponse<TokenHolder>> {
   const { page = 1, limit = 20 } = params;
-  const response = await client.get<PaginatedResponse<TokenHolder>>(`/tokens/${address}/holders`, {
+  return client.get<PaginatedResponse<TokenHolder>>(`/tokens/${address}/holders`, {
     params: { page, limit },
   });
-  return response.data;
 }
 
 export interface GetTokenTransfersParams {
@@ -39,10 +34,9 @@ export interface GetTokenTransfersParams {
 
 export async function getTokenTransfers(address: string, params: GetTokenTransfersParams = {}): Promise<PaginatedResponse<TokenTransfer>> {
   const { page = 1, limit = 20 } = params;
-  const response = await client.get<PaginatedResponse<TokenTransfer>>(`/tokens/${address}/transfers`, {
+  return client.get<PaginatedResponse<TokenTransfer>>(`/tokens/${address}/transfers`, {
     params: { page, limit },
   });
-  return response.data;
 }
 
 export interface GetAddressTokensParams {
@@ -52,8 +46,7 @@ export interface GetAddressTokensParams {
 
 export async function getAddressTokens(address: string, params: GetAddressTokensParams = {}): Promise<PaginatedResponse<AddressTokenBalance>> {
   const { page = 1, limit = 20 } = params;
-  const response = await client.get<PaginatedResponse<AddressTokenBalance>>(`/addresses/${address}/tokens`, {
+  return client.get<PaginatedResponse<AddressTokenBalance>>(`/addresses/${address}/tokens`, {
     params: { page, limit },
   });
-  return response.data;
 }
