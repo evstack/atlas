@@ -21,6 +21,12 @@ pub struct AppState {
     pub faucet: Option<SharedFaucetBackend>,
     pub chain_id: u64,
     pub chain_name: String,
+    pub chain_logo_url: Option<String>,
+    pub accent_color: Option<String>,
+    pub background_color_dark: Option<String>,
+    pub background_color_light: Option<String>,
+    pub success_color: Option<String>,
+    pub error_color: Option<String>,
 }
 
 /// Build the Axum router.
@@ -145,6 +151,8 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         // Status
         .route("/api/height", get(handlers::status::get_height))
         .route("/api/status", get(handlers::status::get_status))
+        // Config (white-label branding)
+        .route("/api/config", get(handlers::config::get_config))
         // Health
         .route("/health", get(|| async { "OK" }));
 
@@ -244,6 +252,12 @@ mod tests {
             faucet,
             chain_id: 1,
             chain_name: "Test Chain".to_string(),
+            chain_logo_url: None,
+            accent_color: None,
+            background_color_dark: None,
+            background_color_light: None,
+            success_color: None,
+            error_color: None,
         })
     }
 
