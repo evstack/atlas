@@ -4,37 +4,49 @@ import { deriveSurfaceShades, applyPalette, hexToRgbTriplet } from '../utils/col
 import { ThemeContext } from './theme-context';
 import { BrandingContext, brandingDefaults } from './branding-context';
 
+const CACHE_KEY = 'branding_config';
+
+function readCache(): BrandingConfig | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    return raw ? (JSON.parse(raw) as BrandingConfig) : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyConfigState(cfg: BrandingConfig, setBranding: (v: typeof brandingDefaults) => void, setConfig: (v: BrandingConfig) => void) {
+  setConfig(cfg);
+  setBranding({ chainName: cfg.chain_name, logoUrl: cfg.logo_url || null, loaded: true });
+  document.title = `${cfg.chain_name} - Block Explorer`;
+  if (cfg.logo_url) {
+    const link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+    if (link) link.href = cfg.logo_url;
+  }
+}
+
 export function BrandingProvider({ children }: { children: ReactNode }) {
-  const [branding, setBranding] = useState(brandingDefaults);
-  const [config, setConfig] = useState<BrandingConfig | null>(null);
+  const [branding, setBranding] = useState(() => {
+    const cached = readCache();
+    return cached
+      ? { chainName: cached.chain_name, logoUrl: cached.logo_url || null, loaded: true }
+      : brandingDefaults;
+  });
+  const [config, setConfig] = useState<BrandingConfig | null>(readCache);
   const themeCtx = useContext(ThemeContext);
   const theme = themeCtx?.theme ?? 'dark';
 
-  // Fetch config once on mount
+  // Apply cached config immediately on mount (no flash), then revalidate in background
   useEffect(() => {
     getConfig()
       .then((cfg) => {
-        setConfig(cfg);
-        setBranding({
-          chainName: cfg.chain_name,
-          logoUrl: cfg.logo_url || null,
-          loaded: true,
-        });
-
-        // Update page title
-        document.title = `${cfg.chain_name} - Block Explorer`;
-
-        // Update favicon if logo_url is set
-        if (cfg.logo_url) {
-          const link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
-          if (link) {
-            link.href = cfg.logo_url;
-          }
-        }
+        localStorage.setItem(CACHE_KEY, JSON.stringify(cfg));
+        applyConfigState(cfg, setBranding, setConfig);
       })
       .catch(() => {
-        setBranding({ ...brandingDefaults, loaded: true });
+        if (!config) setBranding({ ...brandingDefaults, loaded: true });
       });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Apply accent + semantic colors (theme-independent)
