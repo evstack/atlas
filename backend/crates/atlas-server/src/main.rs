@@ -14,6 +14,7 @@ mod config;
 mod faucet;
 mod head;
 mod indexer;
+mod snapshot;
 
 /// Retry delays for exponential backoff (in seconds)
 const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
@@ -224,6 +225,7 @@ async fn run(args: cli::RunArgs) -> Result<()> {
 
     let config = config::Config::from_run_args(args.clone())?;
     let faucet_config = config::FaucetConfig::from_faucet_args(&args.faucet)?;
+    let snapshot_config = config::SnapshotConfig::from_env(&config.database_url)?;
 
     let faucet = if faucet_config.enabled {
         tracing::info!("Faucet enabled");
@@ -337,6 +339,19 @@ async fn run(args: cli::RunArgs) -> Result<()> {
             tracing::error!("Metadata fetcher terminated with error: {}", e);
         }
     });
+
+    // Spawn snapshot scheduler if enabled
+    if snapshot_config.enabled {
+        tracing::info!("Snapshot scheduler enabled");
+        tokio::spawn(async move {
+            if let Err(e) =
+                run_with_retry(|| snapshot::run_snapshot_loop(snapshot_config.clone())).await
+            {
+                tracing::error!("Snapshot scheduler terminated with error: {}", e);
+            }
+        });
+    }
+
 
     let app = api::build_router(state, config.cors_origin.clone());
     let addr = format!("{}:{}", config.api_host, config.api_port);
