@@ -42,15 +42,21 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     if (!config) return;
     const root = document.documentElement;
 
-    if (config.accent_color) {
-      root.style.setProperty('--color-accent-primary', hexToRgbTriplet(config.accent_color));
-    }
-    if (config.success_color) {
-      root.style.setProperty('--color-accent-success', hexToRgbTriplet(config.success_color));
-    }
-    if (config.error_color) {
-      root.style.setProperty('--color-accent-error', hexToRgbTriplet(config.error_color));
-    }
+    const setRgbVar = (cssVar: string, hex: string | null | undefined) => {
+      if (!hex) {
+        root.style.removeProperty(cssVar);
+        return;
+      }
+      try {
+        root.style.setProperty(cssVar, hexToRgbTriplet(hex));
+      } catch {
+        root.style.removeProperty(cssVar);
+      }
+    };
+
+    setRgbVar('--color-accent-primary', config.accent_color);
+    setRgbVar('--color-accent-success', config.success_color);
+    setRgbVar('--color-accent-error', config.error_color);
   }, [config]);
 
   // Apply background palette reactively on theme change
@@ -58,11 +64,19 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     if (!config) return;
 
     if (theme === 'dark' && config.background_color_dark) {
-      const palette = deriveSurfaceShades(config.background_color_dark, 'dark');
-      applyPalette(palette);
+      try {
+        const palette = deriveSurfaceShades(config.background_color_dark, 'dark');
+        applyPalette(palette);
+      } catch {
+        // fall through to default CSS vars
+      }
     } else if (theme === 'light' && config.background_color_light) {
-      const palette = deriveSurfaceShades(config.background_color_light, 'light');
-      applyPalette(palette);
+      try {
+        const palette = deriveSurfaceShades(config.background_color_light, 'light');
+        applyPalette(palette);
+      } catch {
+        // fall through to default CSS vars
+      }
     } else {
       // Remove any inline overrides so the CSS defaults take effect
       const root = document.documentElement;

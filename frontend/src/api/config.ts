@@ -11,6 +11,5 @@ export interface BrandingConfig {
 }
 
 export async function getConfig(): Promise<BrandingConfig> {
-  const response = await client.get<BrandingConfig>('/config');
-  return response.data;
+  return client.get<BrandingConfig>('/config');
 }

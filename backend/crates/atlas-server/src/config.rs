@@ -133,7 +133,8 @@ impl Config {
             sse_replay_buffer_blocks,
             chain_name: env::var("CHAIN_NAME")
                 .ok()
-                .filter(|s| !s.trim().is_empty())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "Unknown".to_string()),
             chain_logo_url: parse_optional_env(env::var("CHAIN_LOGO_URL").ok()),
             accent_color: parse_optional_env(env::var("ACCENT_COLOR").ok()),
@@ -292,6 +293,15 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap();
         set_required_env();
         env::set_var("CHAIN_NAME", "MyChain");
+        assert_eq!(Config::from_env().unwrap().chain_name, "MyChain");
+        env::remove_var("CHAIN_NAME");
+    }
+
+    #[test]
+    fn chain_name_trims_surrounding_whitespace() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        env::set_var("CHAIN_NAME", "  MyChain  ");
         assert_eq!(Config::from_env().unwrap().chain_name, "MyChain");
         env::remove_var("CHAIN_NAME");
     }
