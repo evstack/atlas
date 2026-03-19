@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-pub(crate) struct HeadTracker {
+pub struct HeadTracker {
     replay_capacity: usize,
     state: RwLock<HeadState>,
 }
@@ -15,14 +15,14 @@ struct HeadState {
     replay: VecDeque<Block>,
 }
 
-pub(crate) struct ReplaySnapshot {
+pub struct ReplaySnapshot {
     pub buffer_start: Option<i64>,
     pub buffer_end: Option<i64>,
     pub blocks_after_cursor: Vec<Block>,
 }
 
 impl HeadTracker {
-    pub(crate) async fn bootstrap(
+    pub async fn bootstrap(
         pool: &PgPool,
         replay_capacity: usize,
     ) -> Result<Self, sqlx::Error> {
@@ -49,19 +49,19 @@ impl HeadTracker {
         })
     }
 
-    pub(crate) fn empty(replay_capacity: usize) -> Self {
+    pub fn empty(replay_capacity: usize) -> Self {
         Self {
             replay_capacity,
             state: RwLock::new(HeadState::default()),
         }
     }
 
-    pub(crate) async fn clear(&self) {
+    pub async fn clear(&self) {
         let mut state = self.state.write().await;
         *state = HeadState::default();
     }
 
-    pub(crate) async fn publish_committed_batch(&self, blocks: Vec<Block>) {
+    pub async fn publish_committed_batch(&self, blocks: Vec<Block>) {
         if blocks.is_empty() {
             return;
         }
@@ -89,11 +89,11 @@ impl HeadTracker {
         }
     }
 
-    pub(crate) async fn latest(&self) -> Option<Block> {
+    pub async fn latest(&self) -> Option<Block> {
         self.state.read().await.latest.clone()
     }
 
-    pub(crate) async fn replay_after(&self, after_block: Option<i64>) -> ReplaySnapshot {
+    pub async fn replay_after(&self, after_block: Option<i64>) -> ReplaySnapshot {
         let state = self.state.read().await;
 
         let blocks_after_cursor = match after_block {
