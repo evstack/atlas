@@ -22,10 +22,7 @@ pub struct ReplaySnapshot {
 }
 
 impl HeadTracker {
-    pub async fn bootstrap(
-        pool: &PgPool,
-        replay_capacity: usize,
-    ) -> Result<Self, sqlx::Error> {
+    pub async fn bootstrap(pool: &PgPool, replay_capacity: usize) -> Result<Self, sqlx::Error> {
         let mut blocks = sqlx::query_as::<_, Block>(&format!(
             "SELECT {} FROM blocks ORDER BY number DESC LIMIT $1",
             BLOCK_COLUMNS

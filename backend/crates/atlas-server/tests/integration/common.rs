@@ -27,10 +27,7 @@ static ENV: LazyLock<TestEnv> = LazyLock::new(|| {
             .expect("Failed to start Postgres container");
 
         let host = container.get_host().await.expect("get host");
-        let port = container
-            .get_host_port_ipv4(5432)
-            .await
-            .expect("get port");
+        let port = container.get_host_port_ipv4(5432).await.expect("get port");
 
         let database_url = format!("postgres://postgres:postgres@{}:{}/postgres", host, port);
 

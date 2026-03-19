@@ -100,7 +100,10 @@ fn search_by_block_hash() {
             .iter()
             .find(|r| r["type"].as_str().unwrap() == "block");
         assert!(block_result.is_some());
-        assert_eq!(block_result.unwrap()["number"].as_i64().unwrap(), SEARCH_BLOCK);
+        assert_eq!(
+            block_result.unwrap()["number"].as_i64().unwrap(),
+            SEARCH_BLOCK
+        );
     });
 }
 
