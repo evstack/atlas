@@ -43,7 +43,9 @@ fn snapshot_dump_and_restore_round_trip() {
 
         assert!(dump_status.success(), "pg_dump failed: {dump_status}");
 
-        let metadata = tokio::fs::metadata(&dump_path).await.expect("stat dump file");
+        let metadata = tokio::fs::metadata(&dump_path)
+            .await
+            .expect("stat dump file");
         assert!(metadata.len() > 0, "dump file is empty");
 
         // Create a separate database for restore
@@ -63,7 +65,10 @@ fn snapshot_dump_and_restore_round_trip() {
             .await
             .expect("spawn pg_restore");
 
-        assert!(restore_status.success(), "pg_restore failed: {restore_status}");
+        assert!(
+            restore_status.success(),
+            "pg_restore failed: {restore_status}"
+        );
 
         // Verify data in restored database
         let restore_pool = sqlx::postgres::PgPoolOptions::new()

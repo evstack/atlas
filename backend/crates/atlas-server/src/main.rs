@@ -158,7 +158,9 @@ async fn main() -> Result<()> {
     if snapshot_config.enabled {
         tracing::info!("Snapshot scheduler enabled");
         tokio::spawn(async move {
-            if let Err(e) = run_with_retry(|| snapshot::run_snapshot_loop(snapshot_config.clone())).await {
+            if let Err(e) =
+                run_with_retry(|| snapshot::run_snapshot_loop(snapshot_config.clone())).await
+            {
                 tracing::error!("Snapshot scheduler terminated with error: {}", e);
             }
         });
