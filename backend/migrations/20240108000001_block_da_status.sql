@@ -1,5 +1,5 @@
 -- Block DA (Data Availability) status for L2 chains using Celestia.
--- Only populated when ENABLE_DA_TRACKING=true and the DA worker is running.
+-- Only populated when EVNODE_URL is configured and the DA worker is running.
 --
 -- The DA worker has two phases:
 -- 1. Backfill: discovers blocks missing from this table, queries ev-node, and INSERTs.
