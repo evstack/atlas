@@ -7,6 +7,13 @@ import { useEthPrice } from '../hooks';
 
 export default function TransactionsPage() {
   const [page, setPage] = useState(1);
+  const [cursor, setCursor] = useState<{
+    beforeBlock?: number;
+    beforeIndex?: number;
+    afterBlock?: number;
+    afterIndex?: number;
+    lastPage?: boolean;
+  }>({});
   const [autoRefresh, setAutoRefresh] = useState<boolean>(() => {
     try {
       const v = localStorage.getItem('txs:autoRefresh');
@@ -16,7 +23,15 @@ export default function TransactionsPage() {
     }
   });
   const [, setTick] = useState(0);
-  const { transactions, pagination, refetch, loading } = useTransactions({ page, limit: 20 });
+  const { transactions, pagination, refetch, loading } = useTransactions({
+    page,
+    limit: 20,
+    before_block: cursor.beforeBlock,
+    before_index: cursor.beforeIndex,
+    after_block: cursor.afterBlock,
+    after_index: cursor.afterIndex,
+    last_page: cursor.lastPage,
+  });
   const [hasLoaded, setHasLoaded] = useState(false);
   useEffect(() => {
     if (!loading) setHasLoaded(true);
@@ -128,6 +143,22 @@ export default function TransactionsPage() {
     } catch {
       return 'Transaction';
     }
+  };
+
+  // Cursor-based navigation: derive cursors from server-ordered data
+  const goFirst = () => { setCursor({}); setPage(1); };
+  const goPrev = () => {
+    const f = transactions[0];
+    if (f) setCursor({ afterBlock: f.block_number, afterIndex: f.block_index });
+    setPage((p) => Math.max(1, p - 1));
+  };
+  const goNext = () => {
+    const l = transactions[transactions.length - 1];
+    if (l) setCursor({ beforeBlock: l.block_number, beforeIndex: l.block_index });
+    setPage((p) => p + 1);
+  };
+  const goLast = () => {
+    if (pagination) { setCursor({ lastPage: true }); setPage(pagination.total_pages); }
   };
 
   return (
@@ -321,7 +352,7 @@ export default function TransactionsPage() {
         <div className="flex items-center justify-center gap-2">
           <button
             className="btn btn-secondary text-xs"
-            onClick={() => setPage(1)}
+            onClick={goFirst}
             disabled={page === 1}
             aria-label="First page"
             title="First page"
@@ -333,7 +364,7 @@ export default function TransactionsPage() {
           </button>
           <button
             className="btn btn-secondary text-xs"
-            onClick={() => setPage(Math.max(1, page - 1))}
+            onClick={goPrev}
             disabled={page === 1}
             aria-label="Previous page"
             title="Previous page"
@@ -349,8 +380,8 @@ export default function TransactionsPage() {
           </span>
           <button
             className="btn btn-secondary text-xs"
-            onClick={() => pagination && setPage(Math.min(pagination.total_pages, page + 1))}
-            disabled={!pagination || page === pagination?.total_pages}
+            onClick={goNext}
+            disabled={!pagination || page >= pagination.total_pages}
             aria-label="Next page"
             title="Next page"
           >
@@ -360,8 +391,8 @@ export default function TransactionsPage() {
           </button>
           <button
             className="btn btn-secondary text-xs"
-            onClick={() => pagination && setPage(pagination.total_pages)}
-            disabled={!pagination || page === pagination?.total_pages}
+            onClick={goLast}
+            disabled={!pagination || page >= pagination.total_pages}
             aria-label="Last page"
             title="Last page"
           >

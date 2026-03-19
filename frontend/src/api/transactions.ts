@@ -6,12 +6,17 @@ export interface GetTransactionsParams {
   limit?: number;
   block_number?: number;
   address?: string;
+  before_block?: number;
+  before_index?: number;
+  after_block?: number;
+  after_index?: number;
+  last_page?: boolean;
 }
 
 export async function getTransactions(params: GetTransactionsParams = {}): Promise<PaginatedResponse<Transaction>> {
-  const { page = 1, limit = 20, block_number, address } = params;
+  const { page = 1, limit = 20, block_number, address, before_block, before_index, after_block, after_index, last_page } = params;
   return client.get<PaginatedResponse<Transaction>>('/transactions', {
-    params: { page, limit, block_number, address },
+    params: { page, limit, block_number, address, before_block, before_index, after_block, after_index, last_page: last_page || undefined },
   });
 }
 
