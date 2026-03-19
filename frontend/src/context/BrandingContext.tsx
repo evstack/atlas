@@ -105,6 +105,33 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     }
   }, [config, theme]);
 
+  if (!branding.loaded) {
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme === 'dark' ? '#0f172a' : '#f8fafc',
+        }}
+      >
+        <div
+          style={{
+            width: '2rem',
+            height: '2rem',
+            borderRadius: '50%',
+            border: `3px solid ${theme === 'dark' ? '#334155' : '#cbd5e1'}`,
+            borderTopColor: theme === 'dark' ? '#94a3b8' : '#64748b',
+            animation: 'spin 0.8s linear infinite',
+          }}
+        />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
   return (
     <BrandingContext.Provider value={branding}>
       {children}
