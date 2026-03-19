@@ -41,6 +41,13 @@ export default function BlocksPage() {
   const pendingSseBlocksRef = useRef<typeof fetchedBlocks>([]);
   const sseFilterRafRef = useRef<number | null>(null);
 
+  const cancelDaOverridesSync = () => {
+    if (daOverridesSyncRafRef.current !== null) {
+      cancelAnimationFrame(daOverridesSyncRafRef.current);
+      daOverridesSyncRafRef.current = null;
+    }
+  };
+
   // Cache fetched block numbers to avoid recreating Sets on every effect/memo
   const fetchedNumberSet = useMemo(
     () => new Set(fetchedBlocks.map((b) => b.number)),
@@ -118,9 +125,7 @@ export default function BlocksPage() {
       if (daOverridesRef.current.size > 0) {
         const empty = new Map<number, BlockDaStatus>();
         daOverridesRef.current = empty;
-        if (daOverridesSyncRafRef.current !== null) {
-          cancelAnimationFrame(daOverridesSyncRafRef.current);
-        }
+        cancelDaOverridesSync();
         daOverridesSyncRafRef.current = window.requestAnimationFrame(() => {
           setDaOverrides(empty);
           daOverridesSyncRafRef.current = null;
@@ -151,9 +156,7 @@ export default function BlocksPage() {
 
     if (changed || nextOverrides.size !== daOverridesRef.current.size) {
       daOverridesRef.current = nextOverrides;
-      if (daOverridesSyncRafRef.current !== null) {
-        cancelAnimationFrame(daOverridesSyncRafRef.current);
-      }
+      cancelDaOverridesSync();
       daOverridesSyncRafRef.current = window.requestAnimationFrame(() => {
         setDaOverrides(nextOverrides);
         daOverridesSyncRafRef.current = null;
@@ -211,6 +214,7 @@ export default function BlocksPage() {
 
       if (!changed) return;
 
+      cancelDaOverridesSync();
       daOverridesRef.current = next;
       setDaOverrides(next);
 
@@ -235,6 +239,7 @@ export default function BlocksPage() {
   useEffect(() => {
     if (!features.da_tracking) return;
     return subscribeDaResync(() => {
+      cancelDaOverridesSync();
       const empty = new Map<number, BlockDaStatus>();
       daOverridesRef.current = empty;
       setDaOverrides(empty);
