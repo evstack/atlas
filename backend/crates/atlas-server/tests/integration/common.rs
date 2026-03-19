@@ -69,6 +69,12 @@ pub fn test_router() -> Router {
         faucet: None,
         chain_id: 42,
         chain_name: "Test Chain".to_string(),
+        chain_logo_url: None,
+        accent_color: None,
+        background_color_dark: None,
+        background_color_light: None,
+        success_color: None,
+        error_color: None,
     });
 
     build_router(state, None)
