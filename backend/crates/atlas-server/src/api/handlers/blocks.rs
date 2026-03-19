@@ -2,16 +2,27 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use serde::Serialize;
 use std::sync::Arc;
 
 use crate::api::error::ApiResult;
 use crate::api::AppState;
-use atlas_common::{AtlasError, Block, PaginatedResponse, Pagination, Transaction};
+use atlas_common::{AtlasError, Block, BlockDaStatus, PaginatedResponse, Pagination, Transaction};
+
+/// Block response with optional DA status.
+/// DA fields are always present in the JSON (null when no data),
+/// so the frontend can rely on a stable schema.
+#[derive(Serialize)]
+pub struct BlockResponse {
+    #[serde(flatten)]
+    pub block: Block,
+    pub da_status: Option<BlockDaStatus>,
+}
 
 pub async fn list_blocks(
     State(state): State<Arc<AppState>>,
     Query(pagination): Query<Pagination>,
-) -> ApiResult<Json<PaginatedResponse<Block>>> {
+) -> ApiResult<Json<PaginatedResponse<BlockResponse>>> {
     // Use MAX(number) + 1 instead of COUNT(*) - blocks are sequential so this is accurate
     // This is ~6500x faster than COUNT(*) on large tables
     let total: (Option<i64>,) = sqlx::query_as("SELECT MAX(number) + 1 FROM blocks")
@@ -30,15 +41,37 @@ pub async fn list_blocks(
          FROM blocks
          WHERE number <= $2
          ORDER BY number DESC
-         LIMIT $1"
+         LIMIT $1",
     )
     .bind(limit)
     .bind(cursor)
     .fetch_all(&state.pool)
     .await?;
 
+    // Batch-fetch DA status for all blocks in this page
+    let block_numbers: Vec<i64> = blocks.iter().map(|b| b.number).collect();
+    let da_rows: Vec<BlockDaStatus> = sqlx::query_as(
+        "SELECT block_number, header_da_height, data_da_height, updated_at
+         FROM block_da_status
+         WHERE block_number = ANY($1)",
+    )
+    .bind(&block_numbers)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let da_map: std::collections::HashMap<i64, BlockDaStatus> =
+        da_rows.into_iter().map(|d| (d.block_number, d)).collect();
+
+    let responses: Vec<BlockResponse> = blocks
+        .into_iter()
+        .map(|block| {
+            let da_status = da_map.get(&block.number).cloned();
+            BlockResponse { block, da_status }
+        })
+        .collect();
+
     Ok(Json(PaginatedResponse::new(
-        blocks,
+        responses,
         pagination.page,
         pagination.limit,
         total_count,
@@ -48,18 +81,27 @@ pub async fn list_blocks(
 pub async fn get_block(
     State(state): State<Arc<AppState>>,
     Path(number): Path<i64>,
-) -> ApiResult<Json<Block>> {
+) -> ApiResult<Json<BlockResponse>> {
     let block: Block = sqlx::query_as(
         "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
          FROM blocks
-         WHERE number = $1"
+         WHERE number = $1",
     )
     .bind(number)
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| AtlasError::NotFound(format!("Block {} not found", number)))?;
 
-    Ok(Json(block))
+    let da_status: Option<BlockDaStatus> = sqlx::query_as(
+        "SELECT block_number, header_da_height, data_da_height, updated_at
+         FROM block_da_status
+         WHERE block_number = $1",
+    )
+    .bind(number)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    Ok(Json(BlockResponse { block, da_status }))
 }
 
 pub async fn get_block_transactions(
@@ -77,7 +119,7 @@ pub async fn get_block_transactions(
          FROM transactions
          WHERE block_number = $1
          ORDER BY block_index ASC
-         LIMIT $2 OFFSET $3"
+         LIMIT $2 OFFSET $3",
     )
     .bind(number)
     .bind(pagination.limit())

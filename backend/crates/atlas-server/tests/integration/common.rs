@@ -60,12 +60,15 @@ pub fn test_router() -> Router {
     let pool = pool().clone();
     let head_tracker = Arc::new(HeadTracker::empty(10));
     let (tx, _) = broadcast::channel(1);
+    let (da_tx, _) = broadcast::channel(1);
 
     let state = Arc::new(AppState {
         pool,
         block_events_tx: tx,
+        da_events_tx: da_tx,
         head_tracker,
         rpc_url: String::new(),
+        da_tracking_enabled: false,
         faucet: None,
         chain_id: 42,
         chain_name: "Test Chain".to_string(),

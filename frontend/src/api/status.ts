@@ -1,8 +1,10 @@
 import client from './client';
+import type { ChainFeatures } from '../types';
 
 export interface HeightResponse {
   block_height: number;
-  indexed_at?: string;
+  indexed_at?: string; // ISO timestamp, absent when no blocks indexed
+  features: ChainFeatures;
 }
 
 export interface ChainStatusResponse {

@@ -3,6 +3,9 @@ use alloy::signers::local::PrivateKeySigner;
 use anyhow::{bail, Context, Result};
 use std::{env, str::FromStr};
 
+const DEFAULT_DA_WORKER_CONCURRENCY: u32 = 50;
+const DEFAULT_DA_RPC_REQUESTS_PER_SECOND: u32 = 50;
+
 #[derive(Debug, Clone)]
 pub struct Config {
     // Shared
@@ -25,6 +28,12 @@ pub struct Config {
     pub metadata_retry_attempts: u32,
     pub fetch_workers: u32,
     pub rpc_batch_size: u32,
+
+    // DA tracking (optional)
+    pub da_tracking_enabled: bool,
+    pub evnode_url: Option<String>,
+    pub da_worker_concurrency: u32,
+    pub da_rpc_requests_per_second: u32,
 
     // API-specific
     pub api_host: String,
@@ -76,6 +85,50 @@ impl Config {
             bail!("SSE_REPLAY_BUFFER_BLOCKS must be between 1 and 100000");
         }
 
+        let da_tracking_enabled: bool = env::var("ENABLE_DA_TRACKING")
+            .unwrap_or_else(|_| "false".to_string())
+            .parse()
+            .context("Invalid ENABLE_DA_TRACKING")?;
+
+        let raw_evnode_url = env::var("EVNODE_URL")
+            .ok()
+            .map(|url| url.trim().to_string())
+            .filter(|url| !url.is_empty());
+
+        let evnode_url = if da_tracking_enabled {
+            Some(raw_evnode_url.ok_or_else(|| {
+                anyhow::anyhow!("EVNODE_URL must be set when DA tracking is enabled")
+            })?)
+        } else {
+            None
+        };
+
+        let da_worker_concurrency = if da_tracking_enabled {
+            let value: u32 = env::var("DA_WORKER_CONCURRENCY")
+                .unwrap_or_else(|_| DEFAULT_DA_WORKER_CONCURRENCY.to_string())
+                .parse()
+                .context("Invalid DA_WORKER_CONCURRENCY")?;
+            if value == 0 {
+                bail!("DA_WORKER_CONCURRENCY must be greater than 0");
+            }
+            value
+        } else {
+            DEFAULT_DA_WORKER_CONCURRENCY
+        };
+
+        let da_rpc_requests_per_second = if da_tracking_enabled {
+            let value: u32 = env::var("DA_RPC_REQUESTS_PER_SECOND")
+                .unwrap_or_else(|_| DEFAULT_DA_RPC_REQUESTS_PER_SECOND.to_string())
+                .parse()
+                .context("Invalid DA_RPC_REQUESTS_PER_SECOND")?;
+            if value == 0 {
+                bail!("DA_RPC_REQUESTS_PER_SECOND must be greater than 0");
+            }
+            value
+        } else {
+            DEFAULT_DA_RPC_REQUESTS_PER_SECOND
+        };
+
         Ok(Self {
             database_url: env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
             rpc_url: env::var("RPC_URL").context("RPC_URL must be set")?,
@@ -123,6 +176,11 @@ impl Config {
                 .unwrap_or_else(|_| "20".to_string())
                 .parse()
                 .context("Invalid RPC_BATCH_SIZE")?,
+
+            da_tracking_enabled,
+            evnode_url,
+            da_worker_concurrency,
+            da_rpc_requests_per_second,
 
             api_host: env::var("API_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
             api_port: env::var("API_PORT")
@@ -252,6 +310,20 @@ mod tests {
         env::set_var("RPC_URL", "http://localhost:8545");
     }
 
+    fn clear_da_env() {
+        env::remove_var("ENABLE_DA_TRACKING");
+        env::remove_var("EVNODE_URL");
+        env::remove_var("DA_WORKER_CONCURRENCY");
+        env::remove_var("DA_RPC_REQUESTS_PER_SECOND");
+    }
+
+    fn clear_faucet_env() {
+        env::remove_var("FAUCET_ENABLED");
+        env::remove_var("FAUCET_PRIVATE_KEY");
+        env::remove_var("FAUCET_AMOUNT");
+        env::remove_var("FAUCET_COOLDOWN_MINUTES");
+    }
+
     fn set_valid_faucet_env() {
         env::set_var("FAUCET_ENABLED", "true");
         env::set_var(
@@ -333,6 +405,7 @@ mod tests {
     fn sse_replay_buffer_validation() {
         let _lock = ENV_LOCK.lock().unwrap();
         set_required_env();
+        clear_da_env();
 
         // Default
         env::remove_var("SSE_REPLAY_BUFFER_BLOCKS");
@@ -360,15 +433,97 @@ mod tests {
             .contains("Invalid SSE_REPLAY_BUFFER_BLOCKS"));
 
         env::remove_var("SSE_REPLAY_BUFFER_BLOCKS");
+        clear_da_env();
+    }
+
+    #[test]
+    fn da_tracking_is_disabled_by_default_and_ignores_da_specific_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        clear_da_env();
+
+        env::set_var("EVNODE_URL", "http://ev-node:7331");
+        env::set_var("DA_WORKER_CONCURRENCY", "not-a-number");
+        env::set_var("DA_RPC_REQUESTS_PER_SECOND", "not-a-number");
+
+        let config = Config::from_env().unwrap();
+        assert!(!config.da_tracking_enabled);
+        assert!(config.evnode_url.is_none());
+        assert_eq!(config.da_worker_concurrency, DEFAULT_DA_WORKER_CONCURRENCY);
+        assert_eq!(
+            config.da_rpc_requests_per_second,
+            DEFAULT_DA_RPC_REQUESTS_PER_SECOND
+        );
+
+        clear_da_env();
+    }
+
+    #[test]
+    fn da_tracking_requires_non_empty_evnode_url_when_enabled() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        clear_da_env();
+
+        env::set_var("ENABLE_DA_TRACKING", "true");
+        let err = Config::from_env().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("EVNODE_URL must be set when DA tracking is enabled"));
+
+        env::set_var("EVNODE_URL", "   ");
+        let err = Config::from_env().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("EVNODE_URL must be set when DA tracking is enabled"));
+
+        clear_da_env();
+    }
+
+    #[test]
+    fn evnode_url_alone_does_not_enable_da_tracking() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        clear_da_env();
+
+        env::set_var("EVNODE_URL", "http://ev-node:7331");
+
+        let config = Config::from_env().unwrap();
+        assert!(!config.da_tracking_enabled);
+        assert!(config.evnode_url.is_none());
+        assert_eq!(config.da_worker_concurrency, DEFAULT_DA_WORKER_CONCURRENCY);
+        assert_eq!(
+            config.da_rpc_requests_per_second,
+            DEFAULT_DA_RPC_REQUESTS_PER_SECOND
+        );
+
+        clear_da_env();
+    }
+
+    #[test]
+    fn da_tracking_parses_enabled_config() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        clear_da_env();
+
+        env::set_var("ENABLE_DA_TRACKING", "true");
+        env::set_var("EVNODE_URL", "http://localhost:7331/");
+        env::set_var("DA_WORKER_CONCURRENCY", "12");
+        env::set_var("DA_RPC_REQUESTS_PER_SECOND", "34");
+
+        let config = Config::from_env().unwrap();
+        assert!(config.da_tracking_enabled);
+        assert_eq!(config.evnode_url.as_deref(), Some("http://localhost:7331/"));
+        assert_eq!(config.da_worker_concurrency, 12);
+        assert_eq!(config.da_rpc_requests_per_second, 34);
+
+        clear_da_env();
     }
 
     #[test]
     fn faucet_config_defaults_disabled() {
         let _lock = ENV_LOCK.lock().unwrap();
         env::remove_var("FAUCET_ENABLED");
-        env::remove_var("FAUCET_PRIVATE_KEY");
-        env::remove_var("FAUCET_AMOUNT");
-        env::remove_var("FAUCET_COOLDOWN_MINUTES");
+        clear_faucet_env();
 
         let faucet = FaucetConfig::from_env().unwrap();
         assert!(!faucet.enabled);

@@ -99,8 +99,9 @@ async fn main() -> Result<()> {
     let api_pool =
         atlas_common::db::create_pool(&config.database_url, config.api_db_max_connections).await?;
 
-    // Shared broadcast channel for SSE notifications
+    // Shared broadcast channels for SSE notifications
     let (block_events_tx, _) = broadcast::channel(1024);
+    let (da_events_tx, _) = broadcast::channel::<Vec<indexer::DaSseUpdate>>(256);
     let head_tracker = Arc::new(if config.reindex {
         head::HeadTracker::empty(config.sse_replay_buffer_blocks)
     } else {
@@ -111,8 +112,10 @@ async fn main() -> Result<()> {
     let state = Arc::new(api::AppState {
         pool: api_pool,
         block_events_tx: block_events_tx.clone(),
+        da_events_tx: da_events_tx.clone(),
         head_tracker: head_tracker.clone(),
         rpc_url: config.rpc_url.clone(),
+        da_tracking_enabled: config.da_tracking_enabled,
         faucet,
         chain_id,
         chain_name: config.chain_name.clone(),
@@ -125,6 +128,7 @@ async fn main() -> Result<()> {
     });
 
     // Spawn indexer task with retry logic
+    let da_pool = indexer_pool.clone();
     let indexer = indexer::Indexer::new(
         indexer_pool.clone(),
         config.clone(),
@@ -136,6 +140,31 @@ async fn main() -> Result<()> {
             tracing::error!("Indexer terminated with error: {}", e);
         }
     });
+
+    // Spawn DA worker when DA tracking is explicitly enabled.
+    if config.da_tracking_enabled {
+        let evnode_url = config
+            .evnode_url
+            .as_deref()
+            .expect("DA tracking requires EVNODE_URL");
+        tracing::info!(
+            "DA tracking enabled (workers: {}, rate_limit: {} req/s)",
+            config.da_worker_concurrency,
+            config.da_rpc_requests_per_second
+        );
+        let da_worker = indexer::DaWorker::new(
+            da_pool,
+            evnode_url,
+            config.da_worker_concurrency,
+            config.da_rpc_requests_per_second,
+            da_events_tx,
+        )?;
+        tokio::spawn(async move {
+            if let Err(e) = run_with_retry(|| da_worker.run()).await {
+                tracing::error!("DA worker terminated with error: {}", e);
+            }
+        });
+    }
 
     // Spawn metadata fetcher in background
     let metadata_pool = indexer_pool;
