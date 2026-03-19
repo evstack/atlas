@@ -13,6 +13,7 @@ use atlas_server::head::HeadTracker;
 struct TestEnv {
     runtime: tokio::runtime::Runtime,
     pool: PgPool,
+    database_url: String,
     _container: ContainerAsync<Postgres>,
 }
 
@@ -20,7 +21,7 @@ struct TestEnv {
 static ENV: LazyLock<TestEnv> = LazyLock::new(|| {
     let runtime = tokio::runtime::Runtime::new().expect("create test runtime");
 
-    let (pool, container) = runtime.block_on(async {
+    let (pool, container, database_url) = runtime.block_on(async {
         let container = Postgres::default()
             .start()
             .await
@@ -42,18 +43,23 @@ static ENV: LazyLock<TestEnv> = LazyLock::new(|| {
             .await
             .expect("Failed to run migrations");
 
-        (pool, container)
+        (pool, container, database_url)
     });
 
     TestEnv {
         runtime,
         pool,
+        database_url,
         _container: container,
     }
 });
 
 pub fn pool() -> &'static PgPool {
     &ENV.pool
+}
+
+pub fn database_url() -> &'static str {
+    &ENV.database_url
 }
 
 pub fn test_router() -> Router {
