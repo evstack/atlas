@@ -4,6 +4,9 @@ use std::time::Duration;
 
 use crate::config::SnapshotConfig;
 
+const SNAPSHOT_RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
+const SNAPSHOT_MAX_RETRY_DELAY: u64 = 60;
+
 /// Calculate duration from `now` until the next occurrence of `target` time (UTC).
 /// If `target` has already passed today, returns the duration until tomorrow's `target`.
 fn duration_until_next(target: NaiveTime, now: DateTime<Utc>) -> Duration {
@@ -16,7 +19,54 @@ fn duration_until_next(target: NaiveTime, now: DateTime<Utc>) -> Duration {
     (next - now).to_std().expect("positive duration")
 }
 
-/// Run the snapshot scheduler loop. Returns Err on failure (caller retries with backoff).
+fn retry_delay(attempt: usize) -> Duration {
+    Duration::from_secs(
+        SNAPSHOT_RETRY_DELAYS
+            .get(attempt)
+            .copied()
+            .unwrap_or(SNAPSHOT_MAX_RETRY_DELAY),
+    )
+}
+
+fn sleep_duration(target: NaiveTime, now: DateTime<Utc>, retry_attempt: Option<usize>) -> Duration {
+    retry_attempt
+        .map(retry_delay)
+        .unwrap_or_else(|| duration_until_next(target, now))
+}
+
+async fn attempt_snapshot(config: &SnapshotConfig) -> Result<()> {
+    tokio::fs::create_dir_all(&config.dir).await?;
+
+    let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%S");
+    let filename = format!("atlas_snapshot_{timestamp}.dump");
+    let tmp_path = format!("{}/{filename}.tmp", config.dir);
+    let final_path = format!("{}/{filename}", config.dir);
+
+    tracing::info!(%filename, "Starting database snapshot");
+
+    let status = tokio::process::Command::new("pg_dump")
+        .arg("--dbname")
+        .arg(&config.database_url)
+        .arg("-Fc")
+        .arg("-f")
+        .arg(&tmp_path)
+        .status()
+        .await?;
+
+    if status.success() {
+        tokio::fs::rename(&tmp_path, &final_path).await?;
+        tracing::info!(%filename, "Snapshot complete");
+        cleanup_old_snapshots(&config.dir, config.retention).await;
+        Ok(())
+    } else {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        bail!("pg_dump failed with status: {status}");
+    }
+}
+
+/// Run the snapshot scheduler loop.
+/// Snapshot attempts retry with backoff within the same scheduled run so a
+/// transient failure does not skip the day entirely.
 pub async fn run_snapshot_loop(config: SnapshotConfig) -> Result<()> {
     tracing::info!(
         time = %config.time.format("%H:%M"),
@@ -25,39 +75,35 @@ pub async fn run_snapshot_loop(config: SnapshotConfig) -> Result<()> {
         "Snapshot scheduler started"
     );
 
-    tokio::fs::create_dir_all(&config.dir).await?;
+    let mut retry_attempt = None;
 
     loop {
-        let sleep_dur = duration_until_next(config.time, Utc::now());
-        tracing::info!(
-            seconds = sleep_dur.as_secs(),
-            "Sleeping until next snapshot"
-        );
+        let sleep_dur = sleep_duration(config.time, Utc::now(), retry_attempt);
+        if let Some(attempt) = retry_attempt {
+            tracing::warn!(
+                attempt = attempt + 1,
+                seconds = sleep_dur.as_secs(),
+                "Retrying failed snapshot after backoff"
+            );
+        } else {
+            tracing::info!(
+                seconds = sleep_dur.as_secs(),
+                "Sleeping until next snapshot"
+            );
+        }
         tokio::time::sleep(sleep_dur).await;
 
-        let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%S");
-        let filename = format!("atlas_snapshot_{timestamp}.dump");
-        let tmp_path = format!("{}/{filename}.tmp", config.dir);
-        let final_path = format!("{}/{filename}", config.dir);
-
-        tracing::info!(%filename, "Starting database snapshot");
-
-        let status = tokio::process::Command::new("pg_dump")
-            .arg("--dbname")
-            .arg(&config.database_url)
-            .arg("-Fc")
-            .arg("-f")
-            .arg(&tmp_path)
-            .status()
-            .await?;
-
-        if status.success() {
-            tokio::fs::rename(&tmp_path, &final_path).await?;
-            tracing::info!(%filename, "Snapshot complete");
-            cleanup_old_snapshots(&config.dir, config.retention).await;
-        } else {
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-            bail!("pg_dump failed with status: {status}");
+        match attempt_snapshot(&config).await {
+            Ok(()) => retry_attempt = None,
+            Err(err) => {
+                let next_attempt = retry_attempt.map(|attempt| attempt + 1).unwrap_or(0);
+                tracing::error!(
+                    error = %err,
+                    attempt = next_attempt + 1,
+                    "Snapshot attempt failed"
+                );
+                retry_attempt = Some(next_attempt);
+            }
         }
     }
 }
@@ -117,6 +163,22 @@ mod tests {
         let target = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
         let dur = duration_until_next(target, now);
         assert_eq!(dur, Duration::from_secs(24 * 3600)); // full 24 hours
+    }
+
+    #[test]
+    fn sleep_duration_uses_schedule_when_not_retrying() {
+        let now = Utc.with_ymd_and_hms(2026, 3, 19, 16, 0, 0).unwrap();
+        let target = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
+        let dur = sleep_duration(target, now, None);
+        assert_eq!(dur, Duration::from_secs(11 * 3600));
+    }
+
+    #[test]
+    fn sleep_duration_uses_retry_backoff_after_failure() {
+        let now = Utc.with_ymd_and_hms(2026, 3, 19, 16, 0, 0).unwrap();
+        let target = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
+        let dur = sleep_duration(target, now, Some(0));
+        assert_eq!(dur, Duration::from_secs(5));
     }
 
     #[tokio::test]
