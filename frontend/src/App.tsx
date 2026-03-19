@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components';
 import { ThemeProvider } from './context/ThemeContext';
+import { BrandingProvider } from './context/BrandingContext';
 
 const BlocksPage = lazy(() => import('./pages/BlocksPage'));
 const BlockDetailPage = lazy(() => import('./pages/BlockDetailPage'));
@@ -32,6 +33,7 @@ function PageLoader() {
 export default function App() {
   return (
     <ThemeProvider>
+      <BrandingProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
@@ -55,6 +57,7 @@ export default function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      </BrandingProvider>
     </ThemeProvider>
   );
 }

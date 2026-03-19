@@ -119,6 +119,12 @@ async fn main() -> Result<()> {
         faucet,
         chain_id,
         chain_name: config.chain_name.clone(),
+        chain_logo_url: config.chain_logo_url.clone(),
+        accent_color: config.accent_color.clone(),
+        background_color_dark: config.background_color_dark.clone(),
+        background_color_light: config.background_color_light.clone(),
+        success_color: config.success_color.clone(),
+        error_color: config.error_color.clone(),
     });
 
     // Spawn indexer task with retry logic

@@ -172,6 +172,12 @@ mod tests {
             faucet,
             chain_id: 1,
             chain_name: "Test Chain".to_string(),
+            chain_logo_url: None,
+            accent_color: None,
+            background_color_dark: None,
+            background_color_light: None,
+            success_color: None,
+            error_color: None,
         })
     }
 
