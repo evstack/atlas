@@ -252,13 +252,25 @@ impl FaucetConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SnapshotConfig {
     pub enabled: bool,
     pub time: NaiveTime,
     pub retention: u32,
     pub dir: String,
     pub database_url: String,
+}
+
+impl std::fmt::Debug for SnapshotConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SnapshotConfig")
+            .field("enabled", &self.enabled)
+            .field("time", &self.time)
+            .field("retention", &self.retention)
+            .field("dir", &self.dir)
+            .field("database_url", &"[redacted]")
+            .finish()
+    }
 }
 
 impl SnapshotConfig {
@@ -291,6 +303,10 @@ impl SnapshotConfig {
         }
 
         let dir = env::var("SNAPSHOT_DIR").unwrap_or_else(|_| "/snapshots".to_string());
+        let dir = dir.trim().to_string();
+        if dir.is_empty() {
+            bail!("SNAPSHOT_DIR must not be empty");
+        }
 
         Ok(Self {
             enabled,
@@ -680,6 +696,33 @@ mod tests {
         let config = SnapshotConfig::from_env("postgres://test@localhost/test").unwrap();
         assert_eq!(config.dir, "/data/backups");
         clear_snapshot_env();
+    }
+
+    #[test]
+    fn snapshot_config_rejects_empty_dir() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        clear_snapshot_env();
+        env::set_var("SNAPSHOT_ENABLED", "true");
+        env::set_var("SNAPSHOT_DIR", "   ");
+
+        let err = SnapshotConfig::from_env("postgres://test@localhost/test").unwrap_err();
+        assert!(err.to_string().contains("SNAPSHOT_DIR must not be empty"));
+        clear_snapshot_env();
+    }
+
+    #[test]
+    fn snapshot_config_debug_redacts_database_url() {
+        let config = SnapshotConfig {
+            enabled: true,
+            time: NaiveTime::from_hms_opt(3, 0, 0).unwrap(),
+            retention: 7,
+            dir: "/snapshots".to_string(),
+            database_url: "postgres://atlas:secret@db/atlas".to_string(),
+        };
+
+        let debug = format!("{config:?}");
+        assert!(debug.contains("[redacted]"));
+        assert!(!debug.contains("secret"));
     }
 
     #[test]
