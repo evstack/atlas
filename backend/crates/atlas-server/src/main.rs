@@ -12,6 +12,7 @@ mod config;
 mod faucet;
 mod head;
 mod indexer;
+mod snapshot;
 
 /// Retry delays for exponential backoff (in seconds)
 const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
@@ -60,6 +61,7 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let config = config::Config::from_env()?;
     let faucet_config = config::FaucetConfig::from_env()?;
+    let snapshot_config = config::SnapshotConfig::from_env(&config.database_url)?;
 
     let faucet = if faucet_config.enabled {
         tracing::info!("Faucet enabled");
@@ -180,6 +182,18 @@ async fn main() -> Result<()> {
             tracing::error!("Metadata fetcher terminated with error: {}", e);
         }
     });
+
+    // Spawn snapshot scheduler if enabled
+    if snapshot_config.enabled {
+        tracing::info!("Snapshot scheduler enabled");
+        tokio::spawn(async move {
+            if let Err(e) =
+                run_with_retry(|| snapshot::run_snapshot_loop(snapshot_config.clone())).await
+            {
+                tracing::error!("Snapshot scheduler terminated with error: {}", e);
+            }
+        });
+    }
 
     // Build and serve API
     let app = api::build_router(state, config.cors_origin.clone());
