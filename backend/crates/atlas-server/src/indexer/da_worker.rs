@@ -137,7 +137,9 @@ impl DaWorker {
         let client = &self.client;
         let rate_limiter = &self.rate_limiter;
 
-        let results: Vec<Option<DaSseUpdate>> = stream::iter(blocks)
+        let mut total_updated = 0usize;
+
+        stream::iter(blocks)
             .map(|(block_number,)| async move {
                 rate_limiter.until_ready().await;
                 match client.get_da_status(block_number as u64).await {
@@ -176,13 +178,16 @@ impl DaWorker {
                 }
             })
             .buffer_unordered(self.concurrency)
-            .collect()
+            .for_each(|result| {
+                if let Some(update) = result {
+                    total_updated += 1;
+                    self.notify_da_updates(std::slice::from_ref(&update));
+                }
+                std::future::ready(())
+            })
             .await;
 
-        let updates: Vec<DaSseUpdate> = results.into_iter().flatten().collect();
-        self.notify_da_updates(&updates);
-
-        Ok(updates.len())
+        Ok(total_updated)
     }
 }
 
