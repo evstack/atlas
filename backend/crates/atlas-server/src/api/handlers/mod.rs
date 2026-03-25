@@ -8,6 +8,7 @@ pub mod nfts;
 pub mod proxy;
 pub mod search;
 pub mod sse;
+pub mod stats;
 pub mod status;
 pub mod tokens;
 pub mod transactions;
