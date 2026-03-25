@@ -39,7 +39,10 @@ export default function StatusPage() {
   const [error, setError] = useState<string | null>(null);
   const [window, setWindow] = useState<ChartWindow>('24h');
 
-  const { blocksChart, dailyTxs, gasPriceChart, blocksChartLoading, gasPriceLoading } = useChartData(window);
+  const {
+    blocksChart, dailyTxs, gasPriceChart,
+    dailyTxsLoading, blocksChartLoading, gasPriceLoading,
+  } = useChartData(window);
 
   useEffect(() => {
     let mounted = true;
@@ -115,7 +118,7 @@ export default function StatusPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ChartCard title="Daily Transactions (14d)">
+            <ChartCard title="Daily Transactions (14d)" loading={dailyTxsLoading}>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={dailyTxs} margin={{ top: 4, right: 30, left: 0, bottom: 0 }}>
                   <XAxis
@@ -133,7 +136,7 @@ export default function StatusPage() {
                     contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                     labelStyle={{ color: CHART_AXIS_TEXT }}
                     itemStyle={{ color: '#f8fafc' }}
-                    formatter={(v: number) => [formatCompact(v), 'Transactions']}
+                    formatter={(v: unknown) => [formatCompact(v as number), 'Transactions']}
                   />
                   <Bar dataKey="tx_count" fill={CHART_ACCENT} radius={[2, 2, 0, 0]} isAnimationActive={false} />
                 </BarChart>
@@ -164,7 +167,7 @@ export default function StatusPage() {
                     contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                     labelStyle={{ color: CHART_AXIS_TEXT }}
                     itemStyle={{ color: '#f8fafc' }}
-                    formatter={(v: number) => [formatCompact(v), 'Avg Gas Used']}
+                    formatter={(v: unknown) => [formatCompact(v as number), 'Avg Gas Used']}
                     labelFormatter={(v) => formatBucketTooltip(v, window)}
                   />
                   <Area
@@ -198,7 +201,7 @@ export default function StatusPage() {
                     contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                     labelStyle={{ color: CHART_AXIS_TEXT }}
                     itemStyle={{ color: '#f8fafc' }}
-                    formatter={(v: number) => [formatCompact(v), 'Transactions']}
+                    formatter={(v: unknown) => [formatCompact(v as number), 'Transactions']}
                     labelFormatter={(v) => formatBucketTooltip(v, window)}
                   />
                   <Bar dataKey="tx_count" fill={CHART_ACCENT} radius={[2, 2, 0, 0]} isAnimationActive={false} />
@@ -224,7 +227,7 @@ export default function StatusPage() {
                     contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                     labelStyle={{ color: CHART_AXIS_TEXT }}
                     itemStyle={{ color: '#f8fafc' }}
-                    formatter={(v: number) => [formatGwei(v), 'Avg Gas Price']}
+                    formatter={(v: unknown) => [formatGwei(v as number), 'Avg Gas Price']}
                     labelFormatter={(v) => formatBucketTooltip(v, window)}
                   />
                   <Line
@@ -304,9 +307,9 @@ function formatCompact(n: number): string {
 
 function formatGwei(wei: number): string {
   const gwei = wei / 1e9;
-  if (gwei >= 1_000) return `${(gwei / 1_000).toFixed(1)}Kgwei`;
-  if (gwei >= 1) return `${gwei.toFixed(2)}gwei`;
-  return `${wei.toFixed(0)}wei`;
+  if (gwei >= 1_000) return `${(gwei / 1_000).toFixed(1)}K gwei`;
+  if (gwei >= 1) return `${gwei.toFixed(2)} gwei`;
+  return `${gwei.toFixed(3)} gwei`;
 }
 
 function formatDayLabel(day: string): string {

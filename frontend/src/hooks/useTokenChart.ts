@@ -13,7 +13,11 @@ export function useTokenChart(address: string | undefined, window: ChartWindow):
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!address) return;
+    if (!address) {
+      setData([]);
+      setLoading(false);
+      return;
+    }
     let mounted = true;
 
     setData([]);
@@ -25,7 +29,15 @@ export function useTokenChart(address: string | undefined, window: ChartWindow):
         const points = await getTokenChart(address, window);
         if (mounted) setData(points);
       } catch (err) {
-        if (mounted) setError(err instanceof Error ? err.message : 'Failed to load chart data');
+        if (mounted) {
+          const message =
+            err && typeof err === 'object' && 'error' in err && typeof (err as { error: unknown }).error === 'string'
+              ? (err as { error: string }).error
+              : err instanceof Error
+                ? err.message
+                : 'Failed to load chart data';
+          setError(message);
+        }
       } finally {
         if (mounted) setLoading(false);
       }

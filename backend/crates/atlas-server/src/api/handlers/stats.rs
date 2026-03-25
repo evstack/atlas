@@ -44,13 +44,13 @@ impl Window {
 
     pub fn bucket_secs(self) -> i64 {
         match self {
-            Window::OneHour => 300,             // 5-min buckets → 12 points
-            Window::SixHours => 1_800,          // 30-min buckets → 12 points
-            Window::TwentyFourHours => 3_600,   // 1-hour buckets → 24 points
-            Window::SevenDays => 43_200,        // 12-hour buckets → 14 points
-            Window::OneMonth => 86_400,         // 1-day buckets → 30 points
-            Window::SixMonths => 7 * 86_400,    // 1-week buckets → ~26 points
-            Window::OneYear => 14 * 86_400,     // 2-week buckets → ~26 points
+            Window::OneHour => 300,           // 5-min buckets → 12 points
+            Window::SixHours => 1_800,        // 30-min buckets → 12 points
+            Window::TwentyFourHours => 3_600, // 1-hour buckets → 24 points
+            Window::SevenDays => 43_200,      // 12-hour buckets → 14 points
+            Window::OneMonth => 86_400,       // 1-day buckets → 30 points
+            Window::SixMonths => 7 * 86_400,  // 1-week buckets → ~26 points
+            Window::OneYear => 14 * 86_400,   // 2-week buckets → ~26 points
         }
     }
 }
@@ -99,25 +99,29 @@ pub async fn get_blocks_chart(
     let rows: Vec<(chrono::DateTime<Utc>, i64, f64)> = sqlx::query_as(
         r#"
         WITH latest AS (SELECT MAX(timestamp) AS max_ts FROM blocks),
+        bounds AS (
+            SELECT
+                max_ts - $2 AS start_ts,
+                max_ts      AS end_ts
+            FROM latest
+        ),
         agg AS (
             SELECT
-                (timestamp - (timestamp % $1))::bigint AS bucket_ts,
-                SUM(transaction_count)::bigint          AS tx_count,
-                COALESCE(AVG(gas_used::float8), 0.0)   AS avg_gas_used
-            FROM blocks, latest
-            WHERE timestamp >= max_ts - $2
-              AND timestamp <= max_ts
+                (b.start_ts + (((blocks.timestamp - b.start_ts) / $1) * $1))::bigint AS bucket_ts,
+                SUM(transaction_count)::bigint                                        AS tx_count,
+                COALESCE(AVG(gas_used::float8), 0.0)                                  AS avg_gas_used
+            FROM blocks
+            CROSS JOIN bounds b
+            WHERE blocks.timestamp >= b.start_ts
+              AND blocks.timestamp <= b.end_ts
             GROUP BY 1
         )
         SELECT
             to_timestamp(gs::float8)                    AS bucket,
             COALESCE(a.tx_count, 0)::bigint             AS tx_count,
             COALESCE(a.avg_gas_used, 0.0)               AS avg_gas_used
-        FROM generate_series(
-            (SELECT (max_ts - $2) - ((max_ts - $2) % $1) FROM latest),
-            (SELECT max_ts - (max_ts % $1) FROM latest),
-            $1::bigint
-        ) AS gs
+        FROM bounds b
+        CROSS JOIN generate_series(b.start_ts, b.end_ts - $1, $1::bigint) AS gs
         LEFT JOIN agg a ON a.bucket_ts = gs
         ORDER BY gs ASC
         "#,
@@ -182,24 +186,28 @@ pub async fn get_gas_price_chart(
     let rows: Vec<(chrono::DateTime<Utc>, Option<f64>)> = sqlx::query_as(
         r#"
         WITH latest AS (SELECT MAX(timestamp) AS max_ts FROM blocks),
+        bounds AS (
+            SELECT
+                max_ts - $2 AS start_ts,
+                max_ts      AS end_ts
+            FROM latest
+        ),
         agg AS (
             SELECT
-                (timestamp - (timestamp % $1))::bigint AS bucket_ts,
-                AVG(gas_price::float8)                  AS avg_gas_price
-            FROM transactions, latest
-            WHERE timestamp >= max_ts - $2
-              AND timestamp <= max_ts
+                (b.start_ts + (((transactions.timestamp - b.start_ts) / $1) * $1))::bigint AS bucket_ts,
+                AVG(gas_price::float8)                                                       AS avg_gas_price
+            FROM transactions
+            CROSS JOIN bounds b
+            WHERE transactions.timestamp >= b.start_ts
+              AND transactions.timestamp <= b.end_ts
               AND gas_price > 0
             GROUP BY 1
         )
         SELECT
             to_timestamp(gs::float8) AS bucket,
             a.avg_gas_price
-        FROM generate_series(
-            (SELECT (max_ts - $2) - ((max_ts - $2) % $1) FROM latest),
-            (SELECT max_ts - (max_ts % $1) FROM latest),
-            $1::bigint
-        ) AS gs
+        FROM bounds b
+        CROSS JOIN generate_series(b.start_ts, b.end_ts - $1, $1::bigint) AS gs
         LEFT JOIN agg a ON a.bucket_ts = gs
         ORDER BY gs ASC
         "#,
@@ -211,11 +219,9 @@ pub async fn get_gas_price_chart(
 
     let points = rows
         .into_iter()
-        .filter_map(|(bucket, avg_gas_price)| {
-            avg_gas_price.map(|p| GasPricePoint {
-                bucket: bucket.to_rfc3339(),
-                avg_gas_price: p,
-            })
+        .map(|(bucket, avg_gas_price)| GasPricePoint {
+            bucket: bucket.to_rfc3339(),
+            avg_gas_price: avg_gas_price.unwrap_or(0.0),
         })
         .collect();
 

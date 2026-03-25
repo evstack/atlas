@@ -196,7 +196,7 @@ export default function TokenDetailPage() {
                     contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                     labelStyle={{ color: CHART_AXIS_TEXT }}
                     itemStyle={{ color: '#f8fafc' }}
-                    formatter={(v: number) => [formatCompact(v), 'Transfers']}
+                    formatter={(v: unknown) => [formatCompact(v as number), 'Transfers']}
                     labelFormatter={(v) => formatBucketTooltip(v, chartWindow)}
                   />
                   <Bar dataKey="transfer_count" fill={CHART_ACCENT} radius={[2, 2, 0, 0]} isAnimationActive={false} />
@@ -225,7 +225,7 @@ export default function TokenDetailPage() {
                     contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                     labelStyle={{ color: CHART_AXIS_TEXT }}
                     itemStyle={{ color: '#f8fafc' }}
-                    formatter={(v: number) => [formatCompact(v), `Volume (${token?.symbol || 'tokens'})`]}
+                    formatter={(v: unknown) => [formatCompact(v as number), `Volume (${token?.symbol || 'tokens'})`]}
                     labelFormatter={(v) => formatBucketTooltip(v, chartWindow)}
                   />
                   <Area

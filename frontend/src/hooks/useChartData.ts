@@ -13,28 +13,39 @@ interface ChartData {
   blocksChart: BlockChartPoint[];
   dailyTxs: DailyTxPoint[];
   gasPriceChart: GasPricePoint[];
+  dailyTxsLoading: boolean;
   blocksChartLoading: boolean;
   gasPriceLoading: boolean;
-  error: string | null;
+  dailyTxsError: string | null;
+  blocksChartError: string | null;
+  gasPriceError: string | null;
 }
 
 export function useChartData(window: ChartWindow): ChartData {
   const [blocksChart, setBlocksChart] = useState<BlockChartPoint[]>([]);
   const [dailyTxs, setDailyTxs] = useState<DailyTxPoint[]>([]);
   const [gasPriceChart, setGasPriceChart] = useState<GasPricePoint[]>([]);
+  const [dailyTxsLoading, setDailyTxsLoading] = useState(true);
   const [blocksChartLoading, setBlocksChartLoading] = useState(true);
   const [gasPriceLoading, setGasPriceLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [dailyTxsError, setDailyTxsError] = useState<string | null>(null);
+  const [blocksChartError, setBlocksChartError] = useState<string | null>(null);
+  const [gasPriceError, setGasPriceError] = useState<string | null>(null);
 
   // Daily txs are window-independent — fetch once and refresh on a slow interval
   useEffect(() => {
     let mounted = true;
+    setDailyTxsLoading(true);
     const fetchDaily = async () => {
       try {
+        setDailyTxsError(null);
         const daily = await getDailyTxs();
         if (mounted) setDailyTxs(daily);
-      } catch {
-        // non-critical, ignore
+      } catch (err) {
+        if (mounted)
+          setDailyTxsError(err instanceof Error ? err.message : 'Failed to load daily transactions');
+      } finally {
+        if (mounted) setDailyTxsLoading(false);
       }
     };
     fetchDaily();
@@ -51,11 +62,12 @@ export function useChartData(window: ChartWindow): ChartData {
     setBlocksChartLoading(true);
     const fetch = async () => {
       try {
-        setError(null);
+        setBlocksChartError(null);
         const blocks = await getBlocksChart(window);
         if (mounted) setBlocksChart(blocks);
       } catch (err) {
-        if (mounted) setError(err instanceof Error ? err.message : 'Failed to load chart data');
+        if (mounted)
+          setBlocksChartError(err instanceof Error ? err.message : 'Failed to load blocks chart');
       } finally {
         if (mounted) setBlocksChartLoading(false);
       }
@@ -74,10 +86,12 @@ export function useChartData(window: ChartWindow): ChartData {
     setGasPriceLoading(true);
     const fetch = async () => {
       try {
+        setGasPriceError(null);
         const gasPrice = await getGasPriceChart(window);
         if (mounted) setGasPriceChart(gasPrice);
-      } catch {
-        // non-critical, ignore
+      } catch (err) {
+        if (mounted)
+          setGasPriceError(err instanceof Error ? err.message : 'Failed to load gas price chart');
       } finally {
         if (mounted) setGasPriceLoading(false);
       }
@@ -90,5 +104,15 @@ export function useChartData(window: ChartWindow): ChartData {
     };
   }, [window]);
 
-  return { blocksChart, dailyTxs, gasPriceChart, blocksChartLoading, gasPriceLoading, error };
+  return {
+    blocksChart,
+    dailyTxs,
+    gasPriceChart,
+    dailyTxsLoading,
+    blocksChartLoading,
+    gasPriceLoading,
+    dailyTxsError,
+    blocksChartError,
+    gasPriceError,
+  };
 }

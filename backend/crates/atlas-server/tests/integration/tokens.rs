@@ -113,6 +113,61 @@ async fn seed_token_data(pool: &sqlx::PgPool) {
     .expect("seed erc20 transfer");
 }
 
+async fn seed_token_chart_data(pool: &sqlx::PgPool) {
+    sqlx::query(
+        "INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+         ON CONFLICT (number) DO NOTHING",
+    )
+    .bind(9001i64)
+    .bind(format!("0x{:064x}", 9001))
+    .bind(format!("0x{:064x}", 9000))
+    .bind(4_100_100_123i64)
+    .bind(100_000i64)
+    .bind(30_000_000i64)
+    .bind(1i32)
+    .execute(pool)
+    .await
+    .expect("seed token chart block");
+
+    sqlx::query(
+        "INSERT INTO transactions (hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used, input_data, status, timestamp)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (hash, block_number) DO NOTHING",
+    )
+    .bind("0x9001000000000000000000000000000000000000000000000000000000000000")
+    .bind(9001i64)
+    .bind(0i32)
+    .bind(HOLDER_1)
+    .bind(TOKEN_A)
+    .bind(0i64)
+    .bind(20_000_000_000i64)
+    .bind(60_000i64)
+    .bind(Vec::<u8>::new())
+    .bind(true)
+    .bind(4_100_100_123i64)
+    .execute(pool)
+    .await
+    .expect("seed token chart transaction");
+
+    sqlx::query(
+        "INSERT INTO erc20_transfers (tx_hash, log_index, contract_address, from_address, to_address, value, block_number, timestamp)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (tx_hash, log_index, block_number) DO NOTHING",
+    )
+    .bind("0x9001000000000000000000000000000000000000000000000000000000000000")
+    .bind(0i32)
+    .bind(TOKEN_A)
+    .bind(HOLDER_1)
+    .bind(HOLDER_2)
+    .bind(bigdecimal::BigDecimal::from(75_000i64))
+    .bind(9001i64)
+    .bind(4_100_100_123i64)
+    .execute(pool)
+    .await
+    .expect("seed token chart transfer");
+}
+
 #[test]
 fn list_tokens() {
     common::run(async {
@@ -215,5 +270,29 @@ fn get_tx_erc20_transfers() {
         assert_eq!(data[0]["contract_address"].as_str().unwrap(), TOKEN_A);
         assert_eq!(data[0]["from_address"].as_str().unwrap(), HOLDER_1);
         assert_eq!(data[0]["to_address"].as_str().unwrap(), HOLDER_2);
+    });
+}
+
+#[test]
+fn get_token_chart_returns_exact_bucket_count_for_non_aligned_window() {
+    common::run(async {
+        let pool = common::pool();
+        seed_token_data(pool).await;
+        seed_token_chart_data(pool).await;
+
+        let app = common::test_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/tokens/{}/chart?window=1h", TOKEN_A))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = common::json_body(response).await;
+        assert_eq!(body.as_array().unwrap().len(), 12);
     });
 }
