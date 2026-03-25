@@ -139,7 +139,7 @@ async fn seed_token_chart_data(pool: &sqlx::PgPool) {
     .bind(9001i64)
     .bind(0i32)
     .bind(HOLDER_1)
-    .bind(TOKEN_A)
+    .bind(TOKEN_B)
     .bind(0i64)
     .bind(20_000_000_000i64)
     .bind(60_000i64)
@@ -157,7 +157,7 @@ async fn seed_token_chart_data(pool: &sqlx::PgPool) {
     )
     .bind("0x9001000000000000000000000000000000000000000000000000000000000000")
     .bind(0i32)
-    .bind(TOKEN_A)
+    .bind(TOKEN_B)
     .bind(HOLDER_1)
     .bind(HOLDER_2)
     .bind(bigdecimal::BigDecimal::from(75_000i64))
@@ -284,7 +284,7 @@ fn get_token_chart_returns_exact_bucket_count_for_non_aligned_window() {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri(format!("/api/tokens/{}/chart?window=1h", TOKEN_A))
+                    .uri(format!("/api/tokens/{}/chart?window=1h", TOKEN_B))
                     .body(Body::empty())
                     .unwrap(),
             )
