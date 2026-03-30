@@ -47,7 +47,9 @@ export function useChartData(window: ChartWindow): ChartData {
   // Daily txs are window-independent — fetch once and refresh on a slow interval
   useEffect(() => {
     let mounted = true;
+    let timeoutId: number | undefined;
     setDailyTxsLoading(true);
+
     const fetchDaily = async () => {
       try {
         setDailyTxsError(null);
@@ -60,19 +62,29 @@ export function useChartData(window: ChartWindow): ChartData {
       } finally {
         if (mounted) setDailyTxsLoading(false);
       }
+      if (mounted) {
+        timeoutId = globalThis.setTimeout(() => {
+          void fetchDaily();
+        }, 60_000);
+      }
     };
-    fetchDaily();
-    const id = setInterval(fetchDaily, 60_000);
+
+    void fetchDaily();
+
     return () => {
       mounted = false;
-      clearInterval(id);
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
     };
   }, []);
 
   // Blocks chart depends on the selected window
   useEffect(() => {
     let mounted = true;
+    let timeoutId: number | undefined;
     setBlocksChartLoading(true);
+
     const fetch = async () => {
       try {
         setBlocksChartError(null);
@@ -85,19 +97,29 @@ export function useChartData(window: ChartWindow): ChartData {
       } finally {
         if (mounted) setBlocksChartLoading(false);
       }
+      if (mounted) {
+        timeoutId = globalThis.setTimeout(() => {
+          void fetch();
+        }, 30_000);
+      }
     };
-    fetch();
-    const id = setInterval(fetch, 30_000);
+
+    void fetch();
+
     return () => {
       mounted = false;
-      clearInterval(id);
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
     };
   }, [window]);
 
   // Gas price chart depends on the selected window
   useEffect(() => {
     let mounted = true;
+    let timeoutId: number | undefined;
     setGasPriceLoading(true);
+
     const fetch = async () => {
       try {
         setGasPriceError(null);
@@ -110,12 +132,20 @@ export function useChartData(window: ChartWindow): ChartData {
       } finally {
         if (mounted) setGasPriceLoading(false);
       }
+      if (mounted) {
+        timeoutId = globalThis.setTimeout(() => {
+          void fetch();
+        }, 30_000);
+      }
     };
-    fetch();
-    const id = setInterval(fetch, 30_000);
+
+    void fetch();
+
     return () => {
       mounted = false;
-      clearInterval(id);
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
     };
   }, [window]);
 
