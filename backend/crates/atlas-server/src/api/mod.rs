@@ -137,6 +137,10 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
             "/api/tokens/{address}/transfers",
             get(handlers::tokens::get_token_transfers),
         )
+        .route(
+            "/api/tokens/{address}/chart",
+            get(handlers::tokens::get_token_chart),
+        )
         // Proxy Contracts
         .route("/api/proxies", get(handlers::proxy::list_proxies))
         .route(
@@ -151,6 +155,16 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         .route("/api", get(handlers::etherscan::etherscan_api))
         // Search
         .route("/api/search", get(handlers::search::search))
+        // Stats (charts)
+        .route(
+            "/api/stats/blocks-chart",
+            get(handlers::stats::get_blocks_chart),
+        )
+        .route("/api/stats/daily-txs", get(handlers::stats::get_daily_txs))
+        .route(
+            "/api/stats/gas-price",
+            get(handlers::stats::get_gas_price_chart),
+        )
         // Status
         .route("/api/height", get(handlers::status::get_height))
         .route("/api/status", get(handlers::status::get_status))
