@@ -47,6 +47,23 @@ fn postgres_command(program: &str, db_url: &str) -> Result<std::process::Command
     }
 
     let mut command = std::process::Command::new(program);
+    for env_var in [
+        "PGHOST",
+        "PGPORT",
+        "PGUSER",
+        "PGPASSWORD",
+        "PGDATABASE",
+        "PGSSLMODE",
+        "PGSSLCERT",
+        "PGSSLKEY",
+        "PGSSLROOTCERT",
+        "PGSSLCRL",
+        "PGAPPNAME",
+        "PGOPTIONS",
+        "PGCONNECT_TIMEOUT",
+    ] {
+        command.env_remove(env_var);
+    }
     if let Some(host) = url.host_str() {
         command.env("PGHOST", host);
     }
