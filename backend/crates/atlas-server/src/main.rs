@@ -34,25 +34,121 @@ fn required_db_url(db_url: &str) -> Result<&str> {
     Ok(db_url)
 }
 
-fn postgres_command(program: &str, db_url: &str) -> Result<std::process::Command> {
+struct PostgresConnectionConfig {
+    database_name: String,
+    env_vars: Vec<(&'static str, String)>,
+}
+
+fn set_pg_env(env_vars: &mut Vec<(&'static str, String)>, key: &'static str, value: &str) {
+    if value.is_empty() {
+        return;
+    }
+    if let Some((_, existing)) = env_vars
+        .iter_mut()
+        .find(|(existing_key, _)| *existing_key == key)
+    {
+        *existing = value.to_string();
+    } else {
+        env_vars.push((key, value.to_string()));
+    }
+}
+
+fn postgres_connection_config(db_url: &str) -> Result<PostgresConnectionConfig> {
     let url = reqwest::Url::parse(required_db_url(db_url)?).context("Invalid DATABASE_URL")?;
     match url.scheme() {
         "postgres" | "postgresql" => {}
         _ => bail!("DATABASE_URL must use postgres:// or postgresql://"),
     }
 
-    let database_name = url.path().trim_start_matches('/');
+    let mut database_name = url.path().trim_start_matches('/').to_string();
+    let mut env_vars = Vec::new();
+    if let Some(host) = url.host_str() {
+        set_pg_env(&mut env_vars, "PGHOST", host);
+    }
+    if let Some(port) = url.port() {
+        set_pg_env(&mut env_vars, "PGPORT", &port.to_string());
+    }
+    if !url.username().is_empty() {
+        set_pg_env(&mut env_vars, "PGUSER", url.username());
+    }
+    if let Some(password) = url.password() {
+        set_pg_env(&mut env_vars, "PGPASSWORD", password);
+    }
+
+    for (key, value) in url.query_pairs() {
+        match key.as_ref() {
+            "dbname" => {
+                if !value.is_empty() {
+                    database_name = value.into_owned();
+                }
+            }
+            "host" => {
+                set_pg_env(&mut env_vars, "PGHOST", value.as_ref());
+            }
+            "hostaddr" => {
+                set_pg_env(&mut env_vars, "PGHOSTADDR", value.as_ref());
+            }
+            "port" => {
+                set_pg_env(&mut env_vars, "PGPORT", value.as_ref());
+            }
+            "user" => {
+                set_pg_env(&mut env_vars, "PGUSER", value.as_ref());
+            }
+            "password" => {
+                set_pg_env(&mut env_vars, "PGPASSWORD", value.as_ref());
+            }
+            "service" => {
+                set_pg_env(&mut env_vars, "PGSERVICE", value.as_ref());
+            }
+            "sslmode" => {
+                set_pg_env(&mut env_vars, "PGSSLMODE", value.as_ref());
+            }
+            "sslcert" => {
+                set_pg_env(&mut env_vars, "PGSSLCERT", value.as_ref());
+            }
+            "sslkey" => {
+                set_pg_env(&mut env_vars, "PGSSLKEY", value.as_ref());
+            }
+            "sslrootcert" => {
+                set_pg_env(&mut env_vars, "PGSSLROOTCERT", value.as_ref());
+            }
+            "sslcrl" => {
+                set_pg_env(&mut env_vars, "PGSSLCRL", value.as_ref());
+            }
+            "application_name" => {
+                set_pg_env(&mut env_vars, "PGAPPNAME", value.as_ref());
+            }
+            "options" => {
+                set_pg_env(&mut env_vars, "PGOPTIONS", value.as_ref());
+            }
+            "connect_timeout" => {
+                set_pg_env(&mut env_vars, "PGCONNECT_TIMEOUT", value.as_ref());
+            }
+            _ => {}
+        }
+    }
+
     if database_name.is_empty() {
         bail!("DATABASE_URL must include a database name");
     }
+    set_pg_env(&mut env_vars, "PGDATABASE", &database_name);
 
+    Ok(PostgresConnectionConfig {
+        database_name,
+        env_vars,
+    })
+}
+
+fn postgres_command(program: &str, config: &PostgresConnectionConfig) -> std::process::Command {
     let mut command = std::process::Command::new(program);
     for env_var in [
         "PGHOST",
+        "PGHOSTADDR",
         "PGPORT",
         "PGUSER",
         "PGPASSWORD",
         "PGDATABASE",
+        "PGSERVICE",
         "PGSSLMODE",
         "PGSSLCERT",
         "PGSSLKEY",
@@ -64,51 +160,10 @@ fn postgres_command(program: &str, db_url: &str) -> Result<std::process::Command
     ] {
         command.env_remove(env_var);
     }
-    if let Some(host) = url.host_str() {
-        command.env("PGHOST", host);
+    for (key, value) in &config.env_vars {
+        command.env(key, value);
     }
-    if let Some(port) = url.port() {
-        command.env("PGPORT", port.to_string());
-    }
-    if !url.username().is_empty() {
-        command.env("PGUSER", url.username());
-    }
-    if let Some(password) = url.password() {
-        command.env("PGPASSWORD", password);
-    }
-    command.env("PGDATABASE", database_name);
-
-    for (key, value) in url.query_pairs() {
-        match key.as_ref() {
-            "sslmode" => {
-                command.env("PGSSLMODE", value.as_ref());
-            }
-            "sslcert" => {
-                command.env("PGSSLCERT", value.as_ref());
-            }
-            "sslkey" => {
-                command.env("PGSSLKEY", value.as_ref());
-            }
-            "sslrootcert" => {
-                command.env("PGSSLROOTCERT", value.as_ref());
-            }
-            "sslcrl" => {
-                command.env("PGSSLCRL", value.as_ref());
-            }
-            "application_name" => {
-                command.env("PGAPPNAME", value.as_ref());
-            }
-            "options" => {
-                command.env("PGOPTIONS", value.as_ref());
-            }
-            "connect_timeout" => {
-                command.env("PGCONNECT_TIMEOUT", value.as_ref());
-            }
-            _ => {}
-        }
-    }
-
-    Ok(command)
+    command
 }
 
 fn parse_chain_id(hex: &str) -> Option<u64> {
@@ -317,7 +372,8 @@ async fn check(args: cli::RunArgs) -> Result<()> {
 }
 
 fn cmd_db_dump(db_url: &str, output: &str) -> Result<()> {
-    let status = postgres_command("pg_dump", db_url)?
+    let config = postgres_connection_config(db_url)?;
+    let status = postgres_command("pg_dump", &config)
         .args(["--format=custom", "--file", output])
         .status()
         .map_err(|e| anyhow::anyhow!("Failed to run pg_dump (is it installed?): {e}"))?;
@@ -330,7 +386,10 @@ fn cmd_db_dump(db_url: &str, output: &str) -> Result<()> {
 }
 
 fn cmd_db_restore(db_url: &str, input: &str) -> Result<()> {
-    let status = postgres_command("pg_restore", db_url)?
+    let config = postgres_connection_config(db_url)?;
+    let status = postgres_command("pg_restore", &config)
+        .arg("--dbname")
+        .arg(&config.database_name)
         .args(["--format=custom", "--clean", "--if-exists", input])
         .status()
         .map_err(|e| anyhow::anyhow!("Failed to run pg_restore (is it installed?): {e}"))?;
@@ -449,6 +508,14 @@ mod tests {
         sync::oneshot,
     };
 
+    fn env_value<'a>(config: &'a PostgresConnectionConfig, key: &str) -> Option<&'a str> {
+        config
+            .env_vars
+            .iter()
+            .find(|(env_key, _)| *env_key == key)
+            .map(|(_, value)| value.as_str())
+    }
+
     async fn serve_json_once(body: &'static str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -526,5 +593,36 @@ mod tests {
 
         let url = format!("http://{}", addr);
         assert!(fetch_chain_id(&url).await.is_err());
+    }
+
+    #[test]
+    fn postgres_connection_config_accepts_dbname_query_when_path_is_empty() {
+        let config = postgres_connection_config(
+            "postgres://user:secret@localhost?dbname=atlas&host=db.internal&port=6543&service=atlas-ci",
+        )
+        .unwrap();
+
+        assert_eq!(config.database_name, "atlas");
+        assert_eq!(env_value(&config, "PGHOST"), Some("db.internal"));
+        assert_eq!(env_value(&config, "PGPORT"), Some("6543"));
+        assert_eq!(env_value(&config, "PGUSER"), Some("user"));
+        assert_eq!(env_value(&config, "PGPASSWORD"), Some("secret"));
+        assert_eq!(env_value(&config, "PGSERVICE"), Some("atlas-ci"));
+        assert_eq!(env_value(&config, "PGDATABASE"), Some("atlas"));
+    }
+
+    #[test]
+    fn postgres_connection_config_query_params_override_url_components() {
+        let config = postgres_connection_config(
+            "postgres://user:secret@localhost/base_db?dbname=query_db&host=query-host&hostaddr=127.0.0.1&user=query-user&password=query-pass",
+        )
+        .unwrap();
+
+        assert_eq!(config.database_name, "query_db");
+        assert_eq!(env_value(&config, "PGHOST"), Some("query-host"));
+        assert_eq!(env_value(&config, "PGHOSTADDR"), Some("127.0.0.1"));
+        assert_eq!(env_value(&config, "PGUSER"), Some("query-user"));
+        assert_eq!(env_value(&config, "PGPASSWORD"), Some("query-pass"));
+        assert_eq!(env_value(&config, "PGDATABASE"), Some("query_db"));
     }
 }
