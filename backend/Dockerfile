@@ -19,7 +19,7 @@ RUN addgroup -S atlas && adduser -S atlas -G atlas
 USER atlas
 
 EXPOSE 3000
-CMD ["atlas-server"]
+CMD ["atlas-server", "run"]
 
 # Backward-compatible target names for CI jobs that still build the old images.
 FROM server AS api
