@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 atlas-common = { workspace = true }
+clap = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

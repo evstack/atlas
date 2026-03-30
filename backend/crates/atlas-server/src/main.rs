@@ -1,4 +1,5 @@
 use anyhow::Result;
+use clap::Parser;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -8,6 +9,7 @@ use alloy::providers::ProviderBuilder;
 use alloy::signers::local::PrivateKeySigner;
 
 mod api;
+mod cli;
 mod config;
 mod faucet;
 mod head;
@@ -16,6 +18,13 @@ mod indexer;
 /// Retry delays for exponential backoff (in seconds)
 const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
 const MAX_RETRY_DELAY: u64 = 60;
+
+fn init_tracing(filter: &str) {
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(filter))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+}
 
 fn parse_chain_id(hex: &str) -> Option<u64> {
     u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
@@ -45,21 +54,35 @@ async fn fetch_chain_id(rpc_url: &str) -> Result<u64> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "atlas_server=info,tower_http=debug,sqlx=warn".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    // Load .env before clap so env vars are available for clap's `env = "..."` fallback
+    dotenvy::dotenv().ok();
 
+    let cli = cli::Cli::parse();
+
+    match cli.command {
+        cli::Command::Run(args) => run(*args).await,
+        cli::Command::Migrate(args) => {
+            init_tracing(&args.log.level);
+            tracing::info!("Running database migrations");
+            atlas_common::db::run_migrations(&args.db.url).await?;
+            tracing::info!("Migrations complete");
+            Ok(())
+        }
+        cli::Command::Check(args) => check(*args).await,
+        cli::Command::Db(db_cmd) => match db_cmd.command {
+            cli::DbSubcommand::Dump { output, db_url } => cmd_db_dump(&db_url, &output),
+            cli::DbSubcommand::Restore { input, db_url } => cmd_db_restore(&db_url, &input),
+            cli::DbSubcommand::Reset { confirm, db_url } => cmd_db_reset(&db_url, confirm).await,
+        },
+    }
+}
+
+async fn run(args: cli::RunArgs) -> Result<()> {
+    init_tracing(&args.log.level);
     tracing::info!("Starting Atlas Server");
 
-    // Load configuration
-    dotenvy::dotenv().ok();
-    let config = config::Config::from_env()?;
-    let faucet_config = config::FaucetConfig::from_env()?;
+    let config = config::Config::from_run_args(args.clone())?;
+    let faucet_config = config::FaucetConfig::from_faucet_args(&args.faucet)?;
 
     let faucet = if faucet_config.enabled {
         tracing::info!("Faucet enabled");
@@ -71,7 +94,7 @@ async fn main() -> Result<()> {
         let rpc_url: reqwest::Url = config
             .rpc_url
             .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid RPC_URL for faucet: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("Invalid RPC URL for faucet: {e}"))?;
         let provider = ProviderBuilder::new().wallet(signer).connect_http(rpc_url);
         Some(Arc::new(faucet::FaucetService::new(
             provider,
@@ -88,18 +111,15 @@ async fn main() -> Result<()> {
     let chain_id = fetch_chain_id(&config.rpc_url).await?;
     tracing::info!("Chain ID: {}", chain_id);
 
-    // Run migrations once (dedicated pool, no statement_timeout)
     tracing::info!("Running database migrations");
     atlas_common::db::run_migrations(&config.database_url).await?;
 
-    // Create separate DB pools for indexer and API
     let indexer_pool =
         atlas_common::db::create_pool(&config.database_url, config.indexer_db_max_connections)
             .await?;
     let api_pool =
         atlas_common::db::create_pool(&config.database_url, config.api_db_max_connections).await?;
 
-    // Shared broadcast channels for SSE notifications
     let (block_events_tx, _) = broadcast::channel(1024);
     let (da_events_tx, _) = broadcast::channel::<Vec<indexer::DaSseUpdate>>(256);
     let head_tracker = Arc::new(if config.reindex {
@@ -108,7 +128,6 @@ async fn main() -> Result<()> {
         head::HeadTracker::bootstrap(&api_pool, config.sse_replay_buffer_blocks).await?
     });
 
-    // Build AppState for API
     let state = Arc::new(api::AppState {
         pool: api_pool,
         block_events_tx: block_events_tx.clone(),
@@ -127,7 +146,6 @@ async fn main() -> Result<()> {
         error_color: config.error_color.clone(),
     });
 
-    // Spawn indexer task with retry logic
     let da_pool = indexer_pool.clone();
     let indexer = indexer::Indexer::new(
         indexer_pool.clone(),
@@ -141,7 +159,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Spawn DA worker when DA tracking is explicitly enabled.
     if config.da_tracking_enabled {
         let evnode_url = config
             .evnode_url
@@ -166,7 +183,6 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Spawn metadata fetcher in background
     let metadata_pool = indexer_pool;
     let metadata_config = config.clone();
     tokio::spawn(async move {
@@ -181,7 +197,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Build and serve API
     let app = api::build_router(state, config.cors_origin.clone());
     let addr = format!("{}:{}", config.api_host, config.api_port);
     tracing::info!("API listening on {}", addr);
@@ -191,6 +206,72 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
+    Ok(())
+}
+
+async fn check(args: cli::RunArgs) -> Result<()> {
+    init_tracing(&args.log.level);
+
+    let config = config::Config::from_run_args(args.clone())?;
+    config::FaucetConfig::from_faucet_args(&args.faucet)?;
+
+    // Test DB connectivity
+    tracing::info!("Testing database connectivity...");
+    let pool = atlas_common::db::create_pool(&config.database_url, 1).await?;
+    sqlx::query("SELECT 1").execute(&pool).await?;
+    tracing::info!("Database OK");
+
+    // Test RPC connectivity
+    tracing::info!("Testing RPC connectivity...");
+    let chain_id = fetch_chain_id(&config.rpc_url).await?;
+    tracing::info!("RPC OK — chain_id={}", chain_id);
+
+    tracing::info!("Configuration is valid");
+    Ok(())
+}
+
+fn cmd_db_dump(db_url: &str, output: &str) -> Result<()> {
+    let status = std::process::Command::new("pg_dump")
+        .args(["--dbname", db_url, "--format=custom", "--file", output])
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to run pg_dump (is it installed?): {e}"))?;
+
+    if !status.success() {
+        anyhow::bail!("pg_dump exited with status {status}");
+    }
+    eprintln!("Dump written to {output}");
+    Ok(())
+}
+
+fn cmd_db_restore(db_url: &str, input: &str) -> Result<()> {
+    let status = std::process::Command::new("pg_restore")
+        .args(["--dbname", db_url, "--format=custom", "--clean", "--if-exists", input])
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to run pg_restore (is it installed?): {e}"))?;
+
+    if !status.success() {
+        anyhow::bail!("pg_restore exited with status {status}");
+    }
+    eprintln!("Restore complete from {input}");
+    Ok(())
+}
+
+async fn cmd_db_reset(db_url: &str, confirm: bool) -> Result<()> {
+    if !confirm {
+        eprintln!("This will DELETE all indexed data. Pass --confirm to proceed.");
+        std::process::exit(1);
+    }
+
+    let pool = atlas_common::db::create_pool(db_url, 1).await?;
+    sqlx::query(
+        "TRUNCATE blocks, transactions, event_logs, addresses, nft_contracts, nft_tokens,
+         nft_transfers, indexer_state, erc20_contracts, erc20_transfers, erc20_balances,
+         event_signatures, address_labels, proxy_contracts, contract_abis, failed_blocks,
+         tx_hash_lookup, block_da_status CASCADE",
+    )
+    .execute(&pool)
+    .await?;
+    eprintln!("All indexed data has been reset.");
     Ok(())
 }
 
@@ -241,7 +322,6 @@ where
     }
 }
 
-/// Run an async function with exponential backoff retry
 async fn run_with_retry<F, Fut>(f: F) -> Result<()>
 where
     F: Fn() -> Fut,

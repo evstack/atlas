@@ -251,6 +251,125 @@ impl FaucetConfig {
     }
 }
 
+// ── CLI → Config conversion ───────────────────────────────────────────────────
+
+impl Config {
+    pub fn from_run_args(args: crate::cli::RunArgs) -> anyhow::Result<Self> {
+        let sse_replay_buffer_blocks = args.api.sse_replay_buffer_blocks;
+        if sse_replay_buffer_blocks == 0 || sse_replay_buffer_blocks > 100_000 {
+            bail!("--atlas.api.sse-replay-buffer-blocks must be between 1 and 100000");
+        }
+
+        let da_tracking_enabled = args.da.enabled;
+
+        if da_tracking_enabled && args.da.worker_concurrency == 0 {
+            bail!("--atlas.da.worker-concurrency must be greater than 0");
+        }
+        if da_tracking_enabled && args.da.rpc_requests_per_second == 0 {
+            bail!("--atlas.da.rpc-requests-per-second must be greater than 0");
+        }
+
+        let evnode_url = if da_tracking_enabled {
+            let url = args
+                .da
+                .evnode_url
+                .map(|s: String| s.trim().to_string())
+                .filter(|s: &String| !s.is_empty());
+            Some(url.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--atlas.da.evnode-url (or EVNODE_URL) must be set when DA tracking is enabled"
+                )
+            })?)
+        } else {
+            None
+        };
+
+        let chain_name = args.chain.name.trim().to_string();
+        let chain_name = if chain_name.is_empty() {
+            "Unknown".to_string()
+        } else {
+            chain_name
+        };
+
+        Ok(Self {
+            database_url: args.db.url,
+            rpc_url: args.rpc.url,
+            indexer_db_max_connections: args.db.max_connections,
+            api_db_max_connections: args.db.api_max_connections,
+            rpc_requests_per_second: args.rpc.requests_per_second,
+            start_block: args.indexer.start_block,
+            batch_size: args.indexer.batch_size,
+            reindex: args.indexer.reindex,
+            ipfs_gateway: args.indexer.ipfs_gateway,
+            metadata_fetch_workers: args.indexer.metadata_fetch_workers,
+            metadata_retry_attempts: args.indexer.metadata_retry_attempts,
+            fetch_workers: args.indexer.fetch_workers,
+            rpc_batch_size: args.rpc.batch_size,
+            da_tracking_enabled,
+            evnode_url,
+            da_worker_concurrency: args.da.worker_concurrency,
+            da_rpc_requests_per_second: args.da.rpc_requests_per_second,
+            api_host: args.api.host,
+            api_port: args.api.port,
+            cors_origin: parse_optional_env(args.api.cors_origin),
+            sse_replay_buffer_blocks,
+            chain_name,
+            chain_logo_url: parse_optional_env(args.chain.logo_url),
+            accent_color: parse_optional_env(args.branding.accent_color),
+            background_color_dark: parse_optional_env(args.branding.background_dark),
+            background_color_light: parse_optional_env(args.branding.background_light),
+            success_color: parse_optional_env(args.branding.success_color),
+            error_color: parse_optional_env(args.branding.error_color),
+        })
+    }
+}
+
+impl FaucetConfig {
+    pub fn from_faucet_args(args: &crate::cli::FaucetArgs) -> anyhow::Result<Self> {
+        if !args.enabled {
+            return Ok(Self {
+                enabled: false,
+                private_key: None,
+                amount_wei: None,
+                cooldown_minutes: None,
+            });
+        }
+
+        let private_key = env::var("FAUCET_PRIVATE_KEY")
+            .context("FAUCET_PRIVATE_KEY env var must be set when faucet is enabled")?;
+        PrivateKeySigner::from_str(&private_key).context("Invalid FAUCET_PRIVATE_KEY")?;
+
+        let amount_str = args.amount.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "--atlas.faucet.amount (or FAUCET_AMOUNT) must be set when faucet is enabled"
+            )
+        })?;
+        let amount_wei = parse_faucet_amount_to_wei(amount_str)?;
+        if amount_wei == U256::ZERO {
+            bail!("faucet amount must be greater than 0");
+        }
+
+        let cooldown_minutes = args.cooldown_minutes.ok_or_else(|| {
+            anyhow::anyhow!(
+                "--atlas.faucet.cooldown-minutes (or FAUCET_COOLDOWN_MINUTES) must be set when faucet is enabled"
+            )
+        })?;
+        if cooldown_minutes == 0 {
+            bail!("faucet cooldown must be greater than 0");
+        }
+        if cooldown_minutes.checked_mul(60).is_none() {
+            bail!("faucet cooldown is too large");
+        }
+
+        Ok(Self {
+            enabled: true,
+            private_key: Some(private_key),
+            amount_wei: Some(amount_wei),
+            cooldown_minutes: Some(cooldown_minutes),
+        })
+    }
+}
+
 fn parse_optional_env(val: Option<String>) -> Option<String> {
     val.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
@@ -296,6 +415,160 @@ fn parse_faucet_amount_to_wei(amount: &str) -> Result<U256> {
     };
 
     Ok(whole_wei * wei_per_eth + fractional_wei)
+}
+
+#[cfg(test)]
+mod tests_from_run_args {
+    use super::*;
+    use crate::cli;
+
+    fn minimal_run_args() -> cli::RunArgs {
+        cli::RunArgs {
+            db: cli::DatabaseArgs {
+                url: "postgres://test@localhost/test".to_string(),
+                max_connections: 20,
+                api_max_connections: 20,
+            },
+            rpc: cli::RpcArgs {
+                url: "http://localhost:8545".to_string(),
+                requests_per_second: 100,
+                batch_size: 20,
+            },
+            api: cli::ApiArgs {
+                host: "127.0.0.1".to_string(),
+                port: 3000,
+                cors_origin: None,
+                sse_replay_buffer_blocks: 4096,
+            },
+            indexer: cli::IndexerArgs {
+                start_block: 0,
+                batch_size: 100,
+                fetch_workers: 10,
+                reindex: false,
+                ipfs_gateway: "https://ipfs.io/ipfs/".to_string(),
+                metadata_fetch_workers: 4,
+                metadata_retry_attempts: 3,
+            },
+            chain: cli::ChainArgs {
+                name: "TestChain".to_string(),
+                logo_url: None,
+            },
+            da: cli::DaArgs {
+                enabled: false,
+                evnode_url: None,
+                worker_concurrency: 50,
+                rpc_requests_per_second: 50,
+            },
+            faucet: cli::FaucetArgs {
+                enabled: false,
+                amount: None,
+                cooldown_minutes: None,
+            },
+            branding: cli::BrandingArgs {
+                accent_color: None,
+                background_dark: None,
+                background_light: None,
+                success_color: None,
+                error_color: None,
+            },
+            log: cli::LogArgs {
+                level: "info".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn minimal_args_produce_valid_config() {
+        let config = Config::from_run_args(minimal_run_args()).unwrap();
+        assert_eq!(config.database_url, "postgres://test@localhost/test");
+        assert_eq!(config.rpc_url, "http://localhost:8545");
+        assert_eq!(config.chain_name, "TestChain");
+        assert!(!config.da_tracking_enabled);
+    }
+
+    #[test]
+    fn chain_name_trimmed_and_defaults_to_unknown_when_blank() {
+        let mut args = minimal_run_args();
+        args.chain.name = "   ".to_string();
+        assert_eq!(Config::from_run_args(args).unwrap().chain_name, "Unknown");
+    }
+
+    #[test]
+    fn chain_name_surrounding_whitespace_is_trimmed() {
+        let mut args = minimal_run_args();
+        args.chain.name = "  MyChain  ".to_string();
+        assert_eq!(Config::from_run_args(args).unwrap().chain_name, "MyChain");
+    }
+
+    #[test]
+    fn sse_replay_buffer_zero_is_rejected() {
+        let mut args = minimal_run_args();
+        args.api.sse_replay_buffer_blocks = 0;
+        assert!(Config::from_run_args(args)
+            .unwrap_err()
+            .to_string()
+            .contains("must be between 1 and 100000"));
+    }
+
+    #[test]
+    fn sse_replay_buffer_above_max_is_rejected() {
+        let mut args = minimal_run_args();
+        args.api.sse_replay_buffer_blocks = 100_001;
+        assert!(Config::from_run_args(args)
+            .unwrap_err()
+            .to_string()
+            .contains("must be between 1 and 100000"));
+    }
+
+    #[test]
+    fn da_tracking_requires_evnode_url() {
+        let mut args = minimal_run_args();
+        args.da.enabled = true;
+        args.da.evnode_url = None;
+        assert!(Config::from_run_args(args)
+            .unwrap_err()
+            .to_string()
+            .contains("evnode-url"));
+    }
+
+    #[test]
+    fn da_tracking_rejects_blank_evnode_url() {
+        let mut args = minimal_run_args();
+        args.da.enabled = true;
+        args.da.evnode_url = Some("   ".to_string());
+        assert!(Config::from_run_args(args)
+            .unwrap_err()
+            .to_string()
+            .contains("evnode-url"));
+    }
+
+    #[test]
+    fn da_tracking_disabled_does_not_require_evnode_url() {
+        let mut args = minimal_run_args();
+        args.da.enabled = false;
+        args.da.evnode_url = None;
+        let config = Config::from_run_args(args).unwrap();
+        assert!(config.evnode_url.is_none());
+    }
+
+    #[test]
+    fn da_worker_concurrency_zero_is_rejected_when_da_enabled() {
+        let mut args = minimal_run_args();
+        args.da.enabled = true;
+        args.da.evnode_url = Some("http://localhost:7331".to_string());
+        args.da.worker_concurrency = 0;
+        assert!(Config::from_run_args(args).is_err());
+    }
+
+    #[test]
+    fn branding_blank_strings_become_none() {
+        let mut args = minimal_run_args();
+        args.branding.accent_color = Some("   ".to_string());
+        args.branding.success_color = Some("#00ff00".to_string());
+        let config = Config::from_run_args(args).unwrap();
+        assert!(config.accent_color.is_none());
+        assert_eq!(config.success_color.as_deref(), Some("#00ff00"));
+    }
 }
 
 #[cfg(test)]
