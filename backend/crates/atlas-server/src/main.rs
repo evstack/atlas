@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,6 +24,74 @@ fn init_tracing(filter: &str) {
         .with(tracing_subscriber::EnvFilter::new(filter))
         .with(tracing_subscriber::fmt::layer())
         .init();
+}
+
+fn required_db_url(db_url: &str) -> Result<&str> {
+    let db_url = db_url.trim();
+    if db_url.is_empty() {
+        bail!("DATABASE_URL must be set");
+    }
+    Ok(db_url)
+}
+
+fn postgres_command(program: &str, db_url: &str) -> Result<std::process::Command> {
+    let url = reqwest::Url::parse(required_db_url(db_url)?).context("Invalid DATABASE_URL")?;
+    match url.scheme() {
+        "postgres" | "postgresql" => {}
+        _ => bail!("DATABASE_URL must use postgres:// or postgresql://"),
+    }
+
+    let database_name = url.path().trim_start_matches('/');
+    if database_name.is_empty() {
+        bail!("DATABASE_URL must include a database name");
+    }
+
+    let mut command = std::process::Command::new(program);
+    if let Some(host) = url.host_str() {
+        command.env("PGHOST", host);
+    }
+    if let Some(port) = url.port() {
+        command.env("PGPORT", port.to_string());
+    }
+    if !url.username().is_empty() {
+        command.env("PGUSER", url.username());
+    }
+    if let Some(password) = url.password() {
+        command.env("PGPASSWORD", password);
+    }
+    command.env("PGDATABASE", database_name);
+
+    for (key, value) in url.query_pairs() {
+        match key.as_ref() {
+            "sslmode" => {
+                command.env("PGSSLMODE", value.as_ref());
+            }
+            "sslcert" => {
+                command.env("PGSSLCERT", value.as_ref());
+            }
+            "sslkey" => {
+                command.env("PGSSLKEY", value.as_ref());
+            }
+            "sslrootcert" => {
+                command.env("PGSSLROOTCERT", value.as_ref());
+            }
+            "sslcrl" => {
+                command.env("PGSSLCRL", value.as_ref());
+            }
+            "application_name" => {
+                command.env("PGAPPNAME", value.as_ref());
+            }
+            "options" => {
+                command.env("PGOPTIONS", value.as_ref());
+            }
+            "connect_timeout" => {
+                command.env("PGCONNECT_TIMEOUT", value.as_ref());
+            }
+            _ => {}
+        }
+    }
+
+    Ok(command)
 }
 
 fn parse_chain_id(hex: &str) -> Option<u64> {
@@ -64,7 +132,8 @@ async fn main() -> Result<()> {
         cli::Command::Migrate(args) => {
             init_tracing(&args.log.level);
             tracing::info!("Running database migrations");
-            atlas_common::db::run_migrations(&args.db.url).await?;
+            let database_url = required_db_url(&args.db.url)?;
+            atlas_common::db::run_migrations(database_url).await?;
             tracing::info!("Migrations complete");
             Ok(())
         }
@@ -231,8 +300,8 @@ async fn check(args: cli::RunArgs) -> Result<()> {
 }
 
 fn cmd_db_dump(db_url: &str, output: &str) -> Result<()> {
-    let status = std::process::Command::new("pg_dump")
-        .args(["--dbname", db_url, "--format=custom", "--file", output])
+    let status = postgres_command("pg_dump", db_url)?
+        .args(["--format=custom", "--file", output])
         .status()
         .map_err(|e| anyhow::anyhow!("Failed to run pg_dump (is it installed?): {e}"))?;
 
@@ -244,8 +313,8 @@ fn cmd_db_dump(db_url: &str, output: &str) -> Result<()> {
 }
 
 fn cmd_db_restore(db_url: &str, input: &str) -> Result<()> {
-    let status = std::process::Command::new("pg_restore")
-        .args(["--dbname", db_url, "--format=custom", "--clean", "--if-exists", input])
+    let status = postgres_command("pg_restore", db_url)?
+        .args(["--format=custom", "--clean", "--if-exists", input])
         .status()
         .map_err(|e| anyhow::anyhow!("Failed to run pg_restore (is it installed?): {e}"))?;
 
@@ -262,7 +331,7 @@ async fn cmd_db_reset(db_url: &str, confirm: bool) -> Result<()> {
         std::process::exit(1);
     }
 
-    let pool = atlas_common::db::create_pool(db_url, 1).await?;
+    let pool = atlas_common::db::create_pool(required_db_url(db_url)?, 1).await?;
     sqlx::query(
         "TRUNCATE blocks, transactions, event_logs, addresses, nft_contracts, nft_tokens,
          nft_transfers, indexer_state, erc20_contracts, erc20_transfers, erc20_balances,

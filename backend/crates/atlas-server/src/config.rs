@@ -3,7 +3,9 @@ use alloy::signers::local::PrivateKeySigner;
 use anyhow::{bail, Context, Result};
 use std::{env, str::FromStr};
 
+#[cfg(test)]
 const DEFAULT_DA_WORKER_CONCURRENCY: u32 = 50;
+#[cfg(test)]
 const DEFAULT_DA_RPC_REQUESTS_PER_SECOND: u32 = 50;
 
 #[derive(Debug, Clone)]
@@ -75,6 +77,7 @@ impl std::fmt::Debug for FaucetConfig {
     }
 }
 
+#[cfg(test)]
 impl Config {
     pub fn from_env() -> Result<Self> {
         let sse_replay_buffer_blocks: usize = env::var("SSE_REPLAY_BUFFER_BLOCKS")
@@ -204,6 +207,7 @@ impl Config {
     }
 }
 
+#[cfg(test)]
 impl FaucetConfig {
     pub fn from_env() -> Result<Self> {
         let enabled = env::var("FAUCET_ENABLED")
@@ -255,6 +259,11 @@ impl FaucetConfig {
 
 impl Config {
     pub fn from_run_args(args: crate::cli::RunArgs) -> anyhow::Result<Self> {
+        let database_url = args.db.url.trim().to_string();
+        if database_url.is_empty() {
+            bail!("DATABASE_URL must be set");
+        }
+
         let sse_replay_buffer_blocks = args.api.sse_replay_buffer_blocks;
         if sse_replay_buffer_blocks == 0 || sse_replay_buffer_blocks > 100_000 {
             bail!("--atlas.api.sse-replay-buffer-blocks must be between 1 and 100000");
@@ -292,7 +301,7 @@ impl Config {
         };
 
         Ok(Self {
-            database_url: args.db.url,
+            database_url,
             rpc_url: args.rpc.url,
             indexer_db_max_connections: args.db.max_connections,
             api_db_max_connections: args.db.api_max_connections,

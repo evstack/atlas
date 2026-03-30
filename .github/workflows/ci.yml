@@ -119,7 +119,7 @@ jobs:
           psql "$PG_ADMIN_URL" -c "DROP DATABASE IF EXISTS atlas_restore;"
           psql "$PG_ADMIN_URL" -c "CREATE DATABASE atlas_restore;"
 
-          cargo run --quiet --bin atlas-server -- migrate --atlas.db.url "$SOURCE_DB_URL"
+          DATABASE_URL="$SOURCE_DB_URL" cargo run --quiet --bin atlas-server -- migrate
 
           psql "$SOURCE_DB_URL" <<'SQL'
           INSERT INTO blocks (
@@ -156,9 +156,9 @@ jobs:
           SQL
 
           DUMP_FILE="$RUNNER_TEMP/atlas-cli-db-flow.dump"
-          cargo run --quiet --bin atlas-server -- db dump "$DUMP_FILE" --atlas.db.url "$SOURCE_DB_URL"
-          cargo run --quiet --bin atlas-server -- db restore "$DUMP_FILE" --atlas.db.url "$RESTORE_DB_URL"
-          cargo run --quiet --bin atlas-server -- migrate --atlas.db.url "$RESTORE_DB_URL"
+          DATABASE_URL="$SOURCE_DB_URL" cargo run --quiet --bin atlas-server -- db dump "$DUMP_FILE"
+          DATABASE_URL="$RESTORE_DB_URL" cargo run --quiet --bin atlas-server -- db restore "$DUMP_FILE"
+          DATABASE_URL="$RESTORE_DB_URL" cargo run --quiet --bin atlas-server -- migrate
 
           test "$(psql "$RESTORE_DB_URL" -Atc "SELECT COUNT(*) FROM blocks WHERE number = 424242")" = "1"
           test "$(psql "$RESTORE_DB_URL" -Atc "SELECT COUNT(*) FROM transactions WHERE hash = '0x0000000000000000000000000000000000000000000000000000000000067933'")" = "1"
@@ -279,8 +279,8 @@ jobs:
 
           pg_dump --dbname="$SOURCE_DB_URL" --format=custom --file "$DUMP_FILE"
 
-          cargo run --quiet --bin atlas-server -- db restore "$DUMP_FILE" --atlas.db.url "$RESTORE_DB_URL"
-          cargo run --quiet --bin atlas-server -- migrate --atlas.db.url "$RESTORE_DB_URL"
+          DATABASE_URL="$RESTORE_DB_URL" cargo run --quiet --bin atlas-server -- db restore "$DUMP_FILE"
+          DATABASE_URL="$RESTORE_DB_URL" cargo run --quiet --bin atlas-server -- migrate
 
           test "$(psql "$RESTORE_DB_URL" -Atc "SELECT COUNT(*) FROM blocks WHERE number = 515151")" = "1"
 

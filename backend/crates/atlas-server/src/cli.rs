@@ -1,8 +1,16 @@
 use clap::{Args, Parser, Subcommand};
 
+fn database_url_from_env() -> String {
+    std::env::var("DATABASE_URL").unwrap_or_default()
+}
+
 /// Atlas — EVM blockchain explorer
 #[derive(Parser)]
-#[command(name = "atlas-server", version, about = "EVM blockchain explorer — indexer + API + DA tracking")]
+#[command(
+    name = "atlas-server",
+    version,
+    about = "EVM blockchain explorer — indexer + API + DA tracking"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -56,13 +64,7 @@ pub struct MigrateArgs {
 #[derive(Args, Clone)]
 #[command(next_help_heading = "Database")]
 pub struct DatabaseArgs {
-    #[arg(
-        id = "db-url",
-        long = "atlas.db.url",
-        env = "DATABASE_URL",
-        value_name = "URL",
-        help = "PostgreSQL connection string"
-    )]
+    #[arg(skip = database_url_from_env())]
     pub url: String,
 
     #[arg(
@@ -385,7 +387,7 @@ pub enum DbSubcommand {
         #[arg(value_name = "OUTPUT")]
         output: String,
 
-        #[arg(long = "atlas.db.url", env = "DATABASE_URL", value_name = "URL")]
+        #[arg(skip = database_url_from_env())]
         db_url: String,
     },
     /// Restore the database from a pg_dump file
@@ -394,7 +396,7 @@ pub enum DbSubcommand {
         #[arg(value_name = "INPUT")]
         input: String,
 
-        #[arg(long = "atlas.db.url", env = "DATABASE_URL", value_name = "URL")]
+        #[arg(skip = database_url_from_env())]
         db_url: String,
     },
     /// Drop all indexed data, keeping schema and migrations intact (requires --confirm)
@@ -403,7 +405,7 @@ pub enum DbSubcommand {
         #[arg(long)]
         confirm: bool,
 
-        #[arg(long = "atlas.db.url", env = "DATABASE_URL", value_name = "URL")]
+        #[arg(skip = database_url_from_env())]
         db_url: String,
     },
 }
