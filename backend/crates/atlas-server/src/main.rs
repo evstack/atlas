@@ -9,6 +9,7 @@ use alloy::providers::ProviderBuilder;
 use alloy::signers::local::PrivateKeySigner;
 
 mod api;
+mod archive;
 mod cli;
 mod config;
 mod faucet;
@@ -18,6 +19,11 @@ mod indexer;
 /// Retry delays for exponential backoff (in seconds)
 const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
 const MAX_RETRY_DELAY: u64 = 60;
+const DB_RESET_TRUNCATE_SQL: &str =
+    "TRUNCATE blocks, transactions, event_logs, addresses, nft_contracts, nft_tokens,
+     nft_transfers, indexer_state, erc20_contracts, erc20_transfers, erc20_balances,
+     event_signatures, address_labels, proxy_contracts, contract_abis, failed_blocks,
+     tx_hash_lookup, block_da_status, archive_blocks, archive_state CASCADE";
 
 fn init_tracing(filter: &str) {
     tracing_subscriber::registry()
@@ -224,6 +230,14 @@ async fn run(args: cli::RunArgs) -> Result<()> {
 
     let config = config::Config::from_run_args(args.clone())?;
     let faucet_config = config::FaucetConfig::from_faucet_args(&args.faucet)?;
+    let archive_store = if let Some(archive_config) = config.archive.clone() {
+        tracing::info!("Archive upload enabled; validating bucket access");
+        let store = Arc::new(archive::S3ArchiveStore::from_config(&archive_config).await?);
+        archive::ArchiveObjectStore::ensure_bucket_access(store.as_ref()).await?;
+        Some(store as Arc<dyn archive::ArchiveObjectStore>)
+    } else {
+        None
+    };
 
     let faucet = if faucet_config.enabled {
         tracing::info!("Faucet enabled");
@@ -291,6 +305,7 @@ async fn run(args: cli::RunArgs) -> Result<()> {
     let indexer = indexer::Indexer::new(
         indexer_pool.clone(),
         config.clone(),
+        chain_id,
         block_events_tx,
         head_tracker,
     );
@@ -324,7 +339,7 @@ async fn run(args: cli::RunArgs) -> Result<()> {
         });
     }
 
-    let metadata_pool = indexer_pool;
+    let metadata_pool = indexer_pool.clone();
     let metadata_config = config.clone();
     tokio::spawn(async move {
         if let Err(e) = run_with_retry(|| async {
@@ -337,6 +352,16 @@ async fn run(args: cli::RunArgs) -> Result<()> {
             tracing::error!("Metadata fetcher terminated with error: {}", e);
         }
     });
+
+    if let (Some(archive_config), Some(store)) = (config.archive.clone(), archive_store.clone()) {
+        let uploader =
+            archive::ArchiveUploader::new(indexer_pool.clone(), store, archive_config, chain_id);
+        tokio::spawn(async move {
+            if let Err(e) = run_with_retry(|| uploader.run()).await {
+                tracing::error!("Archive uploader terminated with error: {}", e);
+            }
+        });
+    }
 
     let app = api::build_router(state, config.cors_origin.clone());
     let addr = format!("{}:{}", config.api_host, config.api_port);
@@ -366,6 +391,13 @@ async fn check(args: cli::RunArgs) -> Result<()> {
     tracing::info!("Testing RPC connectivity...");
     let chain_id = fetch_chain_id(&config.rpc_url).await?;
     tracing::info!("RPC OK — chain_id={}", chain_id);
+
+    if let Some(archive_config) = config.archive.clone() {
+        tracing::info!("Testing archive bucket connectivity...");
+        let store = archive::S3ArchiveStore::from_config(&archive_config).await?;
+        archive::ArchiveObjectStore::ensure_bucket_access(&store).await?;
+        tracing::info!("Archive bucket OK");
+    }
 
     tracing::info!("Configuration is valid");
     Ok(())
@@ -408,14 +440,7 @@ async fn cmd_db_reset(db_url: &str, confirm: bool) -> Result<()> {
     }
 
     let pool = atlas_common::db::create_pool(required_db_url(db_url)?, 1).await?;
-    sqlx::query(
-        "TRUNCATE blocks, transactions, event_logs, addresses, nft_contracts, nft_tokens,
-         nft_transfers, indexer_state, erc20_contracts, erc20_transfers, erc20_balances,
-         event_signatures, address_labels, proxy_contracts, contract_abis, failed_blocks,
-         tx_hash_lookup, block_da_status CASCADE",
-    )
-    .execute(&pool)
-    .await?;
+    sqlx::query(DB_RESET_TRUNCATE_SQL).execute(&pool).await?;
     eprintln!("All indexed data has been reset.");
     Ok(())
 }
@@ -624,5 +649,11 @@ mod tests {
         assert_eq!(env_value(&config, "PGUSER"), Some("query-user"));
         assert_eq!(env_value(&config, "PGPASSWORD"), Some("query-pass"));
         assert_eq!(env_value(&config, "PGDATABASE"), Some("query_db"));
+    }
+
+    #[test]
+    fn db_reset_truncates_archive_tables() {
+        assert!(DB_RESET_TRUNCATE_SQL.contains("archive_blocks"));
+        assert!(DB_RESET_TRUNCATE_SQL.contains("archive_state"));
     }
 }

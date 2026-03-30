@@ -314,6 +314,7 @@ pub struct FaucetArgs {
     // FAUCET_PRIVATE_KEY is intentionally env-only (security: never pass secrets as CLI flags)
 }
 
+
 #[derive(Args, Clone)]
 #[command(next_help_heading = "Branding")]
 pub struct BrandingArgs {

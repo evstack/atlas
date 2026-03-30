@@ -13,6 +13,7 @@ pub struct Config {
     // Shared
     pub database_url: String,
     pub rpc_url: String,
+    pub archive: Option<ArchiveConfig>,
 
     // Indexer pool
     pub indexer_db_max_connections: u32,
@@ -53,6 +54,17 @@ pub struct Config {
     pub background_color_light: Option<String>,
     pub success_color: Option<String>,
     pub error_color: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveConfig {
+    pub bucket: String,
+    pub region: String,
+    pub prefix: String,
+    pub endpoint: Option<String>,
+    pub force_path_style: bool,
+    pub upload_concurrency: u32,
+    pub retry_base_seconds: u64,
 }
 
 #[derive(Clone)]
@@ -135,6 +147,7 @@ impl Config {
         Ok(Self {
             database_url: env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
             rpc_url: env::var("RPC_URL").context("RPC_URL must be set")?,
+            archive: ArchiveConfig::from_env()?,
 
             indexer_db_max_connections: env::var("DB_MAX_CONNECTIONS")
                 .unwrap_or_else(|_| "20".to_string())
@@ -303,6 +316,7 @@ impl Config {
         Ok(Self {
             database_url,
             rpc_url: args.rpc.url,
+            archive: ArchiveConfig::from_env()?,
             indexer_db_max_connections: args.db.max_connections,
             api_db_max_connections: args.db.api_max_connections,
             rpc_requests_per_second: args.rpc.requests_per_second,
@@ -379,8 +393,72 @@ impl FaucetConfig {
     }
 }
 
+impl ArchiveConfig {
+    pub fn from_env() -> Result<Option<Self>> {
+        let enabled = env::var("S3_ENABLED")
+            .unwrap_or_else(|_| "false".to_string())
+            .parse::<bool>()
+            .context("Invalid S3_ENABLED")?;
+        if !enabled {
+            return Ok(None);
+        }
+
+        let bucket =
+            required_archive_value(env::var("S3_BUCKET").ok(), "S3_BUCKET")?;
+        let region =
+            required_archive_value(env::var("S3_REGION").ok(), "S3_REGION")?;
+        let prefix = normalize_prefix(env::var("S3_PREFIX").ok().as_deref());
+        let endpoint = parse_optional_env(env::var("S3_ENDPOINT").ok());
+        let force_path_style = env::var("S3_FORCE_PATH_STYLE")
+            .unwrap_or_else(|_| "false".to_string())
+            .parse::<bool>()
+            .context("Invalid S3_FORCE_PATH_STYLE")?;
+        let upload_concurrency: u32 = env::var("S3_UPLOAD_CONCURRENCY")
+            .unwrap_or_else(|_| "4".to_string())
+            .parse()
+            .context("Invalid S3_UPLOAD_CONCURRENCY")?;
+        let retry_base_seconds: u64 = env::var("S3_RETRY_BASE_SECONDS")
+            .unwrap_or_else(|_| "30".to_string())
+            .parse()
+            .context("Invalid S3_RETRY_BASE_SECONDS")?;
+
+        if upload_concurrency == 0 {
+            bail!("S3_UPLOAD_CONCURRENCY must be greater than 0");
+        }
+        if retry_base_seconds == 0 {
+            bail!("S3_RETRY_BASE_SECONDS must be greater than 0");
+        }
+
+        Ok(Some(Self {
+            bucket,
+            region,
+            prefix,
+            endpoint,
+            force_path_style,
+            upload_concurrency,
+            retry_base_seconds,
+        }))
+    }
+
+}
+
 fn parse_optional_env(val: Option<String>) -> Option<String> {
     val.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+fn normalize_prefix(prefix: Option<&str>) -> String {
+    prefix
+        .map(str::trim)
+        .map(|s| s.trim_matches('/'))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn required_archive_value(value: Option<String>, flag: &str) -> Result<String> {
+    parse_optional_env(value).ok_or_else(|| {
+        anyhow::anyhow!("{flag} (or matching env var) must be set when archive is enabled")
+    })
 }
 
 fn parse_faucet_amount_to_wei(amount: &str) -> Result<U256> {
@@ -430,6 +508,20 @@ fn parse_faucet_amount_to_wei(amount: &str) -> Result<U256> {
 mod tests_from_run_args {
     use super::*;
     use crate::cli;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn clear_archive_env() {
+        env::remove_var("S3_ENABLED");
+        env::remove_var("S3_BUCKET");
+        env::remove_var("S3_REGION");
+        env::remove_var("S3_PREFIX");
+        env::remove_var("S3_ENDPOINT");
+        env::remove_var("S3_FORCE_PATH_STYLE");
+        env::remove_var("S3_UPLOAD_CONCURRENCY");
+        env::remove_var("S3_RETRY_BASE_SECONDS");
+    }
 
     fn minimal_run_args() -> cli::RunArgs {
         cli::RunArgs {
@@ -493,6 +585,7 @@ mod tests_from_run_args {
         assert_eq!(config.rpc_url, "http://localhost:8545");
         assert_eq!(config.chain_name, "TestChain");
         assert!(!config.da_tracking_enabled);
+        assert!(config.archive.is_none());
     }
 
     #[test]
@@ -567,6 +660,54 @@ mod tests_from_run_args {
         args.da.evnode_url = Some("http://localhost:7331".to_string());
         args.da.worker_concurrency = 0;
         assert!(Config::from_run_args(args).is_err());
+    }
+
+    #[test]
+    fn archive_enabled_requires_bucket_and_region() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        clear_archive_env();
+        env::set_var("S3_ENABLED", "true");
+        let err = Config::from_run_args(minimal_run_args()).unwrap_err();
+        assert!(err.to_string().contains("S3_BUCKET"));
+        clear_archive_env();
+    }
+
+    #[test]
+    fn archive_env_vars_populate_archive_config() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        clear_archive_env();
+        env::set_var("S3_ENABLED", "true");
+        env::set_var("S3_BUCKET", "atlas-archive");
+        env::set_var("S3_REGION", "eu-west-1");
+        env::set_var("S3_PREFIX", "/atlas/dev/");
+        env::set_var("S3_ENDPOINT", "http://localhost:9000");
+        env::set_var("S3_FORCE_PATH_STYLE", "true");
+        env::set_var("S3_UPLOAD_CONCURRENCY", "7");
+        env::set_var("S3_RETRY_BASE_SECONDS", "45");
+
+        let config = Config::from_run_args(minimal_run_args()).unwrap();
+        let archive = config.archive.expect("archive config");
+        assert_eq!(archive.bucket, "atlas-archive");
+        assert_eq!(archive.region, "eu-west-1");
+        assert_eq!(archive.prefix, "atlas/dev");
+        assert_eq!(archive.endpoint.as_deref(), Some("http://localhost:9000"));
+        assert!(archive.force_path_style);
+        assert_eq!(archive.upload_concurrency, 7);
+        assert_eq!(archive.retry_base_seconds, 45);
+        clear_archive_env();
+    }
+
+    #[test]
+    fn archive_upload_concurrency_must_be_positive() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        clear_archive_env();
+        env::set_var("S3_ENABLED", "true");
+        env::set_var("S3_BUCKET", "atlas-archive");
+        env::set_var("S3_REGION", "eu-west-1");
+        env::set_var("S3_UPLOAD_CONCURRENCY", "0");
+        let err = Config::from_run_args(minimal_run_args()).unwrap_err();
+        assert!(err.to_string().contains("S3_UPLOAD_CONCURRENCY"));
+        clear_archive_env();
     }
 
     #[test]

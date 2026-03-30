@@ -91,6 +91,16 @@ pub struct AppState {
 ### DA tracking (optional)
 When `ENABLE_DA_TRACKING=true`, a background DA worker queries ev-node for Celestia inclusion heights per block. `EVNODE_URL` is required only in that mode. Updates are pushed to SSE clients via an in-process `broadcast::Sender<Vec<DaSseUpdate>>`. The SSE handler streams `da_batch` events for incremental updates and emits `da_resync` when a client falls behind and should refetch visible DA state.
 
+### S3 archive (optional)
+When `S3_ENABLED=true`, a background `ArchiveUploader` task uploads every indexed block to an S3-compatible object store as a zstd-compressed JSON bundle (block header + receipts). The write path uses a transactional outbox pattern:
+1. The indexer writes archive entries to `archive_blocks` (with compressed payload) inside the same DB transaction as the block data.
+2. The uploader claims rows via `SELECT … FOR UPDATE SKIP LOCKED`, uploads to S3, then clears the payload column.
+3. `archive_state` tracks the latest *contiguous* uploaded block and triggers a manifest refresh at `{prefix}/v1/manifest.json` so consumers know how far the archive has progressed.
+
+Object key layout: `{prefix}/v1/blocks/{bucket_start:012}/{block_number:012}.json.zst` where `bucket_start = (block_number / 10_000) * 10_000`.
+
+Works with AWS S3 and any S3-compatible store (MinIO, Cloudflare R2, etc.). The URL is constructed automatically from `S3_BUCKET` + `S3_REGION` + optional `S3_ENDPOINT` — there is no single URL config. Set `S3_FORCE_PATH_STYLE=true` for MinIO and other self-hosted stores; leave it `false` for AWS.
+
 ### Frontend API client
 - Base URL: `/api` (proxied by nginx to `atlas-server:3000`)
 - Fast polling endpoint: `GET /api/height` → `{ block_height, indexed_at, features: { da_tracking } }` — serves from `head_tracker` first and falls back to `indexer_state` when the in-memory head is empty. Used by the navbar as a polling fallback when SSE is disconnected and by feature-flag consumers.
@@ -127,6 +137,16 @@ Key vars (see `.env.example` for full list):
 | `EVNODE_URL` | server | none |
 | `DA_RPC_REQUESTS_PER_SECOND` | DA worker | `50` |
 | `DA_WORKER_CONCURRENCY` | DA worker | `50` |
+| `S3_ENABLED` | archive | `false` |
+| `S3_BUCKET` | archive | required if enabled |
+| `S3_REGION` | archive | required if enabled |
+| `S3_PREFIX` | archive | `""` (bucket root) |
+| `S3_ENDPOINT` | archive | none (AWS S3) |
+| `S3_FORCE_PATH_STYLE` | archive | `false` |
+| `S3_UPLOAD_CONCURRENCY` | archive | `4` |
+| `S3_RETRY_BASE_SECONDS` | archive | `30` |
+| `AWS_ACCESS_KEY_ID` | archive | env / IAM role |
+| `AWS_SECRET_ACCESS_KEY` | archive | env / IAM role |
 
 ## Running Locally
 

@@ -13,6 +13,30 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+    command: server /data --address :9000 --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-01-16T16-06-34Z
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set atlas http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}; do sleep 1; done &&
+      mc mb --ignore-existing atlas/${S3_BUCKET:-atlas-archive}
+      "
+    restart: "no"
+
   atlas-server:
     build:
       context: ./backend
@@ -35,7 +59,7 @@ services:
       FAUCET_ENABLED: ${FAUCET_ENABLED:-false}
       FAUCET_PRIVATE_KEY: ${FAUCET_PRIVATE_KEY:-}
       FAUCET_AMOUNT: ${FAUCET_AMOUNT:-}
-      FAUCET_COOLDOWN_MINUTES: ${FAUCET_COOLDOWN_MINUTES:-}
+      FAUCET_COOLDOWN_MINUTES: ${FAUCET_COOLDOWN_MINUTES:-30}
       CHAIN_NAME: ${CHAIN_NAME:-Unknown}
       CHAIN_LOGO_URL: ${CHAIN_LOGO_URL:-}
       ACCENT_COLOR: ${ACCENT_COLOR:-}
@@ -43,6 +67,16 @@ services:
       BACKGROUND_COLOR_LIGHT: ${BACKGROUND_COLOR_LIGHT:-}
       SUCCESS_COLOR: ${SUCCESS_COLOR:-}
       ERROR_COLOR: ${ERROR_COLOR:-}
+      S3_ENABLED: ${S3_ENABLED:-false}
+      S3_BUCKET: ${S3_BUCKET:-atlas-archive}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_PREFIX: ${S3_PREFIX:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      S3_UPLOAD_CONCURRENCY: ${S3_UPLOAD_CONCURRENCY:-4}
+      S3_RETRY_BASE_SECONDS: ${S3_RETRY_BASE_SECONDS:-30}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
       API_HOST: 0.0.0.0
       API_PORT: 3000
       RUST_LOG: atlas_server=info,tower_http=info
@@ -66,3 +100,5 @@ services:
 volumes:
   pgdata:
     name: atlas_pgdata
+  minio-data:
+    name: atlas_minio_data
