@@ -42,6 +42,7 @@ export default function StatusPage() {
   const {
     blocksChart, dailyTxs, gasPriceChart,
     dailyTxsLoading, blocksChartLoading, gasPriceLoading,
+    dailyTxsError, blocksChartError, gasPriceError,
   } = useChartData(window);
 
   useEffect(() => {
@@ -118,128 +119,136 @@ export default function StatusPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ChartCard title="Daily Transactions (14d)" loading={dailyTxsLoading}>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={dailyTxs} margin={{ top: 4, right: 30, left: 0, bottom: 0 }}>
-                  <XAxis
-                    dataKey="day"
-                    tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
-                    tickFormatter={formatDayLabel}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis
-                    tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
-                    tickFormatter={formatCompact}
-                    width={40}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
-                    labelStyle={{ color: CHART_AXIS_TEXT }}
-                    itemStyle={{ color: '#f8fafc' }}
-                    formatter={(v: unknown) => [formatCompact(v as number), 'Transactions']}
-                  />
-                  <Bar dataKey="tx_count" fill={CHART_ACCENT} radius={[2, 2, 0, 0]} isAnimationActive={false} />
-                </BarChart>
-              </ResponsiveContainer>
+            <ChartCard title="Daily Transactions (14d)" loading={dailyTxsLoading} error={dailyTxsError}>
+              {!dailyTxsLoading && !dailyTxsError && (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={dailyTxs} margin={{ top: 4, right: 30, left: 0, bottom: 0 }}>
+                    <XAxis
+                      dataKey="day"
+                      tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
+                      tickFormatter={formatDayLabel}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
+                      tickFormatter={formatCompact}
+                      width={40}
+                    />
+                    <Tooltip
+                      contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
+                      labelStyle={{ color: CHART_AXIS_TEXT }}
+                      itemStyle={{ color: '#f8fafc' }}
+                      formatter={(v: unknown) => [formatCompact(v as number), 'Transactions']}
+                    />
+                    <Bar dataKey="tx_count" fill={CHART_ACCENT} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </ChartCard>
 
-            <ChartCard title="Avg Gas Used per Block" loading={blocksChartLoading}>
-              <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={blocksChart} margin={{ top: 4, right: 30, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="gasGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={CHART_ACCENT} stopOpacity={0.3} />
-                      <stop offset="95%" stopColor={CHART_ACCENT} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="bucket"
-                    tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
-                    tickFormatter={(v: string) => formatBucketTick(v, window)}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis
-                    tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
-                    tickFormatter={formatCompact}
-                    width={40}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
-                    labelStyle={{ color: CHART_AXIS_TEXT }}
-                    itemStyle={{ color: '#f8fafc' }}
-                    formatter={(v: unknown) => [formatCompact(v as number), 'Avg Gas Used']}
-                    labelFormatter={(v) => formatBucketTooltip(v, window)}
-                  />
-                  <Area
-                    type="linear"
-                    dataKey="avg_gas_used"
-                    stroke={CHART_ACCENT}
-                    fill="url(#gasGradient)"
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
+            <ChartCard title="Avg Gas Used per Block" loading={blocksChartLoading} error={blocksChartError}>
+              {!blocksChartLoading && !blocksChartError && (
+                <ResponsiveContainer width="100%" height={200}>
+                  <AreaChart data={blocksChart} margin={{ top: 4, right: 30, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="gasGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={CHART_ACCENT} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={CHART_ACCENT} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="bucket"
+                      tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
+                      tickFormatter={(v: string) => formatBucketTick(v, window)}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
+                      tickFormatter={formatCompact}
+                      width={40}
+                    />
+                    <Tooltip
+                      contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
+                      labelStyle={{ color: CHART_AXIS_TEXT }}
+                      itemStyle={{ color: '#f8fafc' }}
+                      formatter={(v: unknown) => [formatCompact(v as number), 'Avg Gas Used']}
+                      labelFormatter={(v) => formatBucketTooltip(v, window)}
+                    />
+                    <Area
+                      type="linear"
+                      dataKey="avg_gas_used"
+                      stroke={CHART_ACCENT}
+                      fill="url(#gasGradient)"
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
             </ChartCard>
 
-            <ChartCard title="Transactions" loading={blocksChartLoading}>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={blocksChart} margin={{ top: 4, right: 30, left: 0, bottom: 0 }}>
-                  <XAxis
-                    dataKey="bucket"
-                    tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
-                    tickFormatter={(v: string) => formatBucketTick(v, window)}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis
-                    tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
-                    tickFormatter={formatCompact}
-                    width={40}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
-                    labelStyle={{ color: CHART_AXIS_TEXT }}
-                    itemStyle={{ color: '#f8fafc' }}
-                    formatter={(v: unknown) => [formatCompact(v as number), 'Transactions']}
-                    labelFormatter={(v) => formatBucketTooltip(v, window)}
-                  />
-                  <Bar dataKey="tx_count" fill={CHART_ACCENT} radius={[2, 2, 0, 0]} isAnimationActive={false} />
-                </BarChart>
-              </ResponsiveContainer>
+            <ChartCard title="Transactions" loading={blocksChartLoading} error={blocksChartError}>
+              {!blocksChartLoading && !blocksChartError && (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={blocksChart} margin={{ top: 4, right: 30, left: 0, bottom: 0 }}>
+                    <XAxis
+                      dataKey="bucket"
+                      tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
+                      tickFormatter={(v: string) => formatBucketTick(v, window)}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
+                      tickFormatter={formatCompact}
+                      width={40}
+                    />
+                    <Tooltip
+                      contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
+                      labelStyle={{ color: CHART_AXIS_TEXT }}
+                      itemStyle={{ color: '#f8fafc' }}
+                      formatter={(v: unknown) => [formatCompact(v as number), 'Transactions']}
+                      labelFormatter={(v) => formatBucketTooltip(v, window)}
+                    />
+                    <Bar dataKey="tx_count" fill={CHART_ACCENT} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </ChartCard>
 
-            <ChartCard title="Avg Gas Price" loading={gasPriceLoading}>
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={gasPriceChart} margin={{ top: 4, right: 30, left: 0, bottom: 0 }}>
-                  <XAxis
-                    dataKey="bucket"
-                    tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
-                    tickFormatter={(v: string) => formatBucketTick(v, window)}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis
-                    tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
-                    tickFormatter={formatGwei}
-                    width={52}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
-                    labelStyle={{ color: CHART_AXIS_TEXT }}
-                    itemStyle={{ color: '#f8fafc' }}
-                    formatter={(v: unknown) => [formatGwei(v as number), 'Avg Gas Price']}
-                    labelFormatter={(v) => formatBucketTooltip(v, window)}
-                  />
-                  <Line
-                    type="linear"
-                    dataKey="avg_gas_price"
-                    stroke={CHART_ACCENT}
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+            <ChartCard title="Avg Gas Price" loading={gasPriceLoading} error={gasPriceError}>
+              {!gasPriceLoading && !gasPriceError && (
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={gasPriceChart} margin={{ top: 4, right: 30, left: 0, bottom: 0 }}>
+                    <XAxis
+                      dataKey="bucket"
+                      tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
+                      tickFormatter={(v: string) => formatBucketTick(v, window)}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      tick={{ fill: CHART_AXIS_TEXT, fontSize: 11 }}
+                      tickFormatter={formatGwei}
+                      width={52}
+                    />
+                    <Tooltip
+                      contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
+                      labelStyle={{ color: CHART_AXIS_TEXT }}
+                      itemStyle={{ color: '#f8fafc' }}
+                      formatter={(v: unknown) => [formatGwei(v as number), 'Avg Gas Price']}
+                      labelFormatter={(v) => formatBucketTooltip(v, window)}
+                    />
+                    <Line
+                      type="linear"
+                      dataKey="avg_gas_price"
+                      stroke={CHART_ACCENT}
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
             </ChartCard>
           </div>
       </div>
@@ -263,15 +272,30 @@ function StatusStat({ label, value }: StatusStatProps) {
   );
 }
 
-function ChartCard({ title, children, loading }: { title: string; children: React.ReactNode; loading?: boolean }) {
+function ChartCard({
+  title,
+  children,
+  loading,
+  error,
+}: {
+  title: string;
+  children: React.ReactNode;
+  loading?: boolean;
+  error?: string | null;
+}) {
   return (
-    <div className="bg-dark-700/60 border border-dark-600 rounded-xl p-4 relative">
+    <div className="bg-dark-700/60 border border-dark-600 rounded-xl p-4">
       <p className="text-fg-subtle text-xs uppercase tracking-wide mb-3">{title}</p>
-      {children}
-      {loading && (
-        <div className="absolute inset-0 rounded-xl bg-dark-900/60 flex items-center justify-center">
+      {loading ? (
+        <div className="h-[200px] flex items-center justify-center">
           <div className="w-5 h-5 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />
         </div>
+      ) : error ? (
+        <div className="h-[200px] flex items-center justify-center text-center">
+          <p className="max-w-xs text-sm text-accent-error">{error}</p>
+        </div>
+      ) : (
+        children
       )}
     </div>
   );

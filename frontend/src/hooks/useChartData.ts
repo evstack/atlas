@@ -21,6 +21,18 @@ interface ChartData {
   gasPriceError: string | null;
 }
 
+function getChartErrorMessage(err: unknown, fallback: string): string {
+  if (err && typeof err === 'object' && 'error' in err && typeof (err as { error: unknown }).error === 'string') {
+    return (err as { error: string }).error;
+  }
+
+  if (err instanceof Error) {
+    return err.message;
+  }
+
+  return fallback;
+}
+
 export function useChartData(window: ChartWindow): ChartData {
   const [blocksChart, setBlocksChart] = useState<BlockChartPoint[]>([]);
   const [dailyTxs, setDailyTxs] = useState<DailyTxPoint[]>([]);
@@ -42,8 +54,9 @@ export function useChartData(window: ChartWindow): ChartData {
         const daily = await getDailyTxs();
         if (mounted) setDailyTxs(daily);
       } catch (err) {
-        if (mounted)
-          setDailyTxsError(err instanceof Error ? err.message : 'Failed to load daily transactions');
+        if (mounted) {
+          setDailyTxsError(getChartErrorMessage(err, 'Failed to load daily transactions'));
+        }
       } finally {
         if (mounted) setDailyTxsLoading(false);
       }
@@ -66,8 +79,9 @@ export function useChartData(window: ChartWindow): ChartData {
         const blocks = await getBlocksChart(window);
         if (mounted) setBlocksChart(blocks);
       } catch (err) {
-        if (mounted)
-          setBlocksChartError(err instanceof Error ? err.message : 'Failed to load blocks chart');
+        if (mounted) {
+          setBlocksChartError(getChartErrorMessage(err, 'Failed to load blocks chart'));
+        }
       } finally {
         if (mounted) setBlocksChartLoading(false);
       }
@@ -90,8 +104,9 @@ export function useChartData(window: ChartWindow): ChartData {
         const gasPrice = await getGasPriceChart(window);
         if (mounted) setGasPriceChart(gasPrice);
       } catch (err) {
-        if (mounted)
-          setGasPriceError(err instanceof Error ? err.message : 'Failed to load gas price chart');
+        if (mounted) {
+          setGasPriceError(getChartErrorMessage(err, 'Failed to load gas price chart'));
+        }
       } finally {
         if (mounted) setGasPriceLoading(false);
       }
