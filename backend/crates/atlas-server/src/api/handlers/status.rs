@@ -104,6 +104,9 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://test@localhost:5432/test")
             .expect("lazy pool");
+        let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+            .build_recorder()
+            .handle();
         State(Arc::new(AppState {
             pool,
             block_events_tx: block_tx,
@@ -120,6 +123,8 @@ mod tests {
             background_color_light: None,
             success_color: None,
             error_color: None,
+            metrics: crate::metrics::Metrics::new(),
+            prometheus_handle,
         }))
     }
 

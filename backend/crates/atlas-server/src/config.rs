@@ -482,6 +482,7 @@ mod tests_from_run_args {
             },
             log: cli::LogArgs {
                 level: "info".to_string(),
+                format: "text".to_string(),
             },
         }
     }

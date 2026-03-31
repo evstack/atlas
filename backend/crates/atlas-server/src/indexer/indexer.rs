@@ -25,6 +25,7 @@ use super::fetcher::{
 };
 use crate::config::Config;
 use crate::head::HeadTracker;
+use crate::metrics::Metrics;
 
 /// Partition size: 10 million blocks per partition
 const PARTITION_SIZE: u64 = 10_000_000;
@@ -44,6 +45,7 @@ pub struct Indexer {
     block_events_tx: broadcast::Sender<()>,
     /// Shared in-memory tracker for the latest committed head and replay tail
     head_tracker: Arc<HeadTracker>,
+    metrics: Metrics,
 }
 
 impl Indexer {
@@ -52,6 +54,7 @@ impl Indexer {
         config: Config,
         block_events_tx: broadcast::Sender<()>,
         head_tracker: Arc<HeadTracker>,
+        metrics: Metrics,
     ) -> Self {
         Self {
             pool,
@@ -60,6 +63,7 @@ impl Indexer {
             current_max_partition: std::sync::atomic::AtomicU64::new(0),
             block_events_tx,
             head_tracker,
+            metrics,
         }
     }
 
@@ -80,7 +84,7 @@ impl Indexer {
             let (client, connection) = tokio_postgres::connect(database_url, tls).await?;
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
-                    tracing::error!("copy connection error: {}", e);
+                    tracing::error!(error = %e, "copy connection error");
                 }
             });
             Ok(client)
@@ -88,7 +92,7 @@ impl Indexer {
             let (client, connection) = tokio_postgres::connect(database_url, NoTls).await?;
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
-                    tracing::error!("copy connection error: {}", e);
+                    tracing::error!(error = %e, "copy connection error");
                 }
             });
             Ok(client)
@@ -107,31 +111,31 @@ impl Indexer {
         let rps = NonZeroU32::new(self.config.rpc_requests_per_second)
             .unwrap_or(NonZeroU32::new(100).unwrap());
         let rate_limiter: SharedRateLimiter = Arc::new(RateLimiter::direct(Quota::per_second(rps)));
-        tracing::info!("Rate limiting RPC requests to {} req/sec", rps);
+        tracing::info!(rps = %rps, "rate limiting RPC requests");
 
         // Handle reindex flag
         if self.config.reindex {
-            tracing::warn!("Reindex flag set - truncating all tables");
+            tracing::warn!("reindex flag set, truncating all tables");
             self.head_tracker.clear().await;
             self.truncate_tables().await?;
         }
 
         // Get starting block
         let start_block = self.get_start_block().await?;
-        tracing::info!("Starting indexing from block {}", start_block);
+        tracing::info!(start_block, "starting indexing");
 
         // Load known contracts into memory to avoid a SELECT per transfer
         let mut known_erc20: HashSet<String> = self.load_known_erc20().await?;
-        tracing::info!("Loaded {} known ERC-20 contracts", known_erc20.len());
+        tracing::info!(count = known_erc20.len(), "loaded known ERC-20 contracts");
         let mut known_nft: HashSet<String> = self.load_known_nft().await?;
-        tracing::info!("Loaded {} known NFT contracts", known_nft.len());
+        tracing::info!(count = known_nft.len(), "loaded known NFT contracts");
 
         let num_workers = self.config.fetch_workers as usize;
         let rpc_batch_size = self.config.rpc_batch_size as usize;
         tracing::info!(
-            "Starting {} fetch workers with {} blocks per RPC batch",
-            num_workers,
-            rpc_batch_size
+            workers = num_workers,
+            rpc_batch_size,
+            "starting fetch workers"
         );
 
         // Channels for work distribution and results
@@ -152,9 +156,10 @@ impl Indexer {
             let limiter = Arc::clone(&rate_limiter);
             let client = http_client.clone();
             let url = rpc_url.clone();
+            let worker_metrics = self.metrics.clone();
 
             tokio::spawn(async move {
-                tracing::debug!("Worker {} started", worker_id);
+                tracing::debug!(worker_id, "worker started");
                 while let Ok(work_item) = work_rx.recv().await {
                     // Fetch batch of blocks using JSON-RPC batching
                     let results = fetch_blocks_batch(
@@ -163,6 +168,7 @@ impl Indexer {
                         work_item.start_block,
                         work_item.count,
                         &limiter,
+                        &worker_metrics,
                     )
                     .await;
 
@@ -173,7 +179,7 @@ impl Indexer {
                         }
                     }
                 }
-                tracing::debug!("Worker {} shutting down", worker_id);
+                tracing::debug!(worker_id, "worker shutting down");
             });
         }
 
@@ -186,7 +192,7 @@ impl Indexer {
 
         loop {
             // Get chain head with retry
-            let head = match get_block_number_with_retry(&provider).await {
+            let head = match get_block_number_with_retry(&provider, &self.metrics).await {
                 Ok(h) => h,
                 Err(e) => {
                     // This should only happen after all retries exhausted (very unlikely)
@@ -194,7 +200,8 @@ impl Indexer {
                     return Err(e);
                 }
             };
-            tracing::debug!("Chain head: {}, current: {}", head, current_block);
+            self.metrics.set_chain_head_block(head);
+            tracing::debug!(chain_head = head, current = current_block, "chain head");
 
             if current_block > head {
                 // At head, wait for new blocks
@@ -206,10 +213,10 @@ impl Indexer {
             let end_block = (current_block + self.config.batch_size - 1).min(head);
             let batch_size = (end_block - current_block + 1) as usize;
             tracing::debug!(
-                "Fetching batch: {} to {} ({} blocks)",
-                current_block,
-                end_block,
-                batch_size
+                start = current_block,
+                end = end_block,
+                blocks = batch_size,
+                "fetching batch"
             );
 
             // Ensure partitions exist for this batch range
@@ -232,9 +239,9 @@ impl Indexer {
                     block += count as u64;
                 }
                 tracing::debug!(
-                    "Sent {} blocks to workers in batches of {}",
-                    batch_size,
-                    blocks_per_batch
+                    blocks = batch_size,
+                    batch_size = blocks_per_batch,
+                    "sent blocks to workers"
                 );
             });
 
@@ -260,7 +267,7 @@ impl Indexer {
                         }
                     }
                     Some(FetchResult::Error { block_num, error }) => {
-                        tracing::warn!("Block {} failed to fetch: {}", block_num, error);
+                        tracing::warn!(block = block_num, error = %error, "block failed to fetch");
                         failed_blocks.push((block_num, error));
                         blocks_received += 1;
                         // Skip this block for now, continue with others
@@ -294,7 +301,10 @@ impl Indexer {
             let _ = self.block_events_tx.send(());
 
             // One DB transaction for the entire batch
+            let db_write_start = std::time::Instant::now();
             self.write_batch(&mut copy_client, batch, true).await?;
+            self.metrics
+                .record_db_write_duration(db_write_start.elapsed().as_secs_f64());
 
             // Write succeeded — now safe to update the persistent in-memory sets
             known_erc20.extend(new_erc20);
@@ -307,9 +317,9 @@ impl Indexer {
             if !failed_blocks.is_empty() {
                 let block_nums: Vec<u64> = failed_blocks.iter().map(|(n, _)| *n).collect();
                 tracing::warn!(
-                    "Retrying {} failed blocks: {:?}",
-                    failed_blocks.len(),
-                    block_nums
+                    count = failed_blocks.len(),
+                    blocks = ?block_nums,
+                    "retrying failed blocks"
                 );
 
                 // Retry up to 3 times with increasing delay
@@ -320,19 +330,25 @@ impl Indexer {
 
                     let delay = Duration::from_secs(attempt * 2); // 2s, 4s, 6s
                     tracing::info!(
-                        "Retry attempt {} for {} blocks (waiting {:?})",
                         attempt,
-                        failed_blocks.len(),
-                        delay
+                        blocks = failed_blocks.len(),
+                        delay_secs = delay.as_secs(),
+                        "retry attempt for failed blocks"
                     );
                     tokio::time::sleep(delay).await;
 
                     let mut still_failed = Vec::new();
                     for (block_num, last_error) in failed_blocks {
                         // Fetch single block
-                        let results =
-                            fetch_blocks_batch(&http_client, &rpc_url, block_num, 1, &rate_limiter)
-                                .await;
+                        let results = fetch_blocks_batch(
+                            &http_client,
+                            &rpc_url,
+                            block_num,
+                            1,
+                            &rate_limiter,
+                            &self.metrics,
+                        )
+                        .await;
 
                         match results.into_iter().next() {
                             Some(FetchResult::Success(fetched)) => {
@@ -353,7 +369,7 @@ impl Indexer {
                                     .await?;
                                 known_erc20.extend(new_erc20);
                                 known_nft.extend(new_nft);
-                                tracing::info!("Block {} retry succeeded", block_num);
+                                tracing::info!(block = block_num, "block retry succeeded");
                             }
                             Some(FetchResult::Error { error, .. }) => {
                                 still_failed.push((block_num, error));
@@ -368,10 +384,13 @@ impl Indexer {
 
                 // Store any remaining failures in failed_blocks table
                 if !failed_blocks.is_empty() {
+                    self.metrics
+                        .record_failed_blocks(failed_blocks.len() as u64);
+                    self.metrics.error("indexer", "block_fetch");
                     tracing::error!(
-                        "Storing {} blocks in failed_blocks table after 3 retries: {:?}",
-                        failed_blocks.len(),
-                        failed_blocks.iter().map(|(n, _)| n).collect::<Vec<_>>()
+                        count = failed_blocks.len(),
+                        blocks = ?failed_blocks.iter().map(|(n, _)| n).collect::<Vec<_>>(),
+                        "storing blocks in failed_blocks table after 3 retries"
                     );
 
                     for (block_num, error) in &failed_blocks {
@@ -393,21 +412,30 @@ impl Indexer {
 
             current_block = end_block + 1;
 
-            // Log progress after every batch
+            // Record metrics and log progress
+            self.metrics.record_blocks_indexed(batch_size as u64);
+            self.metrics.set_indexer_head_block(end_block);
+
             let elapsed = last_log_time.elapsed();
+            self.metrics.record_batch_duration(elapsed.as_secs_f64());
             let blocks_per_sec = batch_size as f64 / elapsed.as_secs_f64();
             let progress = (end_block as f64 / head as f64) * 100.0;
 
             tracing::info!(
-                "Batch complete: {} to {} ({} blocks in {:.2}s = {:.1} blocks/sec) | Progress: {:.2}%",
-                end_block - batch_size as u64 + 1, end_block, batch_size, elapsed.as_secs_f64(), blocks_per_sec, progress
+                start_block = end_block - batch_size as u64 + 1,
+                end_block,
+                blocks = batch_size,
+                elapsed_secs = format_args!("{:.2}", elapsed.as_secs_f64()),
+                blocks_per_sec = format_args!("{:.1}", blocks_per_sec),
+                progress_pct = format_args!("{:.2}", progress),
+                "batch complete"
             );
 
             last_log_time = std::time::Instant::now();
 
             // If we hit the head (batch smaller than configured), sleep to avoid tight loop
             if (batch_size as u64) < self.config.batch_size {
-                tracing::debug!("At chain head, sleeping for 1s");
+                tracing::debug!("at chain head, sleeping");
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
@@ -892,10 +920,10 @@ impl Indexer {
             let partition_end = partition_start + PARTITION_SIZE;
 
             tracing::info!(
-                "Creating partitions for block range {} to {} (p{})",
-                partition_start,
-                partition_end,
-                p
+                partition = p,
+                range_start = partition_start,
+                range_end = partition_end,
+                "creating partitions"
             );
 
             // Create partitions for all partitioned tables
@@ -920,7 +948,7 @@ impl Indexer {
         // Update our tracked max
         self.current_max_partition
             .store(partition_num, Ordering::Relaxed);
-        tracing::info!("Partitions up to p{} ready", partition_num);
+        tracing::info!(max_partition = partition_num, "partitions ready");
         Ok(())
     }
 

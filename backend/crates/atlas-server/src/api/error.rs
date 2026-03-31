@@ -51,6 +51,24 @@ impl IntoResponse for ApiError {
         let status =
             StatusCode::from_u16(self.0.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
+        // Increment error counter for Prometheus alerting
+        let error_type = match &self.0 {
+            AtlasError::Database(_) => "database",
+            AtlasError::Internal(_) => "internal",
+            AtlasError::Config(_) => "config",
+            AtlasError::Rpc(_) => "rpc_request",
+            AtlasError::MetadataFetch(_) => "metadata_fetch",
+            _ => "",
+        };
+        if !error_type.is_empty() {
+            metrics::counter!(
+                "atlas_errors_total",
+                "component" => "api",
+                "error_type" => error_type
+            )
+            .increment(1);
+        }
+
         // Determine the client-facing message based on error type.
         // Internal details are logged server-side to avoid leaking stack traces or
         // database internals to callers.

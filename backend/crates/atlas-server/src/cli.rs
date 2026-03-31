@@ -369,6 +369,15 @@ pub struct LogArgs {
         help = "Log filter directive (e.g. info, atlas_server=debug)"
     )]
     pub level: String,
+
+    #[arg(
+        long = "atlas.log.format",
+        env = "LOG_FORMAT",
+        default_value = "text",
+        value_name = "FORMAT",
+        help = "Log output format: text or json"
+    )]
+    pub format: String,
 }
 
 // ── db subcommand ─────────────────────────────────────────────────────────────

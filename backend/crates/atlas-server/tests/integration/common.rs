@@ -62,6 +62,9 @@ pub fn test_router() -> Router {
     let (tx, _) = broadcast::channel(1);
     let (da_tx, _) = broadcast::channel(1);
 
+    let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .build_recorder()
+        .handle();
     let state = Arc::new(AppState {
         pool,
         block_events_tx: tx,
@@ -78,6 +81,8 @@ pub fn test_router() -> Router {
         background_color_light: None,
         success_color: None,
         error_color: None,
+        metrics: atlas_server::metrics::Metrics::new(),
+        prometheus_handle,
     });
 
     build_router(state, None)
