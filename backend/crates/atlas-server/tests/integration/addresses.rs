@@ -10,6 +10,7 @@ use crate::common;
 
 const ADDR: &str = "0x5000000000000000000000000000000000000001";
 const ADDR_TO: &str = "0x5000000000000000000000000000000000000002";
+const ERC20_ADDR: &str = "0x5000000000000000000000000000000000000010";
 const TX_HASH_A: &str = "0x5000000000000000000000000000000000000000000000000000000000000001";
 const TX_HASH_B: &str = "0x5000000000000000000000000000000000000000000000000000000000000002";
 
@@ -66,6 +67,68 @@ async fn seed_address_data(pool: &sqlx::PgPool) {
     }
 }
 
+async fn seed_erc20_address_data(pool: &sqlx::PgPool) {
+    sqlx::query(
+        "INSERT INTO addresses (address, is_contract, first_seen_block, tx_count)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (address) DO NOTHING",
+    )
+    .bind(ERC20_ADDR)
+    .bind(true)
+    .bind(5000i64)
+    .bind(1i32)
+    .execute(pool)
+    .await
+    .expect("seed erc20 address");
+
+    sqlx::query(
+        "INSERT INTO erc20_contracts (address, name, symbol, decimals, total_supply, first_seen_block)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (address) DO NOTHING",
+    )
+    .bind(ERC20_ADDR)
+    .bind("Address Token")
+    .bind("ATK")
+    .bind(18i16)
+    .bind(bigdecimal::BigDecimal::from(500_000i64))
+    .bind(5000i64)
+    .execute(pool)
+    .await
+    .expect("seed erc20 contract");
+
+    for (holder, balance) in [(ADDR, 700_000i64), (ADDR_TO, 300_000i64)] {
+        sqlx::query(
+            "INSERT INTO erc20_balances (address, contract_address, balance, last_updated_block)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (address, contract_address) DO NOTHING",
+        )
+        .bind(holder)
+        .bind(ERC20_ADDR)
+        .bind(bigdecimal::BigDecimal::from(balance))
+        .bind(5000i64)
+        .execute(pool)
+        .await
+        .expect("seed erc20 balance");
+    }
+
+    sqlx::query(
+        "INSERT INTO erc20_transfers (tx_hash, log_index, contract_address, from_address, to_address, value, block_number, timestamp)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (tx_hash, log_index, block_number) DO NOTHING",
+    )
+    .bind(TX_HASH_A)
+    .bind(0i32)
+    .bind(ERC20_ADDR)
+    .bind(ADDR)
+    .bind(ADDR_TO)
+    .bind(bigdecimal::BigDecimal::from(10_000i64))
+    .bind(5000i64)
+    .bind(1_700_005_000i64)
+    .execute(pool)
+    .await
+    .expect("seed erc20 transfer");
+}
+
 #[test]
 fn get_address_detail() {
     common::run(async {
@@ -112,5 +175,30 @@ fn get_address_transactions() {
         let body = common::json_body(response).await;
         let data = body["data"].as_array().unwrap();
         assert_eq!(data.len(), 2);
+    });
+}
+
+#[test]
+fn get_erc20_address_detail_prefers_indexed_supply() {
+    common::run(async {
+        let pool = common::pool();
+        seed_address_data(pool).await;
+        seed_erc20_address_data(pool).await;
+
+        let app = common::test_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/addresses/{}", ERC20_ADDR))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = common::json_body(response).await;
+        assert_eq!(body["address_type"].as_str().unwrap(), "erc20");
+        assert_eq!(body["total_supply"].as_str().unwrap(), "1000000");
     });
 }

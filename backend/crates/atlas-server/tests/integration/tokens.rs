@@ -215,6 +215,37 @@ fn get_token_detail() {
         assert_eq!(body["symbol"].as_str().unwrap(), "TTA");
         assert_eq!(body["holder_count"].as_i64().unwrap(), 2);
         assert_eq!(body["transfer_count"].as_i64().unwrap(), 1);
+        assert_eq!(body["total_supply"].as_str().unwrap(), "1000000");
+    });
+}
+
+#[test]
+fn get_token_detail_prefers_indexed_supply_over_stale_stored_value() {
+    common::run(async {
+        let pool = common::pool();
+        seed_token_data(pool).await;
+
+        sqlx::query("UPDATE erc20_contracts SET total_supply = $2 WHERE address = $1")
+            .bind(TOKEN_A)
+            .bind(bigdecimal::BigDecimal::from(700_000i64))
+            .execute(pool)
+            .await
+            .expect("update stale total supply");
+
+        let app = common::test_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/tokens/{}", TOKEN_A))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = common::json_body(response).await;
+        assert_eq!(body["total_supply"].as_str().unwrap(), "1000000");
     });
 }
 

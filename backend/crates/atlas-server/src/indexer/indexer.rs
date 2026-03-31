@@ -614,7 +614,9 @@ impl Indexer {
                         // Aggregate balance deltas — multiple transfers in the same batch
                         // for the same (address, contract) pair are summed in Rust,
                         // so we only need one DB upsert per unique pair.
-                        if from != ZERO_ADDRESS {
+                        if from == ZERO_ADDRESS {
+                            batch.apply_supply_delta(contract.clone(), value.clone());
+                        } else {
                             batch.apply_balance_delta(
                                 from,
                                 contract.clone(),
@@ -622,7 +624,9 @@ impl Indexer {
                                 block_num as i64,
                             );
                         }
-                        if to != ZERO_ADDRESS {
+                        if to == ZERO_ADDRESS {
+                            batch.apply_supply_delta(contract.clone(), -value);
+                        } else {
                             batch.apply_balance_delta(
                                 to,
                                 contract.clone(),
@@ -673,6 +677,7 @@ impl Indexer {
             ec_addresses,
             ec_first_seen_blocks,
             balance_map,
+            supply_map,
             last_block,
             ..
         } = batch;
@@ -798,6 +803,26 @@ impl Indexer {
                 &params,
             )
             .await?;
+        }
+
+        if !supply_map.is_empty() {
+            let mut supply_contracts = Vec::with_capacity(supply_map.len());
+            let mut supply_deltas = Vec::with_capacity(supply_map.len());
+            for (contract, delta) in supply_map {
+                supply_contracts.push(contract);
+                supply_deltas.push(delta.to_string());
+            }
+
+            let params: [&(dyn ToSql + Sync); 2] = [&supply_contracts, &supply_deltas];
+            pg_tx
+                .execute(
+                    "UPDATE erc20_contracts AS c
+                 SET total_supply = COALESCE(c.total_supply, 0) + s.supply_delta::numeric
+                 FROM unnest($1::text[], $2::text[]) AS s(contract_address, supply_delta)
+                 WHERE c.address = s.contract_address",
+                    &params,
+                )
+                .await?;
         }
 
         if update_watermark {
@@ -1049,6 +1074,43 @@ mod tests {
         let contract = batch.ec_addresses[0].clone();
         let to = "0x2222222222222222222222222222222222222222";
         assert!(batch.balance_map.contains_key(&(to.to_string(), contract)));
+        assert_eq!(
+            batch.supply_map["0x3333333333333333333333333333333333333333"],
+            BigDecimal::from(1000)
+        );
+    }
+
+    #[test]
+    fn collect_erc20_burn_tracks_negative_supply_delta() {
+        let mut batch = BlockBatch::new();
+        let known_erc20 = HashSet::new();
+        let known_nft = HashSet::new();
+
+        let logs = serde_json::json!([{
+            "address": "0x3333333333333333333333333333333333333333",
+            "topics": [
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000001111111111111111111111111111111111111111",
+                "0x0000000000000000000000000000000000000000000000000000000000000000"
+            ],
+            "data": "0x00000000000000000000000000000000000000000000000000000000000003e8",
+            "blockNumber": "0x1",
+            "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "transactionIndex": "0x0",
+            "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "logIndex": "0x0",
+            "removed": false
+        }]);
+
+        let mut fb = empty_fetched_block(1);
+        fb.receipts = vec![make_receipt(logs)];
+        Indexer::collect_block(&mut batch, &known_erc20, &known_nft, fb);
+
+        assert_eq!(batch.balance_map.len(), 1);
+        assert_eq!(
+            batch.supply_map["0x3333333333333333333333333333333333333333"],
+            BigDecimal::from(-1000)
+        );
     }
 
     #[test]

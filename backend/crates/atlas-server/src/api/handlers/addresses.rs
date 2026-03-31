@@ -3,6 +3,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::api::error::ApiResult;
@@ -64,6 +65,32 @@ fn default_page() -> u32 {
 }
 fn default_limit() -> u32 {
     20
+}
+
+async fn get_indexed_erc20_total_supply(
+    pool: &PgPool,
+    address: &str,
+) -> Result<bigdecimal::BigDecimal, sqlx::Error> {
+    let (supply,): (bigdecimal::BigDecimal,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(balance), 0)
+         FROM erc20_balances
+         WHERE contract_address = $1 AND balance > 0",
+    )
+    .bind(address)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(supply)
+}
+
+async fn has_erc20_transfers(pool: &PgPool, address: &str) -> Result<bool, sqlx::Error> {
+    let (has_transfers,): (bool,) =
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM erc20_transfers WHERE contract_address = $1)")
+            .bind(address)
+            .fetch_one(pool)
+            .await?;
+
+    Ok(has_transfers)
 }
 
 pub async fn list_addresses(
@@ -220,6 +247,17 @@ pub async fn get_address(
     .bind(&address)
     .fetch_optional(&state.pool)
     .await?;
+
+    let erc20_contract = match erc20_contract {
+        Some(mut erc20) => {
+            if erc20.total_supply.is_none() || has_erc20_transfers(&state.pool, &address).await? {
+                erc20.total_supply =
+                    Some(get_indexed_erc20_total_supply(&state.pool, &address).await?);
+            }
+            Some(erc20)
+        }
+        None => None,
+    };
 
     // Merge the data
     match (base_addr, nft_contract, erc20_contract) {

@@ -3,6 +3,7 @@ use axum::{
     Json,
 };
 use chrono::Utc;
+use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::api::error::ApiResult;
@@ -50,6 +51,22 @@ pub struct TokenDetailResponse {
     pub transfer_count: i64,
 }
 
+async fn get_indexed_total_supply(
+    pool: &PgPool,
+    address: &str,
+) -> Result<bigdecimal::BigDecimal, sqlx::Error> {
+    let (supply,): (bigdecimal::BigDecimal,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(balance), 0)
+         FROM erc20_balances
+         WHERE contract_address = $1 AND balance > 0",
+    )
+    .bind(address)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(supply)
+}
+
 /// GET /api/tokens/:address - Get token details
 pub async fn get_token(
     State(state): State<Arc<AppState>>,
@@ -80,16 +97,8 @@ pub async fn get_token(
             .fetch_one(&state.pool)
             .await?;
 
-    // Compute total_supply from balances if not set
-    if contract.total_supply.is_none() {
-        let computed_supply: Option<(bigdecimal::BigDecimal,)> = sqlx::query_as(
-            "SELECT COALESCE(SUM(balance), 0) FROM erc20_balances WHERE contract_address = $1 AND balance > 0",
-        )
-        .bind(&address)
-        .fetch_optional(&state.pool)
-        .await?;
-
-        contract.total_supply = computed_supply.map(|(s,)| s);
+    if transfer_count.0 > 0 || contract.total_supply.is_none() {
+        contract.total_supply = Some(get_indexed_total_supply(&state.pool, &address).await?);
     }
 
     Ok(Json(TokenDetailResponse {
@@ -124,29 +133,15 @@ pub async fn get_token_holders(
     .fetch_one(&state.pool)
     .await?;
 
-    // Get total supply for percentage calculation
-    // First try to get it from the contract, if NULL compute from sum of balances
-    let total_supply: Option<bigdecimal::BigDecimal> = {
+    let total_supply = if total.0 > 0 {
+        Some(get_indexed_total_supply(&state.pool, &address).await?)
+    } else {
         let stored: Option<(Option<bigdecimal::BigDecimal>,)> =
             sqlx::query_as("SELECT total_supply FROM erc20_contracts WHERE address = $1")
                 .bind(&address)
                 .fetch_optional(&state.pool)
                 .await?;
-
-        match stored {
-            Some((Some(ts),)) => Some(ts),
-            _ => {
-                // Compute from sum of balances
-                let computed: Option<(bigdecimal::BigDecimal,)> = sqlx::query_as(
-                    "SELECT COALESCE(SUM(balance), 0) FROM erc20_balances
-                     WHERE contract_address = $1 AND balance > 0",
-                )
-                .bind(&address)
-                .fetch_optional(&state.pool)
-                .await?;
-                computed.map(|(s,)| s)
-            }
-        }
+        stored.and_then(|(supply,)| supply)
     };
 
     let balances: Vec<Erc20Balance> = sqlx::query_as(
