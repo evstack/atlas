@@ -25,6 +25,7 @@ use super::fetcher::{
 };
 use crate::config::Config;
 use crate::head::HeadTracker;
+use crate::state_keys::ERC20_SUPPLY_HISTORY_COMPLETE_KEY;
 
 /// Partition size: 10 million blocks per partition
 const PARTITION_SIZE: u64 = 10_000_000;
@@ -118,6 +119,12 @@ impl Indexer {
 
         // Get starting block
         let start_block = self.get_start_block().await?;
+        let erc20_supply_history_status = self.get_erc20_supply_history_status().await?;
+        let mut erc20_supply_backfill_pending = matches!(erc20_supply_history_status, Some(false))
+            || (erc20_supply_history_status.is_none() && start_block == 0);
+        if erc20_supply_history_status.is_none() && start_block == 0 {
+            self.set_erc20_supply_history_complete(false).await?;
+        }
         tracing::info!("Starting indexing from block {}", start_block);
 
         // Load known contracts into memory to avoid a SELECT per transfer
@@ -197,6 +204,10 @@ impl Indexer {
             tracing::debug!("Chain head: {}, current: {}", head, current_block);
 
             if current_block > head {
+                if erc20_supply_backfill_pending {
+                    self.set_erc20_supply_history_complete(true).await?;
+                    erc20_supply_backfill_pending = false;
+                }
                 // At head, wait for new blocks
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
@@ -392,6 +403,11 @@ impl Indexer {
             }
 
             current_block = end_block + 1;
+
+            if erc20_supply_backfill_pending && current_block > head {
+                self.set_erc20_supply_history_complete(true).await?;
+                erc20_supply_backfill_pending = false;
+            }
 
             // Log progress after every batch
             let elapsed = last_log_time.elapsed();
@@ -956,6 +972,30 @@ impl Indexer {
         )
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    async fn get_erc20_supply_history_status(&self) -> Result<Option<bool>> {
+        let value: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM indexer_state WHERE key = $1 LIMIT 1")
+                .bind(ERC20_SUPPLY_HISTORY_COMPLETE_KEY)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        Ok(value.map(|(value,)| value == "true"))
+    }
+
+    async fn set_erc20_supply_history_complete(&self, complete: bool) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO indexer_state (key, value, updated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+        )
+        .bind(ERC20_SUPPLY_HISTORY_COMPLETE_KEY)
+        .bind(if complete { "true" } else { "false" })
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 }

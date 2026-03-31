@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::api::error::ApiResult;
+use crate::api::handlers::has_complete_erc20_supply_history;
 use crate::api::handlers::stats::WindowQuery;
 use crate::api::AppState;
 use atlas_common::{
@@ -97,7 +98,7 @@ pub async fn get_token(
             .fetch_one(&state.pool)
             .await?;
 
-    if transfer_count.0 > 0 || contract.total_supply.is_none() {
+    if has_complete_erc20_supply_history(&state.pool).await? {
         contract.total_supply = Some(get_indexed_total_supply(&state.pool, &address).await?);
     }
 
@@ -133,7 +134,7 @@ pub async fn get_token_holders(
     .fetch_one(&state.pool)
     .await?;
 
-    let total_supply = if total.0 > 0 {
+    let total_supply = if has_complete_erc20_supply_history(&state.pool).await? {
         Some(get_indexed_total_supply(&state.pool, &address).await?)
     } else {
         let stored: Option<(Option<bigdecimal::BigDecimal>,)> =

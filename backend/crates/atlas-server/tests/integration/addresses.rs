@@ -5,6 +5,7 @@ use axum::{
 use tower::ServiceExt;
 
 use crate::common;
+use atlas_server::state_keys::ERC20_SUPPLY_HISTORY_COMPLETE_KEY;
 
 // Block range: 5000-5999
 
@@ -129,6 +130,19 @@ async fn seed_erc20_address_data(pool: &sqlx::PgPool) {
     .expect("seed erc20 transfer");
 }
 
+async fn set_erc20_supply_history_complete(pool: &sqlx::PgPool, complete: bool) {
+    sqlx::query(
+        "INSERT INTO indexer_state (key, value, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+    )
+    .bind(ERC20_SUPPLY_HISTORY_COMPLETE_KEY)
+    .bind(if complete { "true" } else { "false" })
+    .execute(pool)
+    .await
+    .expect("set erc20 supply history completeness");
+}
+
 #[test]
 fn get_address_detail() {
     common::run(async {
@@ -184,6 +198,7 @@ fn get_erc20_address_detail_prefers_indexed_supply() {
         let pool = common::pool();
         seed_address_data(pool).await;
         seed_erc20_address_data(pool).await;
+        set_erc20_supply_history_complete(pool, true).await;
 
         let app = common::test_router();
         let response = app

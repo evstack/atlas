@@ -14,6 +14,7 @@ mod config;
 mod faucet;
 mod head;
 mod indexer;
+mod state_keys;
 
 /// Retry delays for exponential backoff (in seconds)
 const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
