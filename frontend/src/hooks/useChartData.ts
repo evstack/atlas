@@ -47,7 +47,7 @@ export function useChartData(window: ChartWindow): ChartData {
   // Daily txs are window-independent — fetch once and refresh on a slow interval
   useEffect(() => {
     let mounted = true;
-    let timeoutId: number | undefined;
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | undefined;
     setDailyTxsLoading(true);
 
     const fetchDaily = async () => {
@@ -82,7 +82,7 @@ export function useChartData(window: ChartWindow): ChartData {
   // Blocks chart depends on the selected window
   useEffect(() => {
     let mounted = true;
-    let timeoutId: number | undefined;
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | undefined;
     setBlocksChartLoading(true);
 
     const fetch = async () => {
@@ -117,7 +117,7 @@ export function useChartData(window: ChartWindow): ChartData {
   // Gas price chart depends on the selected window
   useEffect(() => {
     let mounted = true;
-    let timeoutId: number | undefined;
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | undefined;
     setGasPriceLoading(true);
 
     const fetch = async () => {
