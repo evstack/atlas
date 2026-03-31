@@ -235,7 +235,7 @@ export default function StatusPage() {
                       contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                       labelStyle={{ color: CHART_AXIS_TEXT }}
                       itemStyle={{ color: '#f8fafc' }}
-                      formatter={(v: unknown) => [formatGwei(v as number), 'Avg Gas Price']}
+                      formatter={(v: unknown) => [formatGwei(v as number | null), 'Avg Gas Price']}
                       labelFormatter={(v) => formatBucketTooltip(v, window)}
                     />
                     <Line
@@ -329,7 +329,11 @@ function formatCompact(n: number): string {
   return String(n);
 }
 
-function formatGwei(wei: number): string {
+function formatGwei(wei: number | null | undefined): string {
+  if (wei === null || wei === undefined || Number.isNaN(wei)) {
+    return '—';
+  }
+
   const gwei = wei / 1e9;
   if (gwei >= 1_000) return `${(gwei / 1_000).toFixed(1)}K gwei`;
   if (gwei >= 1) return `${gwei.toFixed(2)} gwei`;

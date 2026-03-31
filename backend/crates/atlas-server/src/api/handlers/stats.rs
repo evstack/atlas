@@ -77,7 +77,7 @@ pub struct DailyTxPoint {
 #[derive(Serialize)]
 pub struct GasPricePoint {
     pub bucket: String,
-    pub avg_gas_price: f64,
+    pub avg_gas_price: Option<f64>,
 }
 
 /// GET /api/stats/blocks-chart?window=1h|6h|24h|7d
@@ -221,7 +221,7 @@ pub async fn get_gas_price_chart(
         .into_iter()
         .map(|(bucket, avg_gas_price)| GasPricePoint {
             bucket: bucket.to_rfc3339(),
-            avg_gas_price: avg_gas_price.unwrap_or(0.0),
+            avg_gas_price,
         })
         .collect();
 
