@@ -20,12 +20,13 @@
     --color-text-subtle: 148 163 184;
     --color-text-faint: 100 116 139;
     --color-border: 45 45 58;
-    --color-gray-200: 226 232 240;
-    --color-gray-300: 203 213 225;
-    --color-gray-400: 148 163 184;
-    --color-gray-500: 107 114 128;
-    --color-gray-600: 75 85 99;
-    --color-gray-700: 55 65 81;
+    /* Keep legacy text-gray-* usage readable on branded dark backgrounds. */
+    --color-gray-200: 248 250 252;
+    --color-gray-300: 248 250 252;
+    --color-gray-400: 248 250 252;
+    --color-gray-500: 248 250 252;
+    --color-gray-600: 248 250 252;
+    --color-gray-700: 248 250 252;
   }
 
   :root[data-theme='light'] {
