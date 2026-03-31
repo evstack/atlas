@@ -15,7 +15,7 @@ RUN apk add --no-cache ca-certificates postgresql16-client
 
 COPY --from=builder /app/target/release/atlas-server /usr/local/bin/
 
-RUN addgroup -S atlas && adduser -S atlas -G atlas \
+RUN addgroup -S -g 1000 atlas && adduser -S -u 1000 atlas -G atlas \
     && mkdir -p /snapshots \
     && chown atlas:atlas /snapshots
 USER atlas
