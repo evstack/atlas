@@ -35,10 +35,28 @@ fn required_db_url(db_url: &str) -> Result<&str> {
     Ok(db_url)
 }
 
-struct PostgresConnectionConfig {
-    database_name: String,
-    env_vars: Vec<(&'static str, String)>,
+pub(crate) struct PostgresConnectionConfig {
+    pub(crate) database_name: String,
+    pub(crate) env_vars: Vec<(&'static str, String)>,
 }
+
+const PG_ENV_VARS: &[&str] = &[
+    "PGHOST",
+    "PGHOSTADDR",
+    "PGPORT",
+    "PGUSER",
+    "PGPASSWORD",
+    "PGDATABASE",
+    "PGSERVICE",
+    "PGSSLMODE",
+    "PGSSLCERT",
+    "PGSSLKEY",
+    "PGSSLROOTCERT",
+    "PGSSLCRL",
+    "PGAPPNAME",
+    "PGOPTIONS",
+    "PGCONNECT_TIMEOUT",
+];
 
 fn set_pg_env(env_vars: &mut Vec<(&'static str, String)>, key: &'static str, value: &str) {
     if value.is_empty() {
@@ -54,7 +72,7 @@ fn set_pg_env(env_vars: &mut Vec<(&'static str, String)>, key: &'static str, val
     }
 }
 
-fn postgres_connection_config(db_url: &str) -> Result<PostgresConnectionConfig> {
+pub(crate) fn postgres_connection_config(db_url: &str) -> Result<PostgresConnectionConfig> {
     let url = reqwest::Url::parse(required_db_url(db_url)?).context("Invalid DATABASE_URL")?;
     match url.scheme() {
         "postgres" | "postgresql" => {}
@@ -142,23 +160,21 @@ fn postgres_connection_config(db_url: &str) -> Result<PostgresConnectionConfig> 
 
 fn postgres_command(program: &str, config: &PostgresConnectionConfig) -> std::process::Command {
     let mut command = std::process::Command::new(program);
-    for env_var in [
-        "PGHOST",
-        "PGHOSTADDR",
-        "PGPORT",
-        "PGUSER",
-        "PGPASSWORD",
-        "PGDATABASE",
-        "PGSERVICE",
-        "PGSSLMODE",
-        "PGSSLCERT",
-        "PGSSLKEY",
-        "PGSSLROOTCERT",
-        "PGSSLCRL",
-        "PGAPPNAME",
-        "PGOPTIONS",
-        "PGCONNECT_TIMEOUT",
-    ] {
+    for env_var in PG_ENV_VARS {
+        command.env_remove(env_var);
+    }
+    for (key, value) in &config.env_vars {
+        command.env(key, value);
+    }
+    command
+}
+
+pub(crate) fn postgres_command_async(
+    program: &str,
+    config: &PostgresConnectionConfig,
+) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(program);
+    for env_var in PG_ENV_VARS {
         command.env_remove(env_var);
     }
     for (key, value) in &config.env_vars {
