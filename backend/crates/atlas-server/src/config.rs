@@ -48,6 +48,8 @@ pub struct Config {
 
     // Branding / white-label
     pub chain_logo_url: Option<String>,
+    pub chain_logo_url_light: Option<String>,
+    pub chain_logo_url_dark: Option<String>,
     pub accent_color: Option<String>,
     pub background_color_dark: Option<String>,
     pub background_color_light: Option<String>,
@@ -198,6 +200,8 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "Unknown".to_string()),
             chain_logo_url: parse_optional_env(env::var("CHAIN_LOGO_URL").ok()),
+            chain_logo_url_light: parse_optional_env(env::var("CHAIN_LOGO_URL_LIGHT").ok()),
+            chain_logo_url_dark: parse_optional_env(env::var("CHAIN_LOGO_URL_DARK").ok()),
             accent_color: parse_optional_env(env::var("ACCENT_COLOR").ok()),
             background_color_dark: parse_optional_env(env::var("BACKGROUND_COLOR_DARK").ok()),
             background_color_light: parse_optional_env(env::var("BACKGROUND_COLOR_LIGHT").ok()),
@@ -324,6 +328,8 @@ impl Config {
             sse_replay_buffer_blocks,
             chain_name,
             chain_logo_url: parse_optional_env(args.chain.logo_url),
+            chain_logo_url_light: parse_optional_env(args.chain.logo_url_light),
+            chain_logo_url_dark: parse_optional_env(args.chain.logo_url_dark),
             accent_color: parse_optional_env(args.branding.accent_color),
             background_color_dark: parse_optional_env(args.branding.background_dark),
             background_color_light: parse_optional_env(args.branding.background_light),
@@ -461,6 +467,8 @@ mod tests_from_run_args {
             chain: cli::ChainArgs {
                 name: "TestChain".to_string(),
                 logo_url: None,
+                logo_url_light: None,
+                logo_url_dark: None,
             },
             da: cli::DaArgs {
                 enabled: false,
@@ -572,11 +580,29 @@ mod tests_from_run_args {
     #[test]
     fn branding_blank_strings_become_none() {
         let mut args = minimal_run_args();
-        args.branding.accent_color = Some("   ".to_string());
+        args.chain.logo_url_light = Some("   ".to_string());
         args.branding.success_color = Some("#00ff00".to_string());
         let config = Config::from_run_args(args).unwrap();
-        assert!(config.accent_color.is_none());
+        assert!(config.chain_logo_url_light.is_none());
         assert_eq!(config.success_color.as_deref(), Some("#00ff00"));
+    }
+
+    #[test]
+    fn theme_specific_logo_urls_are_trimmed() {
+        let mut args = minimal_run_args();
+        args.chain.logo_url_light = Some("  /branding/light.svg  ".to_string());
+        args.chain.logo_url_dark = Some("  /branding/dark.svg  ".to_string());
+
+        let config = Config::from_run_args(args).unwrap();
+
+        assert_eq!(
+            config.chain_logo_url_light.as_deref(),
+            Some("/branding/light.svg")
+        );
+        assert_eq!(
+            config.chain_logo_url_dark.as_deref(),
+            Some("/branding/dark.svg")
+        );
     }
 }
 
@@ -606,6 +632,12 @@ mod tests {
         env::remove_var("FAUCET_COOLDOWN_MINUTES");
     }
 
+    fn clear_branding_env() {
+        env::remove_var("CHAIN_LOGO_URL");
+        env::remove_var("CHAIN_LOGO_URL_LIGHT");
+        env::remove_var("CHAIN_LOGO_URL_DARK");
+    }
+
     fn set_valid_faucet_env() {
         env::set_var("FAUCET_ENABLED", "true");
         env::set_var(
@@ -620,6 +652,7 @@ mod tests {
     fn chain_name_defaults_to_unknown_when_unset() {
         let _lock = ENV_LOCK.lock().unwrap();
         set_required_env();
+        clear_branding_env();
         env::remove_var("CHAIN_NAME");
         assert_eq!(Config::from_env().unwrap().chain_name, "Unknown");
     }
@@ -628,6 +661,7 @@ mod tests {
     fn chain_name_defaults_to_unknown_when_empty() {
         let _lock = ENV_LOCK.lock().unwrap();
         set_required_env();
+        clear_branding_env();
         env::set_var("CHAIN_NAME", "");
         assert_eq!(Config::from_env().unwrap().chain_name, "Unknown");
         env::remove_var("CHAIN_NAME");
@@ -637,6 +671,7 @@ mod tests {
     fn chain_name_defaults_to_unknown_when_whitespace_only() {
         let _lock = ENV_LOCK.lock().unwrap();
         set_required_env();
+        clear_branding_env();
         env::set_var("CHAIN_NAME", "   ");
         assert_eq!(Config::from_env().unwrap().chain_name, "Unknown");
         env::remove_var("CHAIN_NAME");
@@ -646,6 +681,7 @@ mod tests {
     fn chain_name_uses_provided_value() {
         let _lock = ENV_LOCK.lock().unwrap();
         set_required_env();
+        clear_branding_env();
         env::set_var("CHAIN_NAME", "MyChain");
         assert_eq!(Config::from_env().unwrap().chain_name, "MyChain");
         env::remove_var("CHAIN_NAME");
@@ -655,9 +691,32 @@ mod tests {
     fn chain_name_trims_surrounding_whitespace() {
         let _lock = ENV_LOCK.lock().unwrap();
         set_required_env();
+        clear_branding_env();
         env::set_var("CHAIN_NAME", "  MyChain  ");
         assert_eq!(Config::from_env().unwrap().chain_name, "MyChain");
         env::remove_var("CHAIN_NAME");
+    }
+
+    #[test]
+    fn theme_specific_logo_urls_are_read_from_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_required_env();
+        clear_branding_env();
+        env::set_var("CHAIN_LOGO_URL_LIGHT", "  /branding/light.svg  ");
+        env::set_var("CHAIN_LOGO_URL_DARK", "  /branding/dark.svg  ");
+
+        let config = Config::from_env().unwrap();
+
+        assert_eq!(
+            config.chain_logo_url_light.as_deref(),
+            Some("/branding/light.svg")
+        );
+        assert_eq!(
+            config.chain_logo_url_dark.as_deref(),
+            Some("/branding/dark.svg")
+        );
+
+        clear_branding_env();
     }
 
     #[test]

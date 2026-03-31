@@ -243,6 +243,22 @@ pub struct ChainArgs {
         help = "URL to the chain logo image"
     )]
     pub logo_url: Option<String>,
+
+    #[arg(
+        long = "atlas.chain.logo-url-light",
+        env = "CHAIN_LOGO_URL_LIGHT",
+        value_name = "URL",
+        help = "URL to the chain logo image used in light theme"
+    )]
+    pub logo_url_light: Option<String>,
+
+    #[arg(
+        long = "atlas.chain.logo-url-dark",
+        env = "CHAIN_LOGO_URL_DARK",
+        value_name = "URL",
+        help = "URL to the chain logo image used in dark theme"
+    )]
+    pub logo_url_dark: Option<String>,
 }
 
 #[derive(Args, Clone)]
