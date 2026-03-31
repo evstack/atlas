@@ -359,11 +359,14 @@ impl FaucetConfig {
             bail!("faucet amount must be greater than 0");
         }
 
-        let cooldown_minutes = args.cooldown_minutes.ok_or_else(|| {
+        let cooldown_minutes = parse_optional_env(args.cooldown_minutes.clone()).ok_or_else(|| {
             anyhow::anyhow!(
                 "--atlas.faucet.cooldown-minutes (or FAUCET_COOLDOWN_MINUTES) must be set when faucet is enabled"
             )
         })?;
+        let cooldown_minutes = cooldown_minutes
+            .parse::<u64>()
+            .context("Invalid --atlas.faucet.cooldown-minutes / FAUCET_COOLDOWN_MINUTES")?;
         if cooldown_minutes == 0 {
             bail!("faucet cooldown must be greater than 0");
         }
@@ -644,6 +647,26 @@ mod tests_from_run_args {
         let config = Config::from_run_args(args).unwrap();
         assert!(config.accent_color.is_none());
         assert_eq!(config.success_color.as_deref(), Some("#00ff00"));
+    }
+
+    #[test]
+    fn faucet_blank_cooldown_is_treated_as_missing() {
+        let mut args = minimal_run_args();
+        args.faucet.enabled = true;
+        args.faucet.amount = Some("0.1".to_string());
+        args.faucet.cooldown_minutes = Some("   ".to_string());
+
+        unsafe {
+            env::set_var(
+                "FAUCET_PRIVATE_KEY",
+                "0x59c6995e998f97a5a0044966f0945382dbd8c5df5440d8d6d0d0f66f6d7d6a0d",
+            );
+        }
+        let err = FaucetConfig::from_faucet_args(&args.faucet).unwrap_err();
+        assert!(err.to_string().contains("cooldown-minutes"));
+        unsafe {
+            env::remove_var("FAUCET_PRIVATE_KEY");
+        }
     }
 }
 

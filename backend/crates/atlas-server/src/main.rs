@@ -20,6 +20,13 @@ mod snapshot;
 const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
 const MAX_RETRY_DELAY: u64 = 60;
 const PORTABLE_PG_DUMP_FLAGS: &[&str] = &["--format=custom", "--no-owner", "--no-acl"];
+const PORTABLE_PG_RESTORE_FLAGS: &[&str] = &[
+    "--format=custom",
+    "--no-owner",
+    "--no-acl",
+    "--exit-on-error",
+];
+const RESET_DB_FOR_RESTORE_SQL: &str = "DROP SCHEMA public CASCADE; CREATE SCHEMA public;";
 
 fn init_tracing(filter: &str) {
     tracing_subscriber::registry()
@@ -436,10 +443,27 @@ fn cmd_db_dump(db_url: &str, output: &str) -> Result<()> {
 
 fn cmd_db_restore(db_url: &str, input: &str) -> Result<()> {
     let config = postgres_connection_config(db_url)?;
+
+    let reset_status = postgres_command("psql", &config)
+        .arg("--dbname")
+        .arg(&config.database_name)
+        .arg("-v")
+        .arg("ON_ERROR_STOP=1")
+        .arg("-c")
+        .arg(RESET_DB_FOR_RESTORE_SQL)
+        .status()
+        .map_err(|e| {
+            anyhow::anyhow!("Failed to run psql before restore (is it installed?): {e}")
+        })?;
+    if !reset_status.success() {
+        anyhow::bail!("psql exited with status {reset_status}");
+    }
+
     let status = postgres_command("pg_restore", &config)
         .arg("--dbname")
         .arg(&config.database_name)
-        .args(["--format=custom", "--clean", "--if-exists", input])
+        .args(PORTABLE_PG_RESTORE_FLAGS)
+        .arg(input)
         .status()
         .map_err(|e| anyhow::anyhow!("Failed to run pg_restore (is it installed?): {e}"))?;
 
@@ -680,6 +704,23 @@ mod tests {
         assert_eq!(
             PORTABLE_PG_DUMP_FLAGS,
             ["--format=custom", "--no-owner", "--no-acl"]
+        );
+    }
+
+    #[test]
+    fn portable_pg_restore_prepares_clean_schema_and_exits_on_first_error() {
+        assert_eq!(
+            PORTABLE_PG_RESTORE_FLAGS,
+            [
+                "--format=custom",
+                "--no-owner",
+                "--no-acl",
+                "--exit-on-error"
+            ]
+        );
+        assert_eq!(
+            RESET_DB_FOR_RESTORE_SQL,
+            "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
         );
     }
 }
