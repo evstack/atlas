@@ -19,6 +19,7 @@ mod snapshot;
 /// Retry delays for exponential backoff (in seconds)
 const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
 const MAX_RETRY_DELAY: u64 = 60;
+const PORTABLE_PG_DUMP_FLAGS: &[&str] = &["--format=custom", "--no-owner", "--no-acl"];
 
 fn init_tracing(filter: &str) {
     tracing_subscriber::registry()
@@ -180,6 +181,24 @@ pub(crate) fn postgres_command_async(
     for (key, value) in &config.env_vars {
         command.env(key, value);
     }
+    command
+}
+
+fn portable_pg_dump_command(
+    program: &str,
+    config: &PostgresConnectionConfig,
+) -> std::process::Command {
+    let mut command = postgres_command(program, config);
+    command.args(PORTABLE_PG_DUMP_FLAGS);
+    command
+}
+
+pub(crate) fn portable_pg_dump_command_async(
+    program: &str,
+    config: &PostgresConnectionConfig,
+) -> tokio::process::Command {
+    let mut command = postgres_command_async(program, config);
+    command.args(PORTABLE_PG_DUMP_FLAGS);
     command
 }
 
@@ -368,7 +387,6 @@ async fn run(args: cli::RunArgs) -> Result<()> {
         });
     }
 
-
     let app = api::build_router(state, config.cors_origin.clone());
     let addr = format!("{}:{}", config.api_host, config.api_port);
     tracing::info!("API listening on {}", addr);
@@ -404,8 +422,8 @@ async fn check(args: cli::RunArgs) -> Result<()> {
 
 fn cmd_db_dump(db_url: &str, output: &str) -> Result<()> {
     let config = postgres_connection_config(db_url)?;
-    let status = postgres_command("pg_dump", &config)
-        .args(["--format=custom", "--file", output])
+    let status = portable_pg_dump_command("pg_dump", &config)
+        .args(["--file", output])
         .status()
         .map_err(|e| anyhow::anyhow!("Failed to run pg_dump (is it installed?): {e}"))?;
 
@@ -655,5 +673,13 @@ mod tests {
         assert_eq!(env_value(&config, "PGUSER"), Some("query-user"));
         assert_eq!(env_value(&config, "PGPASSWORD"), Some("query-pass"));
         assert_eq!(env_value(&config, "PGDATABASE"), Some("query_db"));
+    }
+
+    #[test]
+    fn portable_pg_dump_flags_omit_source_ownership_and_acls() {
+        assert_eq!(
+            PORTABLE_PG_DUMP_FLAGS,
+            ["--format=custom", "--no-owner", "--no-acl"]
+        );
     }
 }

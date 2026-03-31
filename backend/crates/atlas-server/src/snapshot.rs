@@ -45,8 +45,8 @@ async fn attempt_snapshot(config: &SnapshotConfig) -> Result<()> {
     tracing::info!(%filename, "Starting database snapshot");
 
     let pg_config = crate::postgres_connection_config(&config.database_url)?;
-    let status = crate::postgres_command_async("pg_dump", &pg_config)
-        .args(["-Fc", "-f", tmp_path.as_str()])
+    let status = crate::portable_pg_dump_command_async("pg_dump", &pg_config)
+        .args(["--file", tmp_path.as_str()])
         .status()
         .await?;
 
