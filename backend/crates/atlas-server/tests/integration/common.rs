@@ -72,7 +72,7 @@ fn init_env() -> Result<TestEnv, String> {
 }
 
 // Single LazyLock: test database configuration, shared across tests.
-static ENV: LazyLock<Result<TestEnv, String>> = LazyLock::new(|| init_env());
+static ENV: LazyLock<Result<TestEnv, String>> = LazyLock::new(init_env);
 
 pub fn pool() -> PgPool {
     let env = ENV.as_ref().expect("integration test environment");
