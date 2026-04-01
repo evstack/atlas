@@ -172,7 +172,7 @@ async fn seed_token_chart_data(pool: &sqlx::PgPool) {
 fn list_tokens() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
+        seed_token_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -195,7 +195,7 @@ fn list_tokens() {
 fn get_token_detail() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
+        seed_token_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -222,7 +222,7 @@ fn get_token_detail() {
 fn get_token_holders() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
+        seed_token_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -250,7 +250,7 @@ fn get_token_holders() {
 fn get_tx_erc20_transfers() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
+        seed_token_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -277,8 +277,8 @@ fn get_tx_erc20_transfers() {
 fn get_token_chart_returns_exact_bucket_count_for_non_aligned_window() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
-        seed_token_chart_data(pool).await;
+        seed_token_data(&pool).await;
+        seed_token_chart_data(&pool).await;
 
         let app = common::test_router();
         let response = app

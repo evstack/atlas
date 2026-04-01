@@ -70,7 +70,7 @@ async fn seed_address_data(pool: &sqlx::PgPool) {
 fn get_address_detail() {
     common::run(async {
         let pool = common::pool();
-        seed_address_data(pool).await;
+        seed_address_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -95,7 +95,7 @@ fn get_address_detail() {
 fn get_address_transactions() {
     common::run(async {
         let pool = common::pool();
-        seed_address_data(pool).await;
+        seed_address_data(&pool).await;
 
         let app = common::test_router();
         let response = app

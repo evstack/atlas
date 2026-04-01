@@ -2,8 +2,10 @@ use axum::Router;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::sync::{Arc, LazyLock};
-use testcontainers::runners::AsyncRunner;
-use testcontainers::ContainerAsync;
+use std::time::Duration;
+use std::{env, process::Command};
+use testcontainers::runners::SyncRunner;
+use testcontainers::{Container, ImageExt};
 use testcontainers_modules::postgres::Postgres;
 use tokio::sync::broadcast;
 
@@ -11,53 +13,77 @@ use atlas_server::api::{build_router, AppState};
 use atlas_server::head::HeadTracker;
 
 struct TestEnv {
-    runtime: tokio::runtime::Runtime,
-    pool: PgPool,
-    _container: ContainerAsync<Postgres>,
+    database_url: String,
+    _container: Option<Container<Postgres>>,
 }
 
-// Single LazyLock: runtime + container + pool, all initialized together.
-static ENV: LazyLock<TestEnv> = LazyLock::new(|| {
-    let runtime = tokio::runtime::Runtime::new().expect("create test runtime");
+fn docker_available() -> bool {
+    Command::new("docker")
+        .arg("version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
 
-    let (pool, container) = runtime.block_on(async {
+fn init_env() -> Result<TestEnv, String> {
+    let (database_url, container) = if let Ok(database_url) = env::var("ATLAS_TEST_DATABASE_URL") {
+        (database_url, None)
+    } else if docker_available() {
         let container = Postgres::default()
+            .with_startup_timeout(Duration::from_secs(180))
             .start()
-            .await
-            .expect("Failed to start Postgres container");
+            .map_err(|error| format!("failed to start Postgres test container: {error}"))?;
+        let host = container
+            .get_host()
+            .map_err(|error| format!("failed to get test container host: {error}"))?;
+        let port = container
+            .get_host_port_ipv4(5432)
+            .map_err(|error| format!("failed to get test container port: {error}"))?;
+        (
+            format!("postgres://postgres:postgres@{}:{}/postgres", host, port),
+            Some(container),
+        )
+    } else {
+        return Err("Docker is unavailable and ATLAS_TEST_DATABASE_URL is not set".to_string());
+    };
 
-        let host = container.get_host().await.expect("get host");
-        let port = container.get_host_port_ipv4(5432).await.expect("get port");
+    tokio::runtime::Runtime::new()
+        .expect("create migration runtime")
+        .block_on(async {
+            let pool = PgPoolOptions::new()
+                .max_connections(10)
+                .connect(&database_url)
+                .await
+                .map_err(|error| format!("failed to create test pool: {error}"))?;
 
-        let database_url = format!("postgres://postgres:postgres@{}:{}/postgres", host, port);
+            sqlx::migrate!("../../migrations")
+                .run(&pool)
+                .await
+                .map_err(|error| format!("failed to run test migrations: {error}"))?;
 
-        let pool = PgPoolOptions::new()
-            .max_connections(10)
-            .connect(&database_url)
-            .await
-            .expect("Failed to create pool");
+            pool.close().await;
+            Ok::<(), String>(())
+        })?;
 
-        sqlx::migrate!("../../migrations")
-            .run(&pool)
-            .await
-            .expect("Failed to run migrations");
-
-        (pool, container)
-    });
-
-    TestEnv {
-        runtime,
-        pool,
+    Ok(TestEnv {
+        database_url,
         _container: container,
-    }
-});
+    })
+}
 
-pub fn pool() -> &'static PgPool {
-    &ENV.pool
+// Single LazyLock: test database configuration, shared across tests.
+static ENV: LazyLock<Result<TestEnv, String>> = LazyLock::new(|| init_env());
+
+pub fn pool() -> PgPool {
+    let env = ENV.as_ref().expect("integration test environment");
+    PgPoolOptions::new()
+        .max_connections(10)
+        .connect_lazy(&env.database_url)
+        .expect("create lazy pool")
 }
 
 pub fn test_router() -> Router {
-    let pool = pool().clone();
+    let pool = pool();
     let head_tracker = Arc::new(HeadTracker::empty(10));
     let (tx, _) = broadcast::channel(1);
     let (da_tx, _) = broadcast::channel(1);
@@ -88,9 +114,16 @@ pub fn test_router() -> Router {
     build_router(state, None)
 }
 
-/// Run an async test block on the shared runtime.
+/// Run an async test block when the integration database is available.
 pub fn run<F: std::future::Future<Output = ()>>(f: F) {
-    ENV.runtime.block_on(f);
+    if let Err(error) = ENV.as_ref() {
+        eprintln!("skipping integration test: {error}");
+        return;
+    }
+
+    tokio::runtime::Runtime::new()
+        .expect("create test runtime")
+        .block_on(f);
 }
 
 /// Helper to parse a JSON response body.

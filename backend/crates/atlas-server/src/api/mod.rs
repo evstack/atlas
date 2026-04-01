@@ -46,11 +46,6 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         .route("/api/events", get(handlers::sse::block_events))
         .with_state(state.clone());
 
-    // Metrics route — excluded from TimeoutLayer (scrape can take a while)
-    let metrics_routes = Router::new()
-        .route("/metrics", get(handlers::metrics::metrics))
-        .with_state(state.clone());
-
     let mut router = Router::new()
         // Blocks
         .route("/api/blocks", get(handlers::blocks::list_blocks))
@@ -179,6 +174,8 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         .route("/api/status", get(handlers::status::get_status))
         // Config (white-label branding)
         .route("/api/config", get(handlers::config::get_config))
+        // Metrics
+        .route("/metrics", get(handlers::metrics::metrics))
         // Health
         .route("/health", get(|| async { "OK" }))
         .route("/health/live", get(handlers::health::liveness))
@@ -200,9 +197,8 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         ))
         // HTTP metrics middleware — placed after routing so MatchedPath is available
         .layer(middleware::from_fn(crate::metrics::http_metrics_middleware))
-        // Merge SSE and metrics routes (no TimeoutLayer so connections stay alive)
+        // Merge SSE routes without TimeoutLayer so connections stay alive
         .merge(sse_routes)
-        .merge(metrics_routes)
         // Shared layers applied to all routes
         .layer(build_cors_layer(cors_origin))
         .layer(TraceLayer::new_for_http())

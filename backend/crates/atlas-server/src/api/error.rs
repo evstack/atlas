@@ -44,6 +44,17 @@ impl Deref for ApiError {
     }
 }
 
+fn error_type(err: &AtlasError) -> Option<&'static str> {
+    match err {
+        AtlasError::Database(_) => Some("database"),
+        AtlasError::Internal(_) => Some("internal"),
+        AtlasError::Config(_) => Some("config"),
+        AtlasError::Rpc(_) => Some("rpc_request"),
+        AtlasError::MetadataFetch(_) => Some("metadata_fetch"),
+        _ => None,
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         use atlas_common::AtlasError;
@@ -52,15 +63,7 @@ impl IntoResponse for ApiError {
             StatusCode::from_u16(self.0.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
         // Increment error counter for Prometheus alerting
-        let error_type = match &self.0 {
-            AtlasError::Database(_) => "database",
-            AtlasError::Internal(_) => "internal",
-            AtlasError::Config(_) => "config",
-            AtlasError::Rpc(_) => "rpc_request",
-            AtlasError::MetadataFetch(_) => "metadata_fetch",
-            _ => "",
-        };
-        if !error_type.is_empty() {
+        if let Some(error_type) = error_type(&self.0) {
             metrics::counter!(
                 "atlas_errors_total",
                 "component" => "api",
@@ -136,6 +139,31 @@ pub type ApiResult<T> = Result<T, ApiError>;
 mod tests {
     use super::*;
     use axum::body::to_bytes;
+
+    #[test]
+    fn error_type_maps_expected_variants() {
+        assert_eq!(
+            error_type(&AtlasError::Database(sqlx::Error::RowNotFound)),
+            Some("database")
+        );
+        assert_eq!(
+            error_type(&AtlasError::Internal("x".to_string())),
+            Some("internal")
+        );
+        assert_eq!(
+            error_type(&AtlasError::Config("x".to_string())),
+            Some("config")
+        );
+        assert_eq!(
+            error_type(&AtlasError::Rpc("x".to_string())),
+            Some("rpc_request")
+        );
+        assert_eq!(
+            error_type(&AtlasError::MetadataFetch("x".to_string())),
+            Some("metadata_fetch")
+        );
+        assert_eq!(error_type(&AtlasError::NotFound("x".to_string())), None);
+    }
 
     #[tokio::test]
     async fn too_many_requests_sets_retry_after_header_and_body() {
