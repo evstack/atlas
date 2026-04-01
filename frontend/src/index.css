@@ -20,13 +20,12 @@
     --color-text-subtle: 148 163 184;
     --color-text-faint: 100 116 139;
     --color-border: 45 45 58;
-    /* Keep legacy text-gray-* usage readable on branded dark backgrounds. */
-    --color-gray-200: 248 250 252;
-    --color-gray-300: 248 250 252;
-    --color-gray-400: 248 250 252;
-    --color-gray-500: 248 250 252;
-    --color-gray-600: 248 250 252;
-    --color-gray-700: 248 250 252;
+    --color-gray-200: 226 232 240;
+    --color-gray-300: 203 213 225;
+    --color-gray-400: 148 163 184;
+    --color-gray-500: 107 114 128;
+    --color-gray-600: 75 85 99;
+    --color-gray-700: 55 65 81;
   }
 
   :root[data-theme='light'] {
@@ -54,6 +53,18 @@
   body {
     background-color: var(--color-body-bg);
     color: var(--color-body-text);
+  }
+}
+
+@layer utilities {
+  /* Keep legacy text-gray-* readable in dark mode without affecting bg/border gray utilities. */
+  :root:not([data-theme='light']) .text-gray-200,
+  :root:not([data-theme='light']) .text-gray-300,
+  :root:not([data-theme='light']) .text-gray-400,
+  :root:not([data-theme='light']) .text-gray-500,
+  :root:not([data-theme='light']) .text-gray-600,
+  :root:not([data-theme='light']) .text-gray-700 {
+    color: rgb(248 250 252 / var(--tw-text-opacity, 1));
   }
 }
 
