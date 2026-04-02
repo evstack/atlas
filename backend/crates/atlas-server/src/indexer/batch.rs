@@ -179,6 +179,10 @@ impl BlockBatch {
             })
             .collect()
     }
+
+    pub(crate) fn last_block_timestamp(&self) -> Option<i64> {
+        self.b_timestamps.last().copied()
+    }
 }
 
 #[cfg(test)]
@@ -280,5 +284,14 @@ mod tests {
         assert_eq!(blocks[0].gas_limit, 30_000_000);
         assert_eq!(blocks[0].transaction_count, 3);
         assert_eq!(blocks[0].indexed_at, indexed_at);
+    }
+
+    #[test]
+    fn last_block_timestamp_returns_latest_collected_timestamp() {
+        let mut batch = BlockBatch::new();
+        batch.b_timestamps.push(1_700_000_001);
+        batch.b_timestamps.push(1_700_000_042);
+
+        assert_eq!(batch.last_block_timestamp(), Some(1_700_000_042));
     }
 }

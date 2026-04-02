@@ -4,14 +4,28 @@ use axum::{
     response::Response,
 };
 use metrics::{counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram};
-use metrics_exporter_prometheus::PrometheusHandle;
+use metrics_exporter_prometheus::{Matcher, PrometheusHandle};
+use std::sync::OnceLock;
 use std::time::Instant;
 
 /// Install the Prometheus recorder and return a handle for rendering metrics.
 pub fn install_prometheus_recorder() -> PrometheusHandle {
-    metrics_exporter_prometheus::PrometheusBuilder::new()
-        .install_recorder()
-        .expect("failed to install Prometheus recorder")
+    static PROMETHEUS_HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+
+    PROMETHEUS_HANDLE
+        .get_or_init(|| {
+            metrics_exporter_prometheus::PrometheusBuilder::new()
+                .set_buckets_for_metric(
+                    Matcher::Full("atlas_indexer_block_processing_duration_seconds".to_string()),
+                    &[
+                        0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+                    ],
+                )
+                .expect("valid processing duration buckets")
+                .install_recorder()
+                .expect("failed to install Prometheus recorder")
+        })
+        .clone()
 }
 
 /// Central metrics registry.
@@ -50,12 +64,28 @@ impl Metrics {
         );
         describe_gauge!("atlas_indexer_head_block", "Latest indexed block number");
         describe_gauge!(
+            "atlas_indexer_head_block_timestamp_seconds",
+            "Chain timestamp of the latest indexed block"
+        );
+        describe_gauge!(
             "atlas_indexer_chain_head_block",
             "Latest block on chain (from RPC)"
+        );
+        describe_gauge!(
+            "atlas_indexer_lag_blocks",
+            "Difference between chain head and latest indexed block"
+        );
+        describe_gauge!(
+            "atlas_indexer_missing_blocks",
+            "Known unresolved missing blocks persisted in failed_blocks"
         );
         describe_histogram!(
             "atlas_indexer_batch_duration_seconds",
             "Time per full indexer batch cycle"
+        );
+        describe_histogram!(
+            "atlas_indexer_block_processing_duration_seconds",
+            "Time spent actively processing a batch, excluding idle sleep"
         );
         describe_histogram!(
             "atlas_indexer_db_write_duration_seconds",
@@ -121,12 +151,28 @@ impl Metrics {
         gauge!("atlas_indexer_head_block").set(block as f64);
     }
 
+    pub fn set_indexer_head_block_timestamp(&self, timestamp_seconds: i64) {
+        gauge!("atlas_indexer_head_block_timestamp_seconds").set(timestamp_seconds as f64);
+    }
+
     pub fn set_chain_head_block(&self, block: u64) {
         gauge!("atlas_indexer_chain_head_block").set(block as f64);
     }
 
+    pub fn set_indexer_lag_blocks(&self, lag: u64) {
+        gauge!("atlas_indexer_lag_blocks").set(lag as f64);
+    }
+
+    pub fn set_indexer_missing_blocks(&self, count: u64) {
+        gauge!("atlas_indexer_missing_blocks").set(count as f64);
+    }
+
     pub fn record_batch_duration(&self, seconds: f64) {
         histogram!("atlas_indexer_batch_duration_seconds").record(seconds);
+    }
+
+    pub fn record_block_processing_duration(&self, seconds: f64) {
+        histogram!("atlas_indexer_block_processing_duration_seconds").record(seconds);
     }
 
     pub fn record_db_write_duration(&self, seconds: f64) {
@@ -267,5 +313,31 @@ mod tests {
         // The metrics crate uses a no-op recorder by default,
         // so Metrics::new() should not panic even without install_prometheus_recorder().
         let _m = Metrics::new();
+    }
+
+    #[test]
+    fn install_prometheus_recorder_is_idempotent() {
+        let first = install_prometheus_recorder();
+        let second = install_prometheus_recorder();
+
+        assert!(!first.render().is_empty());
+        assert!(!second.render().is_empty());
+    }
+
+    #[test]
+    fn new_metrics_render_when_emitted() {
+        let handle = install_prometheus_recorder();
+        let metrics = Metrics::new();
+        metrics.set_indexer_missing_blocks(3);
+        metrics.set_indexer_head_block(42);
+        metrics.set_indexer_head_block_timestamp(1_700_000_042);
+        metrics.set_indexer_lag_blocks(7);
+        metrics.record_block_processing_duration(0.1);
+
+        let body = handle.render();
+        assert!(body.contains("atlas_indexer_missing_blocks"));
+        assert!(body.contains("atlas_indexer_head_block_timestamp_seconds"));
+        assert!(body.contains("atlas_indexer_lag_blocks"));
+        assert!(body.contains("atlas_indexer_block_processing_duration_seconds"));
     }
 }

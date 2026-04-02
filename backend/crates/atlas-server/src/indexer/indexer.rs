@@ -124,6 +124,20 @@ impl Indexer {
         let start_block = self.get_start_block().await?;
         tracing::info!(start_block, "starting indexing");
 
+        let latest_indexed_block = self.head_tracker.latest().await;
+        let mut indexed_head = latest_indexed_block
+            .as_ref()
+            .map(|block| block.number as u64);
+        if let Some(block) = latest_indexed_block.as_ref() {
+            self.metrics.set_indexer_head_block(block.number as u64);
+            self.metrics
+                .set_indexer_head_block_timestamp(block.timestamp);
+        }
+
+        let mut known_missing_blocks = self.get_missing_block_count().await?;
+        self.metrics
+            .set_indexer_missing_blocks(known_missing_blocks);
+
         // Load known contracts into memory to avoid a SELECT per transfer
         let mut known_erc20: HashSet<String> = self.load_known_erc20().await?;
         tracing::info!(count = known_erc20.len(), "loaded known ERC-20 contracts");
@@ -201,6 +215,8 @@ impl Indexer {
                 }
             };
             self.metrics.set_chain_head_block(head);
+            self.metrics
+                .set_indexer_lag_blocks(lag_blocks(head, indexed_head, start_block));
             tracing::debug!(chain_head = head, current = current_block, "chain head");
 
             if current_block > head {
@@ -208,6 +224,8 @@ impl Indexer {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
+
+            let processing_start = std::time::Instant::now();
 
             // Calculate batch end
             let end_block = (current_block + self.config.batch_size - 1).min(head);
@@ -294,6 +312,7 @@ impl Indexer {
             // so this is safe even if the DB write is slow. If write_batch fails
             // the indexer retries the same blocks and head_tracker ignores
             // non-advancing publishes.
+            let head_block_timestamp = batch.last_block_timestamp();
             let committed_blocks = batch.materialize_blocks(Utc::now());
             self.head_tracker
                 .publish_committed_batch(committed_blocks)
@@ -305,6 +324,8 @@ impl Indexer {
             self.write_batch(&mut copy_client, batch, true).await?;
             self.metrics
                 .record_db_write_duration(db_write_start.elapsed().as_secs_f64());
+            self.metrics
+                .record_block_processing_duration(processing_start.elapsed().as_secs_f64());
 
             // Write succeeded — now safe to update the persistent in-memory sets
             known_erc20.extend(new_erc20);
@@ -407,15 +428,26 @@ impl Indexer {
                         .execute(&self.pool)
                         .await?;
                     }
+
+                    known_missing_blocks += failed_blocks.len() as u64;
+                    self.metrics
+                        .set_indexer_missing_blocks(known_missing_blocks);
                 }
             }
 
             current_block = end_block + 1;
+            indexed_head = Some(end_block);
 
             // Record metrics and log progress
             self.metrics.record_blocks_indexed(batch_size as u64);
             self.metrics.set_indexer_head_block(end_block);
+            if let Some(timestamp) = head_block_timestamp {
+                self.metrics.set_indexer_head_block_timestamp(timestamp);
+            }
+            self.metrics
+                .set_indexer_lag_blocks(lag_blocks(head, indexed_head, start_block));
 
+            // Full cycle timing includes time between batches such as head sleep.
             let elapsed = last_log_time.elapsed();
             self.metrics.record_batch_duration(elapsed.as_secs_f64());
             let blocks_per_sec = batch_size as f64 / elapsed.as_secs_f64();
@@ -877,6 +909,13 @@ impl Indexer {
         }
     }
 
+    async fn get_missing_block_count(&self) -> Result<u64> {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM failed_blocks")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count.0.max(0) as u64)
+    }
+
     async fn ensure_partitions_exist(&self, block_number: u64) -> Result<()> {
         use std::sync::atomic::Ordering;
 
@@ -955,11 +994,20 @@ impl Indexer {
     async fn truncate_tables(&self) -> Result<()> {
         sqlx::query(
             "TRUNCATE blocks, transactions, addresses, nft_contracts, nft_tokens, nft_transfers,
-             erc20_contracts, erc20_transfers, erc20_balances, event_logs, proxy_contracts, indexer_state CASCADE"
+             erc20_contracts, erc20_transfers, erc20_balances, event_logs, proxy_contracts,
+             indexer_state, failed_blocks CASCADE",
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
         Ok(())
+    }
+}
+
+fn lag_blocks(chain_head: u64, indexed_head: Option<u64>, start_block: u64) -> u64 {
+    match indexed_head {
+        Some(indexed_head) => chain_head.saturating_sub(indexed_head),
+        None if chain_head < start_block => 0,
+        None => chain_head - start_block + 1,
     }
 }
 
@@ -1367,5 +1415,22 @@ mod tests {
         let contract = "0x4444444444444444444444444444444444444444".to_string();
         let state = &batch.nft_token_map[&(contract, "42".to_string())];
         assert_eq!(state.owner, "0x3333333333333333333333333333333333333333");
+    }
+
+    #[test]
+    fn lag_blocks_uses_indexed_head_when_available() {
+        assert_eq!(lag_blocks(100, Some(90), 0), 10);
+    }
+
+    #[test]
+    fn lag_blocks_counts_from_start_block_when_no_head_is_indexed() {
+        assert_eq!(lag_blocks(100, None, 95), 6);
+        assert_eq!(lag_blocks(100, None, 0), 101);
+    }
+
+    #[test]
+    fn lag_blocks_clamps_to_zero_when_chain_head_is_before_start_block() {
+        assert_eq!(lag_blocks(50, None, 100), 0);
+        assert_eq!(lag_blocks(50, Some(60), 0), 0);
     }
 }
