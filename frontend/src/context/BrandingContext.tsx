@@ -17,7 +17,7 @@ function readCache(): BrandingConfig | null {
 
 function applyConfigState(cfg: BrandingConfig, setBranding: (v: typeof brandingDefaults) => void, setConfig: (v: BrandingConfig) => void) {
   setConfig(cfg);
-  setBranding({ chainName: cfg.chain_name, logoUrl: cfg.logo_url || null, loaded: true });
+  setBranding({ chainName: cfg.chain_name, logoUrl: cfg.logo_url || null, accentHex: cfg.accent_color || null, loaded: true });
   document.title = `${cfg.chain_name} - Block Explorer`;
   if (cfg.logo_url) {
     const link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
@@ -29,7 +29,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   const [branding, setBranding] = useState(() => {
     const cached = readCache();
     return cached
-      ? { chainName: cached.chain_name, logoUrl: cached.logo_url || null, loaded: true }
+      ? { chainName: cached.chain_name, logoUrl: cached.logo_url || null, accentHex: cached.accent_color || null, loaded: true }
       : brandingDefaults;
   });
   const [config, setConfig] = useState<BrandingConfig | null>(readCache);
