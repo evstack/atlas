@@ -313,6 +313,7 @@ impl Indexer {
             // the indexer retries the same blocks and head_tracker ignores
             // non-advancing publishes.
             let head_block_timestamp = batch.last_block_timestamp();
+            let actual_head_block = batch.last_block;
             let committed_blocks = batch.materialize_blocks(Utc::now());
             self.head_tracker
                 .publish_committed_batch(committed_blocks)
@@ -436,11 +437,11 @@ impl Indexer {
             }
 
             current_block = end_block + 1;
-            indexed_head = Some(end_block);
+            indexed_head = Some(actual_head_block);
 
             // Record metrics and log progress
             self.metrics.record_blocks_indexed(batch_size as u64);
-            self.metrics.set_indexer_head_block(end_block);
+            self.metrics.set_indexer_head_block(actual_head_block);
             if let Some(timestamp) = head_block_timestamp {
                 self.metrics.set_indexer_head_block_timestamp(timestamp);
             }

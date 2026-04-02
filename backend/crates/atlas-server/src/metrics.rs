@@ -319,9 +319,11 @@ mod tests {
     fn install_prometheus_recorder_is_idempotent() {
         let first = install_prometheus_recorder();
         let second = install_prometheus_recorder();
+        let metrics = Metrics::new();
+        metrics.set_indexer_head_block(1);
 
-        assert!(!first.render().is_empty());
-        assert!(!second.render().is_empty());
+        assert!(first.render().contains("atlas_indexer_head_block"));
+        assert!(second.render().contains("atlas_indexer_head_block"));
     }
 
     #[test]
