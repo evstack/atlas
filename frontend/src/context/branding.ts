@@ -20,6 +20,7 @@ export function resolveBrandingValue(
   return {
     chainName: config.chain_name,
     logoUrl: resolveLogoUrl(config, theme),
+    accentHex: config.accent_color ?? null,
     loaded: true,
   };
 }

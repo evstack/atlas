@@ -6,15 +6,11 @@ import {
 } from 'recharts';
 import { useToken, useTokenHolders, useTokenTransfers } from '../hooks';
 import { useTokenChart } from '../hooks/useTokenChart';
+import { useChartColors } from '../hooks/useChartColors';
 import { Pagination, AddressLink, TxHashLink, CopyButton } from '../components';
 import Loading from '../components/Loading';
 import { formatNumber, formatTokenAmount, formatPercentage, formatTimeAgo, truncateHash } from '../utils';
 import { type ChartWindow } from '../api/chartData';
-
-const CHART_ACCENT = '#dc2626';
-const CHART_GRID = '#22222e';
-const CHART_AXIS_TEXT = '#94a3b8';
-const CHART_TOOLTIP_BG = '#0c0c10';
 
 const WINDOWS: { label: string; value: ChartWindow }[] = [
   { label: '1H', value: '1h' },
@@ -101,6 +97,7 @@ export default function TokenDetailPage() {
   const { holders, pagination: holdersPagination } = useTokenHolders(address, { page: holdersPage, limit: 20 });
   const { transfers, pagination: transfersPagination } = useTokenTransfers(address, { page: transfersPage, limit: 20 });
   const { data: chartData, loading: chartLoading } = useTokenChart(address, chartWindow);
+  const { accent: CHART_ACCENT, grid: CHART_GRID, axisText: CHART_AXIS_TEXT, tooltipBg: CHART_TOOLTIP_BG, tooltipText: CHART_TOOLTIP_TEXT } = useChartColors();
 
   const tabs: { id: TabType; label: string; count?: number }[] = [
     { id: 'holders', label: 'Holders', count: holdersPagination?.total },
@@ -195,7 +192,7 @@ export default function TokenDetailPage() {
                   <Tooltip
                     contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                     labelStyle={{ color: CHART_AXIS_TEXT }}
-                    itemStyle={{ color: '#f8fafc' }}
+                    itemStyle={{ color: CHART_TOOLTIP_TEXT }}
                     formatter={(v: unknown) => [formatCompact(v as number), 'Transfers']}
                     labelFormatter={(v) => formatBucketTooltip(v, chartWindow)}
                   />
@@ -224,7 +221,7 @@ export default function TokenDetailPage() {
                   <Tooltip
                     contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                     labelStyle={{ color: CHART_AXIS_TEXT }}
-                    itemStyle={{ color: '#f8fafc' }}
+                    itemStyle={{ color: CHART_TOOLTIP_TEXT }}
                     formatter={(v: unknown) => [formatCompact(v as number), `Volume (${token?.symbol || 'tokens'})`]}
                     labelFormatter={(v) => formatBucketTooltip(v, chartWindow)}
                   />
