@@ -161,20 +161,30 @@ mod tests {
             .expect("lazy pool");
         let head_tracker = Arc::new(crate::head::HeadTracker::empty(10));
         let (tx, _) = broadcast::channel(1);
+        let (da_tx, _) = broadcast::channel(1);
+        let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+            .build_recorder()
+            .handle();
         Arc::new(AppState {
             pool,
             block_events_tx: tx,
+            da_events_tx: da_tx,
             head_tracker,
             rpc_url: String::new(),
+            da_tracking_enabled: false,
             faucet,
             chain_id: 1,
             chain_name: "Test Chain".to_string(),
             chain_logo_url: None,
+            chain_logo_url_light: None,
+            chain_logo_url_dark: None,
             accent_color: None,
             background_color_dark: None,
             background_color_light: None,
             success_color: None,
             error_color: None,
+            metrics: crate::metrics::Metrics::new(),
+            prometheus_handle,
         })
     }
 

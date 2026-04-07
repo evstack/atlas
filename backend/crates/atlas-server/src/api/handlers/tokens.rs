@@ -2,9 +2,13 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use chrono::Utc;
+use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::api::error::ApiResult;
+use crate::api::handlers::has_complete_erc20_supply_history;
+use crate::api::handlers::stats::WindowQuery;
 use crate::api::AppState;
 use atlas_common::{
     AtlasError, Erc20Balance, Erc20Contract, Erc20Holder, Erc20Transfer, PaginatedResponse,
@@ -48,6 +52,22 @@ pub struct TokenDetailResponse {
     pub transfer_count: i64,
 }
 
+async fn get_indexed_total_supply(
+    pool: &PgPool,
+    address: &str,
+) -> Result<bigdecimal::BigDecimal, sqlx::Error> {
+    let (supply,): (bigdecimal::BigDecimal,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(balance), 0)
+         FROM erc20_balances
+         WHERE contract_address = $1 AND balance > 0",
+    )
+    .bind(address)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(supply)
+}
+
 /// GET /api/tokens/:address - Get token details
 pub async fn get_token(
     State(state): State<Arc<AppState>>,
@@ -78,16 +98,8 @@ pub async fn get_token(
             .fetch_one(&state.pool)
             .await?;
 
-    // Compute total_supply from balances if not set
-    if contract.total_supply.is_none() {
-        let computed_supply: Option<(bigdecimal::BigDecimal,)> = sqlx::query_as(
-            "SELECT COALESCE(SUM(balance), 0) FROM erc20_balances WHERE contract_address = $1 AND balance > 0",
-        )
-        .bind(&address)
-        .fetch_optional(&state.pool)
-        .await?;
-
-        contract.total_supply = computed_supply.map(|(s,)| s);
+    if has_complete_erc20_supply_history(&state.pool).await? {
+        contract.total_supply = Some(get_indexed_total_supply(&state.pool, &address).await?);
     }
 
     Ok(Json(TokenDetailResponse {
@@ -122,29 +134,15 @@ pub async fn get_token_holders(
     .fetch_one(&state.pool)
     .await?;
 
-    // Get total supply for percentage calculation
-    // First try to get it from the contract, if NULL compute from sum of balances
-    let total_supply: Option<bigdecimal::BigDecimal> = {
+    let total_supply = if has_complete_erc20_supply_history(&state.pool).await? {
+        Some(get_indexed_total_supply(&state.pool, &address).await?)
+    } else {
         let stored: Option<(Option<bigdecimal::BigDecimal>,)> =
             sqlx::query_as("SELECT total_supply FROM erc20_contracts WHERE address = $1")
                 .bind(&address)
                 .fetch_optional(&state.pool)
                 .await?;
-
-        match stored {
-            Some((Some(ts),)) => Some(ts),
-            _ => {
-                // Compute from sum of balances
-                let computed: Option<(bigdecimal::BigDecimal,)> = sqlx::query_as(
-                    "SELECT COALESCE(SUM(balance), 0) FROM erc20_balances
-                     WHERE contract_address = $1 AND balance > 0",
-                )
-                .bind(&address)
-                .fetch_optional(&state.pool)
-                .await?;
-                computed.map(|(s,)| s)
-            }
-        }
+        stored.and_then(|(supply,)| supply)
     };
 
     let balances: Vec<Erc20Balance> = sqlx::query_as(
@@ -274,6 +272,97 @@ pub struct AddressTokenBalance {
     pub name: Option<String>,
     pub symbol: Option<String>,
     pub decimals: i16,
+}
+
+/// Chart point returned by GET /api/tokens/:address/chart
+#[derive(serde::Serialize)]
+pub struct TokenChartPoint {
+    pub bucket: String,
+    pub transfer_count: i64,
+    pub volume: f64,
+}
+
+/// GET /api/tokens/:address/chart?window=1h|6h|24h|7d
+///
+/// Returns transfer count and volume (in human-readable token units) per time
+/// bucket for the given token contract. Anchored to the latest transfer
+/// timestamp so charts show data even when the indexer is catching up.
+pub async fn get_token_chart(
+    State(state): State<Arc<AppState>>,
+    Path(address): Path<String>,
+    Query(params): Query<WindowQuery>,
+) -> ApiResult<Json<Vec<TokenChartPoint>>> {
+    let address = normalize_address(&address);
+    let window = params.window;
+    let bucket_secs = window.bucket_secs();
+
+    // Fetch token decimals (default 18 if not found)
+    let decimals: i16 =
+        sqlx::query_as::<_, (i16,)>("SELECT decimals FROM erc20_contracts WHERE address = $1")
+            .bind(&address)
+            .fetch_optional(&state.pool)
+            .await?
+            .map(|(d,)| d)
+            .unwrap_or(18);
+
+    let rows: Vec<(chrono::DateTime<Utc>, i64, bigdecimal::BigDecimal)> = sqlx::query_as(
+        r#"
+        WITH latest AS (SELECT MAX(timestamp) AS max_ts FROM blocks),
+        bounds AS (
+            SELECT
+                max_ts - $3 AS start_ts,
+                max_ts      AS end_ts
+            FROM latest
+        ),
+        agg AS (
+            SELECT
+                (b.start_ts + (((erc20_transfers.timestamp - b.start_ts) / $2) * $2))::bigint AS bucket_ts,
+                COUNT(*)::bigint                                                                AS transfer_count,
+                COALESCE(SUM(value), 0)                                                         AS volume
+            FROM erc20_transfers
+            CROSS JOIN bounds b
+            WHERE contract_address = $1
+              AND erc20_transfers.timestamp >= b.start_ts
+              AND erc20_transfers.timestamp <= b.end_ts
+            GROUP BY 1
+        )
+        SELECT
+            to_timestamp(gs::float8)                        AS bucket,
+            COALESCE(a.transfer_count, 0)::bigint           AS transfer_count,
+            COALESCE(a.volume, 0::numeric)                  AS volume
+        FROM bounds b
+        CROSS JOIN generate_series(b.start_ts, b.end_ts - $2, $2::bigint) AS gs
+        LEFT JOIN agg a ON a.bucket_ts = gs
+        ORDER BY gs ASC
+        "#,
+    )
+    .bind(&address)
+    .bind(bucket_secs)
+    .bind(window.duration_secs())
+    .fetch_all(&state.pool)
+    .await?;
+
+    let divisor = if decimals <= 18 {
+        bigdecimal::BigDecimal::from(10_i64.pow(decimals as u32))
+    } else {
+        format!("1e{}", decimals)
+            .parse::<bigdecimal::BigDecimal>()
+            .unwrap_or(bigdecimal::BigDecimal::from(1))
+    };
+    let points = rows
+        .into_iter()
+        .map(|(bucket, transfer_count, sum_value)| {
+            use bigdecimal::ToPrimitive;
+            let volume = (&sum_value / &divisor).to_f64().unwrap_or(0.0);
+            TokenChartPoint {
+                bucket: bucket.to_rfc3339(),
+                transfer_count,
+                volume,
+            }
+        })
+        .collect();
+
+    Ok(Json(points))
 }
 
 fn normalize_address(address: &str) -> String {

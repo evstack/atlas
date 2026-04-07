@@ -73,6 +73,228 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-targets
 
+  backend-cli-db-flow:
+    name: Backend CLI DB Flow
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: atlas
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atlas -d atlas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PG_ADMIN_URL: postgres://atlas:atlas@127.0.0.1:5432/postgres
+      SOURCE_DB_URL: postgres://atlas:atlas@127.0.0.1:5432/atlas
+      RESTORE_DB_URL: postgres://atlas:atlas@127.0.0.1:5432/atlas_restore
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Exercise migrate, dump, and restore commands
+        run: |
+          set -euo pipefail
+
+          psql "$PG_ADMIN_URL" -c "DROP DATABASE IF EXISTS atlas_restore;"
+          psql "$PG_ADMIN_URL" -c "CREATE DATABASE atlas_restore;"
+
+          DATABASE_URL="$SOURCE_DB_URL" cargo run --quiet --bin atlas-server -- migrate
+
+          psql "$SOURCE_DB_URL" <<'SQL'
+          INSERT INTO blocks (
+            number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
+          ) VALUES (
+            424242,
+            '0x0000000000000000000000000000000000000000000000000000000000067932',
+            '0x0000000000000000000000000000000000000000000000000000000000067931',
+            1700000000,
+            21000,
+            30000000,
+            1,
+            NOW()
+          )
+          ON CONFLICT (number) DO NOTHING;
+
+          INSERT INTO transactions (
+            hash, block_number, block_index, from_address, to_address, value, gas_price, gas_used,
+            input_data, status, timestamp
+          ) VALUES (
+            '0x0000000000000000000000000000000000000000000000000000000000067933',
+            424242,
+            0,
+            '0x4242420000000000000000000000000000000001',
+            '0x4242420000000000000000000000000000000002',
+            1000000000000000000,
+            20000000000,
+            21000,
+            '\x',
+            true,
+            1700000000
+          )
+          ON CONFLICT (hash, block_number) DO NOTHING;
+          SQL
+
+          DUMP_FILE="$RUNNER_TEMP/atlas-cli-db-flow.dump"
+          DATABASE_URL="$SOURCE_DB_URL" cargo run --quiet --bin atlas-server -- db dump "$DUMP_FILE"
+          DATABASE_URL="$RESTORE_DB_URL" cargo run --quiet --bin atlas-server -- db restore "$DUMP_FILE"
+          DATABASE_URL="$RESTORE_DB_URL" cargo run --quiet --bin atlas-server -- migrate
+
+          test "$(psql "$RESTORE_DB_URL" -Atc "SELECT COUNT(*) FROM blocks WHERE number = 424242")" = "1"
+          test "$(psql "$RESTORE_DB_URL" -Atc "SELECT COUNT(*) FROM transactions WHERE hash = '0x0000000000000000000000000000000000000000000000000000000000067933'")" = "1"
+
+  backend-cli-snapshot-compat:
+    name: Backend CLI Snapshot Compatibility
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: atlas
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atlas -d atlas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PG_ADMIN_URL: postgres://atlas:atlas@127.0.0.1:5432/postgres
+      SOURCE_DB_URL: postgres://atlas:atlas@127.0.0.1:5432/atlas_compat_source
+      RESTORE_DB_URL: postgres://atlas:atlas@127.0.0.1:5432/atlas_compat_restore
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Resolve compatibility baseline
+        id: baseline
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "sha=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore a snapshot created from the previous revision
+        id: compat
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+
+          BASE_SHA="${{ steps.baseline.outputs.sha }}"
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "No prior revision is available for snapshot compatibility testing."
+            exit 0
+          fi
+
+          BASE_WORKTREE="$RUNNER_TEMP/atlas-base"
+          DUMP_FILE="$RUNNER_TEMP/atlas-compat.dump"
+
+          git worktree add "$BASE_WORKTREE" "$BASE_SHA"
+          trap 'git worktree remove --force "$BASE_WORKTREE"' EXIT
+
+          psql "$PG_ADMIN_URL" -c "DROP DATABASE IF EXISTS atlas_compat_source;"
+          psql "$PG_ADMIN_URL" -c "DROP DATABASE IF EXISTS atlas_compat_restore;"
+          psql "$PG_ADMIN_URL" -c "CREATE DATABASE atlas_compat_source;"
+          psql "$PG_ADMIN_URL" -c "CREATE DATABASE atlas_compat_restore;"
+
+          HELPER_DIR="$RUNNER_TEMP/base-migrate-helper"
+          mkdir -p "$HELPER_DIR/src"
+
+          cat > "$HELPER_DIR/Cargo.toml" <<EOF
+          [package]
+          name = "base-migrate-helper"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          atlas-common = { path = "$BASE_WORKTREE/backend/crates/atlas-common" }
+          tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+          EOF
+
+          cat > "$HELPER_DIR/src/main.rs" <<'EOF'
+          #[tokio::main]
+          async fn main() -> Result<(), Box<dyn std::error::Error>> {
+              let database_url = std::env::args().nth(1).expect("database url argument");
+              atlas_common::db::run_migrations(&database_url).await?;
+              Ok(())
+          }
+          EOF
+
+          cargo run --quiet --manifest-path "$HELPER_DIR/Cargo.toml" -- "$SOURCE_DB_URL"
+
+          psql "$SOURCE_DB_URL" <<'SQL'
+          INSERT INTO blocks (
+            number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
+          ) VALUES (
+            515151,
+            '0x000000000000000000000000000000000000000000000000000000000007db4f',
+            '0x000000000000000000000000000000000000000000000000000000000007db4e',
+            1700001000,
+            21000,
+            30000000,
+            1,
+            NOW()
+          )
+          ON CONFLICT (number) DO NOTHING;
+          SQL
+
+          pg_dump --dbname="$SOURCE_DB_URL" --format=custom --file "$DUMP_FILE"
+
+          DATABASE_URL="$RESTORE_DB_URL" cargo run --quiet --bin atlas-server -- db restore "$DUMP_FILE"
+          DATABASE_URL="$RESTORE_DB_URL" cargo run --quiet --bin atlas-server -- migrate
+
+          test "$(psql "$RESTORE_DB_URL" -Atc "SELECT COUNT(*) FROM blocks WHERE number = 515151")" = "1"
+
+      - name: Warn when snapshot compatibility fails
+        if: always() && steps.compat.outcome == 'failure'
+        run: |
+          echo "::warning::Snapshot compatibility check failed. Review the 'Backend CLI Snapshot Compatibility' job before release."
+          {
+            echo "## Snapshot compatibility warning"
+            echo
+            echo "The previous-revision dump/restore drill failed in CI."
+            echo "The workflow stayed green, but this should be reviewed before release."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   frontend:
     name: Frontend (Bun)
     runs-on: ubuntu-latest
@@ -99,7 +321,7 @@ jobs:
 
   docker:
     name: Docker (GHCR)
-    needs: [backend-fmt, backend-clippy, backend-test, frontend]
+    needs: [backend-fmt, backend-clippy, backend-test, backend-cli-db-flow, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/docker-build-push.yml
     secrets: inherit

@@ -7,9 +7,15 @@ use crate::api::handlers::get_table_count;
 use crate::api::AppState;
 
 #[derive(Serialize)]
+pub struct ChainFeatures {
+    pub da_tracking: bool,
+}
+
+#[derive(Serialize)]
 pub struct HeightResponse {
     pub block_height: i64,
     pub indexed_at: String,
+    pub features: ChainFeatures,
 }
 
 #[derive(Serialize)]
@@ -22,9 +28,11 @@ pub struct ChainStatus {
     pub indexed_at: String,
 }
 
-async fn latest_height_and_indexed_at(state: &AppState) -> Result<(i64, String), sqlx::Error> {
+pub(super) async fn latest_indexed_block(
+    state: &AppState,
+) -> Result<Option<(i64, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
     if let Some(block) = state.head_tracker.latest().await {
-        return Ok((block.number, block.indexed_at.to_rfc3339()));
+        return Ok(Some((block.number, block.indexed_at)));
     }
 
     // Fallback: single key-value lookup from indexer_state (sub-ms, avoids blocks table)
@@ -34,8 +42,12 @@ async fn latest_height_and_indexed_at(state: &AppState) -> Result<(i64, String),
     .fetch_optional(&state.pool)
     .await?;
 
-    if let Some((block_height, updated_at)) = row {
-        return Ok((block_height, updated_at.to_rfc3339()));
+    Ok(row)
+}
+
+async fn latest_height_and_indexed_at(state: &AppState) -> Result<(i64, String), sqlx::Error> {
+    if let Some((block_height, indexed_at)) = latest_indexed_block(state).await? {
+        return Ok((block_height, indexed_at.to_rfc3339()));
     }
 
     Ok((0, String::new()))
@@ -45,10 +57,14 @@ async fn latest_height_and_indexed_at(state: &AppState) -> Result<(i64, String),
 /// Returns in <1ms, optimized for frequent polling.
 pub async fn get_height(State(state): State<Arc<AppState>>) -> ApiResult<Json<HeightResponse>> {
     let (block_height, indexed_at) = latest_height_and_indexed_at(&state).await?;
+    let features = ChainFeatures {
+        da_tracking: state.da_tracking_enabled,
+    };
 
     Ok(Json(HeightResponse {
         block_height,
         indexed_at,
+        features,
     }))
 }
 
@@ -89,24 +105,34 @@ mod tests {
     }
 
     fn test_state(head_tracker: Arc<HeadTracker>) -> State<Arc<AppState>> {
-        let (tx, _) = tokio::sync::broadcast::channel(1);
+        let (block_tx, _) = tokio::sync::broadcast::channel(1);
+        let (da_tx, _) = tokio::sync::broadcast::channel(1);
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://test@localhost:5432/test")
             .expect("lazy pool");
+        let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+            .build_recorder()
+            .handle();
         State(Arc::new(AppState {
             pool,
-            block_events_tx: tx,
+            block_events_tx: block_tx,
+            da_events_tx: da_tx,
             head_tracker,
             rpc_url: String::new(),
+            da_tracking_enabled: false,
             faucet: None,
             chain_id: 1,
             chain_name: "Test Chain".to_string(),
             chain_logo_url: None,
+            chain_logo_url_light: None,
+            chain_logo_url_dark: None,
             accent_color: None,
             background_color_dark: None,
             background_color_light: None,
             success_color: None,
             error_color: None,
+            metrics: crate::metrics::Metrics::new(),
+            prometheus_handle,
         }))
     }
 
@@ -122,6 +148,7 @@ mod tests {
 
         assert_eq!(status.block_height, 42);
         assert!(!status.indexed_at.is_empty());
+        assert!(!status.features.da_tracking);
     }
 
     #[tokio::test]

@@ -1,16 +1,64 @@
 import { useParams, Link } from 'react-router-dom';
-import { useBlock, useBlockTransactions } from '../hooks';
+import { useBlock, useBlockTransactions, useFeatures } from '../hooks';
 import { CopyButton, Loading, AddressLink, TxHashLink, StatusBadge } from '../components';
 import { formatNumber, formatTimestamp, formatGas, truncateHash, formatTimeAgo, formatEther } from '../utils';
-import { useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { BlockStatsContext } from '../context/BlockStatsContext';
+import type { BlockDaStatus } from '../types';
+
+/** Format a DA height as a status indicator. */
+function formatDaStatus(daHeight: number): ReactNode {
+  if (daHeight > 0) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+        <span>{formatNumber(daHeight)}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+      <span>Pending</span>
+    </span>
+  );
+}
 
 export default function BlockDetailPage() {
   const { number } = useParams<{ number: string }>();
   const blockNumber = number ? parseInt(number, 10) : undefined;
-  const { block, loading: blockLoading, error: blockError } = useBlock(blockNumber);
+  const { block, loading: blockLoading, error: blockError, refetch: refetchBlock } = useBlock(blockNumber);
+  const features = useFeatures();
   const [txPage, setTxPage] = useState(1);
   const { transactions, pagination, loading } = useBlockTransactions(blockNumber, { page: txPage, limit: 20 });
+  const { subscribeDa, subscribeDaResync } = useContext(BlockStatsContext);
+  const [daOverride, setDaOverride] = useState<BlockDaStatus | null>(null);
+
+  // Persist DA updates for this block until navigation or a full refetch catches up.
+  useEffect(() => {
+    if (!features.da_tracking) return;
+    return subscribeDa((updates) => {
+      const match = updates.find((update) => update.block_number === blockNumber);
+      if (!match) return;
+      setDaOverride({
+        block_number: match.block_number,
+        header_da_height: match.header_da_height,
+        data_da_height: match.data_da_height,
+        updated_at: new Date().toISOString(),
+      });
+    });
+  }, [features.da_tracking, subscribeDa, blockNumber]);
+
+  useEffect(() => {
+    if (!features.da_tracking) return;
+    return subscribeDaResync(() => {
+      setDaOverride(null);
+      void refetchBlock();
+    });
+  }, [features.da_tracking, refetchBlock, subscribeDaResync]);
+
+  const currentDaOverride = daOverride?.block_number === blockNumber ? daOverride : null;
 
   type DetailRow = { label: string; value: ReactNode; stacked?: boolean };
   const details: DetailRow[] = block ? [
@@ -44,6 +92,20 @@ export default function BlockDetailPage() {
     },
     { label: 'Gas Used', value: formatGas(block.gas_used.toString()) },
     { label: 'Gas Limit', value: formatGas(block.gas_limit.toString()) },
+    // DA status rows — only shown when da_tracking feature is enabled
+    ...(features.da_tracking ? (() => {
+      const daStatus = currentDaOverride ?? block.da_status;
+      return [
+        {
+          label: 'Header DA',
+          value: formatDaStatus(daStatus?.header_da_height ?? 0),
+        },
+        {
+          label: 'Data DA',
+          value: formatDaStatus(daStatus?.data_da_height ?? 0),
+        },
+      ];
+    })() as DetailRow[] : []),
   ] : [
     { label: 'Block Height', value: '---' },
     { label: 'Timestamp', value: '---' },

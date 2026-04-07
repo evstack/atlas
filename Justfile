@@ -49,9 +49,21 @@ backend-test:
 backend-build:
   cd backend && cargo build --workspace
 
+# Build optimised release binary to build/atlas-server
+[group('backend')]
+build-release:
+  cd backend && cargo build --release --bin atlas-server
+  mkdir -p build
+  cp backend/target/release/atlas-server build/atlas-server
+
+# Install atlas-server to ~/.cargo/bin (available on PATH after cargo setup)
+[group('backend')]
+install:
+  cd backend && cargo install --path crates/atlas-server --locked
+
 [group('backend')]
 backend-run:
-  cd backend && cargo run --bin atlas-server
+  cd backend && cargo run --bin atlas-server -- run
 
 [group('frontend')]
 frontend-install:

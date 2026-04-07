@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 atlas-common = { workspace = true }
+clap = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
@@ -22,6 +23,8 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 dotenvy = { workspace = true }
 bigdecimal = { workspace = true }
 hex = { workspace = true }
@@ -37,3 +40,11 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 tokio-postgres-rustls = "0.12"
 rustls = "0.23"
 webpki-roots = "0.26"
+
+[dev-dependencies]
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+serde_json = { workspace = true }
+sqlx = { workspace = true }

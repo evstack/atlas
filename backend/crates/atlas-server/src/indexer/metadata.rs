@@ -5,11 +5,11 @@ use alloy::{
     sol,
 };
 use anyhow::Result;
-use bigdecimal::BigDecimal;
 use sqlx::PgPool;
 use std::{str::FromStr, sync::Arc, time::Duration};
 
 use crate::config::Config;
+use crate::metrics::Metrics;
 
 // ERC-721 interface
 sol! {
@@ -29,7 +29,6 @@ sol! {
         function name() external view returns (string memory);
         function symbol() external view returns (string memory);
         function decimals() external view returns (uint8);
-        function totalSupply() external view returns (uint256);
     }
 }
 
@@ -40,10 +39,11 @@ pub struct MetadataFetcher {
     config: Config,
     client: reqwest::Client,
     provider: Arc<HttpProvider>,
+    metrics: Metrics,
 }
 
 impl MetadataFetcher {
-    pub fn new(pool: PgPool, config: Config) -> Result<Self> {
+    pub fn new(pool: PgPool, config: Config, metrics: Metrics) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -56,13 +56,14 @@ impl MetadataFetcher {
             config,
             client,
             provider,
+            metrics,
         })
     }
 
     pub async fn run(&self) -> Result<()> {
         tracing::info!(
-            "Starting metadata fetcher with {} workers",
-            self.config.metadata_fetch_workers
+            workers = self.config.metadata_fetch_workers,
+            "starting metadata fetcher"
         );
 
         loop {
@@ -97,27 +98,35 @@ impl MetadataFetcher {
             return Ok(false);
         }
 
-        tracing::debug!("Fetching metadata for {} NFT contracts", contracts.len());
+        tracing::debug!(count = contracts.len(), "fetching NFT contract metadata");
 
         let mut handles = Vec::new();
         for (address,) in contracts {
             let pool = self.pool.clone();
             let provider = self.provider.clone();
+            let m = self.metrics.clone();
 
             handles.push(tokio::spawn(async move {
-                if let Err(e) = fetch_nft_contract_metadata(&pool, &provider, &address).await {
-                    tracing::debug!(
-                        "Failed to fetch NFT contract metadata for {}: {}",
-                        address,
-                        e
-                    );
-                    // Mark as fetched to avoid infinite retries
-                    let _ = sqlx::query(
-                        "UPDATE nft_contracts SET metadata_fetched = true WHERE address = $1",
-                    )
-                    .bind(&address)
-                    .execute(&pool)
-                    .await;
+                match fetch_nft_contract_metadata(&pool, &provider, &address).await {
+                    Ok(()) => {
+                        m.record_metadata_contract_fetched("nft");
+                    }
+                    Err(e) => {
+                        m.record_metadata_error("nft");
+                        m.error("metadata", "metadata_fetch");
+                        tracing::debug!(
+                            address = %address,
+                            error = %e,
+                            "failed to fetch NFT contract metadata"
+                        );
+                        // Mark as fetched to avoid infinite retries
+                        let _ = sqlx::query(
+                            "UPDATE nft_contracts SET metadata_fetched = true WHERE address = $1",
+                        )
+                        .bind(&address)
+                        .execute(&pool)
+                        .await;
+                    }
                 }
             }));
 
@@ -148,27 +157,35 @@ impl MetadataFetcher {
             return Ok(false);
         }
 
-        tracing::debug!("Fetching metadata for {} ERC-20 contracts", contracts.len());
+        tracing::debug!(count = contracts.len(), "fetching ERC-20 contract metadata");
 
         let mut handles = Vec::new();
         for (address,) in contracts {
             let pool = self.pool.clone();
             let provider = self.provider.clone();
+            let m = self.metrics.clone();
 
             handles.push(tokio::spawn(async move {
-                if let Err(e) = fetch_erc20_contract_metadata(&pool, &provider, &address).await {
-                    tracing::debug!(
-                        "Failed to fetch ERC-20 contract metadata for {}: {}",
-                        address,
-                        e
-                    );
-                    // Mark as fetched to avoid infinite retries
-                    let _ = sqlx::query(
-                        "UPDATE erc20_contracts SET metadata_fetched = true WHERE address = $1",
-                    )
-                    .bind(&address)
-                    .execute(&pool)
-                    .await;
+                match fetch_erc20_contract_metadata(&pool, &provider, &address).await {
+                    Ok(()) => {
+                        m.record_metadata_contract_fetched("erc20");
+                    }
+                    Err(e) => {
+                        m.record_metadata_error("erc20");
+                        m.error("metadata", "metadata_fetch");
+                        tracing::debug!(
+                            address = %address,
+                            error = %e,
+                            "failed to fetch ERC-20 contract metadata"
+                        );
+                        // Mark as fetched to avoid infinite retries
+                        let _ = sqlx::query(
+                            "UPDATE erc20_contracts SET metadata_fetched = true WHERE address = $1",
+                        )
+                        .bind(&address)
+                        .execute(&pool)
+                        .await;
+                    }
                 }
             }));
 
@@ -202,7 +219,7 @@ impl MetadataFetcher {
             return Ok(false);
         }
 
-        tracing::debug!("Fetching metadata for {} NFT tokens", tokens.len());
+        tracing::debug!(count = tokens.len(), "fetching NFT token metadata");
 
         let mut handles = Vec::new();
         for (contract_address, token_id, token_uri) in tokens {
@@ -211,10 +228,10 @@ impl MetadataFetcher {
             let provider = self.provider.clone();
             let ipfs_gateway = self.config.ipfs_gateway.clone();
             let retry_attempts = self.config.metadata_retry_attempts;
+            let m = self.metrics.clone();
 
             handles.push(tokio::spawn(async move {
-                // Errors are logged inside fetch_and_store_token_metadata at debug level
-                let _ = fetch_and_store_token_metadata(
+                match fetch_and_store_token_metadata(
                     &pool,
                     &client,
                     &provider,
@@ -223,7 +240,16 @@ impl MetadataFetcher {
                     token_uri.as_deref(),
                     retry_attempts,
                 )
-                .await;
+                .await
+                {
+                    Ok(()) => {
+                        m.record_metadata_token_fetched();
+                    }
+                    Err(_) => {
+                        m.record_metadata_error("token");
+                        m.error("metadata", "metadata_fetch");
+                    }
+                }
             }));
 
             if handles.len() >= self.config.metadata_fetch_workers as usize {
@@ -279,11 +305,11 @@ async fn fetch_nft_contract_metadata(
     .execute(pool)
     .await?;
 
-    tracing::debug!("Fetched NFT contract metadata for {}", contract_address);
+    tracing::debug!(address = %contract_address, "fetched NFT contract metadata");
     Ok(())
 }
 
-/// Fetch ERC-20 contract metadata (name, symbol, decimals, totalSupply)
+/// Fetch ERC-20 contract metadata (name, symbol, decimals)
 async fn fetch_erc20_contract_metadata(
     pool: &PgPool,
     provider: &HttpProvider,
@@ -301,20 +327,11 @@ async fn fetch_erc20_contract_metadata(
     // Fetch decimals
     let decimals = contract.decimals().call().await.ok().map(|r| r as i16);
 
-    // Fetch totalSupply
-    let total_supply = contract
-        .totalSupply()
-        .call()
-        .await
-        .ok()
-        .map(|r| BigDecimal::from_str(&r.to_string()).unwrap_or_default());
-
     sqlx::query(
         "UPDATE erc20_contracts SET
             name = COALESCE($2, name),
             symbol = COALESCE($3, symbol),
             decimals = COALESCE($4, decimals),
-            total_supply = COALESCE($5, total_supply),
             metadata_fetched = true
          WHERE address = $1",
     )
@@ -322,11 +339,10 @@ async fn fetch_erc20_contract_metadata(
     .bind(name)
     .bind(symbol)
     .bind(decimals)
-    .bind(total_supply)
     .execute(pool)
     .await?;
 
-    tracing::debug!("Fetched ERC-20 contract metadata for {}", contract_address);
+    tracing::debug!(address = %contract_address, "fetched ERC-20 contract metadata");
     Ok(())
 }
 
@@ -362,10 +378,10 @@ async fn fetch_and_store_token_metadata(
                 }
                 Err(e) => {
                     tracing::debug!(
-                        "Failed to fetch tokenURI for {}:{}: {}",
-                        contract_address,
-                        token_id,
-                        e
+                        contract = %contract_address,
+                        token_id = %token_id,
+                        error = %e,
+                        "failed to fetch tokenURI"
                     );
                     // Mark as fetched to avoid retrying forever
                     sqlx::query(
@@ -426,10 +442,10 @@ async fn fetch_and_store_token_metadata(
                         .await?;
 
                         tracing::debug!(
-                            "NFT {}:{} has direct image URI ({})",
-                            contract_address,
-                            token_id,
-                            content_type
+                            contract = %contract_address,
+                            token_id = %token_id,
+                            content_type,
+                            "NFT has direct image URI"
                         );
                         return Ok(());
                     }
@@ -496,10 +512,10 @@ async fn fetch_and_store_token_metadata(
 
     // Log at debug level since this is often expected (non-standard NFTs)
     tracing::debug!(
-        "Failed to fetch metadata for {}:{}: {}",
-        contract_address,
-        token_id,
-        last_error.as_deref().unwrap_or("Unknown error")
+        contract = %contract_address,
+        token_id = %token_id,
+        error = last_error.as_deref().unwrap_or("Unknown error"),
+        "failed to fetch token metadata"
     );
 
     Err(anyhow::anyhow!(

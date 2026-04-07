@@ -10,3 +10,5 @@ export * from './useProxies';
 export { default as useFaucetInfo } from './useFaucetInfo';
 export { default as useEthBalance } from './useEthBalance';
 export { default as useEthPrice } from './useEthPrice';
+export { default as useFeatures } from './useFeatures';
+export { useTokenChart } from './useTokenChart';

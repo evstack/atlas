@@ -1,11 +1,16 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useBlocks } from '../hooks';
+import { useBlocks, useFeatures } from '../hooks';
 import { CopyButton, Loading } from '../components';
 import { formatNumber, formatTimeAgo, formatGas, truncateHash } from '../utils';
 import { BlockStatsContext } from '../context/BlockStatsContext';
+import type { BlockDaStatus } from '../types';
 
 const BLOCKS_PER_PAGE = 20;
+
+function isDaIncluded(status: Pick<BlockDaStatus, 'header_da_height' | 'data_da_height'> | null | undefined): boolean {
+  return !!status && status.header_da_height > 0 && status.data_da_height > 0;
+}
 
 export default function BlocksPage() {
   const [page, setPage] = useState(1);
@@ -18,13 +23,30 @@ export default function BlocksPage() {
     }
   });
   const { blocks: fetchedBlocks, pagination, refetch, loading } = useBlocks({ page, limit: BLOCKS_PER_PAGE });
+  const features = useFeatures();
   const hasLoaded = !loading || pagination !== null;
-  const { latestBlockEvent, sseConnected } = useContext(BlockStatsContext);
+  const { latestBlockEvent, sseConnected, subscribeDa, subscribeDaResync } = useContext(BlockStatsContext);
+  const [daOverrides, setDaOverrides] = useState<Map<number, BlockDaStatus>>(new Map());
+  const [daHighlight, setDaHighlight] = useState<Set<number>>(new Set());
+  const daOverridesRef = useRef<Map<number, BlockDaStatus>>(new Map());
+  const daOverridesSyncRafRef = useRef<number | null>(null);
+  const daHighlightTimeoutsRef = useRef<Map<number, number>>(new Map());
+  const baseDaIncludedRef = useRef<Map<number, boolean>>(new Map());
+  const visibleDaBlocksRef = useRef<Set<number>>(new Set());
+  const bufferedDaBlocksRef = useRef<Set<number>>(new Set());
+  const [, setTick] = useState(0);
   const [sseBlocks, setSseBlocks] = useState<typeof fetchedBlocks>([]);
   const lastSseBlockRef = useRef<number | null>(null);
   const ssePrependRafRef = useRef<number | null>(null);
   const pendingSseBlocksRef = useRef<typeof fetchedBlocks>([]);
   const sseFilterRafRef = useRef<number | null>(null);
+
+  const cancelDaOverridesSync = () => {
+    if (daOverridesSyncRafRef.current !== null) {
+      cancelAnimationFrame(daOverridesSyncRafRef.current);
+      daOverridesSyncRafRef.current = null;
+    }
+  };
 
   // Cache fetched block numbers to avoid recreating Sets on every effect/memo
   const fetchedNumberSet = useMemo(
@@ -41,6 +63,7 @@ export default function BlocksPage() {
     if (lastSseBlockRef.current != null && block.number <= lastSseBlockRef.current) return;
     lastSseBlockRef.current = block.number;
     pendingSseBlocksRef.current.push(block);
+    bufferedDaBlocksRef.current.add(block.number);
     if (ssePrependRafRef.current !== null) return; // RAF already scheduled; block is buffered
     ssePrependRafRef.current = window.requestAnimationFrame(() => {
       const pending = pendingSseBlocksRef.current;
@@ -59,6 +82,19 @@ export default function BlocksPage() {
       ssePrependRafRef.current = null;
     });
   }, [latestBlockEvent, page, autoRefresh]);
+
+  useEffect(() => {
+    if (page !== 1 || !autoRefresh) {
+      bufferedDaBlocksRef.current = new Set();
+      return;
+    }
+
+    const next = new Set<number>(sseBlocks.map((block) => block.number));
+    for (const block of pendingSseBlocksRef.current) {
+      next.add(block.number);
+    }
+    bufferedDaBlocksRef.current = next;
+  }, [autoRefresh, page, sseBlocks]);
 
   // Drop SSE blocks that are now present in fetchedBlocks to avoid duplicates,
   // but keep any that haven't been fetched yet.
@@ -81,6 +117,136 @@ export default function BlocksPage() {
       .sort((a, b) => b.number - a.number)
       .slice(0, BLOCKS_PER_PAGE);
   }, [fetchedBlocks, fetchedNumberSet, sseBlocks, page]);
+
+  useEffect(() => {
+    if (!features.da_tracking) {
+      baseDaIncludedRef.current = new Map();
+      visibleDaBlocksRef.current = new Set();
+      if (daOverridesRef.current.size > 0) {
+        const empty = new Map<number, BlockDaStatus>();
+        daOverridesRef.current = empty;
+        cancelDaOverridesSync();
+        daOverridesSyncRafRef.current = window.requestAnimationFrame(() => {
+          setDaOverrides(empty);
+          daOverridesSyncRafRef.current = null;
+        });
+      }
+      return;
+    }
+
+    const visible = new Set<number>();
+    const next = new Map<number, boolean>();
+    for (const block of blocks) {
+      visible.add(block.number);
+      next.set(block.number, isDaIncluded(block.da_status));
+    }
+    baseDaIncludedRef.current = next;
+    visibleDaBlocksRef.current = visible;
+    const buffered = bufferedDaBlocksRef.current;
+
+    let changed = false;
+    const nextOverrides = new Map<number, BlockDaStatus>();
+    for (const [blockNumber, status] of daOverridesRef.current) {
+      if (!visible.has(blockNumber) && !buffered.has(blockNumber)) {
+        changed = true;
+        continue;
+      }
+      nextOverrides.set(blockNumber, status);
+    }
+
+    if (changed || nextOverrides.size !== daOverridesRef.current.size) {
+      daOverridesRef.current = nextOverrides;
+      cancelDaOverridesSync();
+      daOverridesSyncRafRef.current = window.requestAnimationFrame(() => {
+        setDaOverrides(nextOverrides);
+        daOverridesSyncRafRef.current = null;
+      });
+    }
+  }, [blocks, features.da_tracking]);
+
+  // Subscribe to DA updates from SSE. setState is called inside the subscription
+  // callback (not synchronously in the effect body), satisfying react-hooks/set-state-in-effect.
+  useEffect(() => {
+    if (!features.da_tracking) return;
+    return subscribeDa((updates) => {
+      const visible = visibleDaBlocksRef.current;
+      const buffered = bufferedDaBlocksRef.current;
+      if (visible.size === 0 && buffered.size === 0) return;
+
+      const next = new Map<number, BlockDaStatus>();
+      for (const [blockNumber, status] of daOverridesRef.current) {
+        if (visible.has(blockNumber) || buffered.has(blockNumber)) {
+          next.set(blockNumber, status);
+        }
+      }
+
+      const transitionedToIncluded: number[] = [];
+      let changed = next.size !== daOverridesRef.current.size;
+
+      for (const update of updates) {
+        if (!visible.has(update.block_number) && !buffered.has(update.block_number)) continue;
+
+        const prevStatus = next.get(update.block_number);
+        const wasIncluded = prevStatus
+          ? isDaIncluded(prevStatus)
+          : (baseDaIncludedRef.current.get(update.block_number) ?? false);
+        const nextStatus = {
+          block_number: update.block_number,
+          header_da_height: update.header_da_height,
+          data_da_height: update.data_da_height,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (
+          prevStatus?.header_da_height === nextStatus.header_da_height
+          && prevStatus?.data_da_height === nextStatus.data_da_height
+        ) {
+          continue;
+        }
+
+        if (!wasIncluded && isDaIncluded(nextStatus)) {
+          transitionedToIncluded.push(update.block_number);
+        }
+
+        next.set(update.block_number, nextStatus);
+        changed = true;
+      }
+
+      if (!changed) return;
+
+      cancelDaOverridesSync();
+      daOverridesRef.current = next;
+      setDaOverrides(next);
+
+      // Flash dots for 1.5s only when status transitions from pending -> included.
+      for (const blockNumber of transitionedToIncluded) {
+        setDaHighlight((prev) => new Set(prev).add(blockNumber));
+        const existing = daHighlightTimeoutsRef.current.get(blockNumber);
+        if (existing !== undefined) clearTimeout(existing);
+        const t = window.setTimeout(() => {
+          setDaHighlight((prev) => {
+            const nextHighlight = new Set(prev);
+            nextHighlight.delete(blockNumber);
+            return nextHighlight;
+          });
+          daHighlightTimeoutsRef.current.delete(blockNumber);
+        }, 1500);
+        daHighlightTimeoutsRef.current.set(blockNumber, t);
+      }
+    });
+  }, [features.da_tracking, subscribeDa]);
+
+  useEffect(() => {
+    if (!features.da_tracking) return;
+    return subscribeDaResync(() => {
+      cancelDaOverridesSync();
+      const empty = new Map<number, BlockDaStatus>();
+      daOverridesRef.current = empty;
+      setDaOverrides(empty);
+      void refetch();
+    });
+  }, [features.da_tracking, refetch, subscribeDaResync]);
+
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
   const seenBlocksRef = useRef<Set<number>>(new Set());
@@ -88,7 +254,6 @@ export default function BlocksPage() {
   const [highlightBlocks, setHighlightBlocks] = useState<Set<number>>(new Set());
   const timeoutsRef = useRef<Map<number, number>>(new Map());
   const highlightRafRef = useRef<number | null>(null);
-  const [, setTick] = useState(0);
 
   const handleSort = (key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used') => {
     setSort((prev) => {
@@ -206,10 +371,15 @@ export default function BlocksPage() {
   // Cleanup on unmount
   useEffect(() => {
     const activeTimeouts = timeoutsRef.current;
+    const activeDaTimeouts = daHighlightTimeoutsRef.current;
     return () => {
       if (highlightRafRef.current !== null) {
         window.cancelAnimationFrame(highlightRafRef.current);
         highlightRafRef.current = null;
+      }
+      if (daOverridesSyncRafRef.current !== null) {
+        cancelAnimationFrame(daOverridesSyncRafRef.current);
+        daOverridesSyncRafRef.current = null;
       }
       if (ssePrependRafRef.current !== null) {
         cancelAnimationFrame(ssePrependRafRef.current);
@@ -222,6 +392,8 @@ export default function BlocksPage() {
       }
       for (const [, t] of activeTimeouts) clearTimeout(t);
       activeTimeouts.clear();
+      for (const [, t] of activeDaTimeouts) clearTimeout(t);
+      activeDaTimeouts.clear();
     };
   }, []);
 
@@ -327,6 +499,9 @@ export default function BlocksPage() {
                     )}
                   </button>
                 </th>
+                {features.da_tracking && (
+                  <th className="table-cell text-center table-header">DA</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -364,7 +539,23 @@ export default function BlocksPage() {
                   <td className="table-cell text-gray-400 font-mono text-xs">
                     {formatGas(block.gas_used.toString())}
                   </td>
-                  
+                  {features.da_tracking && (() => {
+                    const daStatus = daOverrides.get(block.number) ?? block.da_status;
+                    const flash = daHighlight.has(block.number);
+                    const included = isDaIncluded(daStatus);
+                    const includedTitle = daStatus
+                      ? `Header: ${daStatus.header_da_height}, Data: ${daStatus.data_da_height}`
+                      : 'DA included';
+                    return (
+                      <td className="table-cell text-center">
+                        {included ? (
+                          <span className={`w-2 h-2 rounded-full bg-green-400 inline-block${flash ? ' animate-da-pulse' : ''}`} title={includedTitle} />
+                        ) : (
+                          <span className={`w-2 h-2 rounded-full bg-yellow-400 inline-block${flash ? ' animate-da-pulse' : ''}`} title="Pending DA inclusion" />
+                        )}
+                      </td>
+                    );
+                  })()}
                 </tr>
               ))}
             </tbody>

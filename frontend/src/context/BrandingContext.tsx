@@ -3,6 +3,8 @@ import { getConfig, type BrandingConfig } from '../api/config';
 import { deriveSurfaceShades, applyPalette, hexToRgbTriplet } from '../utils/color';
 import { ThemeContext } from './theme-context';
 import { BrandingContext, brandingDefaults } from './branding-context';
+import { resolveBrandingValue, resolveLogoUrl } from './branding';
+import defaultLogoImg from '../assets/logo.png';
 
 const CACHE_KEY = 'branding_config';
 
@@ -15,39 +17,46 @@ function readCache(): BrandingConfig | null {
   }
 }
 
-function applyConfigState(cfg: BrandingConfig, setBranding: (v: typeof brandingDefaults) => void, setConfig: (v: BrandingConfig) => void) {
-  setConfig(cfg);
-  setBranding({ chainName: cfg.chain_name, logoUrl: cfg.logo_url || null, loaded: true });
-  document.title = `${cfg.chain_name} - Block Explorer`;
-  if (cfg.logo_url) {
-    const link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
-    if (link) link.href = cfg.logo_url;
+function setFavicon(href: string) {
+  let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'icon';
+    link.type = 'image/png';
+    document.head.appendChild(link);
   }
+  link.href = href;
 }
 
 export function BrandingProvider({ children }: { children: ReactNode }) {
-  const [branding, setBranding] = useState(() => {
-    const cached = readCache();
-    return cached
-      ? { chainName: cached.chain_name, logoUrl: cached.logo_url || null, loaded: true }
-      : brandingDefaults;
-  });
-  const [config, setConfig] = useState<BrandingConfig | null>(readCache);
   const themeCtx = useContext(ThemeContext);
   const theme = themeCtx?.theme ?? 'dark';
+  const [branding, setBranding] = useState(() => {
+    const cached = readCache();
+    return cached ? resolveBrandingValue(cached, theme) : brandingDefaults;
+  });
+  const [config, setConfig] = useState<BrandingConfig | null>(readCache);
 
   // Apply cached config immediately on mount (no flash), then revalidate in background
   useEffect(() => {
     getConfig()
       .then((cfg) => {
         localStorage.setItem(CACHE_KEY, JSON.stringify(cfg));
-        applyConfigState(cfg, setBranding, setConfig);
+        setConfig(cfg);
       })
       .catch(() => {
         if (!config) setBranding({ ...brandingDefaults, loaded: true });
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!config) return;
+
+    setBranding(resolveBrandingValue(config, theme));
+    document.title = `${config.chain_name} - Block Explorer`;
+    setFavicon(resolveLogoUrl(config, theme) ?? defaultLogoImg);
+  }, [config, theme]);
 
   // Apply accent + semantic colors (theme-independent)
   useEffect(() => {
