@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::metrics::Metrics;
+
 /// Retry delays for RPC calls (in seconds)
 const RPC_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30];
 const RPC_MAX_RETRIES: usize = 10;
@@ -46,11 +48,12 @@ pub(crate) async fn fetch_blocks_batch(
     start_block: u64,
     count: usize,
     rate_limiter: &SharedRateLimiter,
+    metrics: &Metrics,
 ) -> Vec<FetchResult> {
     tracing::debug!(
-        "Fetching batch: blocks {} to {}",
         start_block,
-        start_block + count as u64 - 1
+        end_block = start_block + count as u64 - 1,
+        "fetching batch"
     );
 
     // Wait for rate limiter - we're making 2*count RPC calls in one HTTP request
@@ -95,12 +98,14 @@ pub(crate) async fn fetch_blocks_batch(
                     .copied()
                     .unwrap_or(*RPC_RETRY_DELAYS.last().unwrap_or(&30));
 
+                metrics.record_rpc_request("error");
+                metrics.error("rpc", "rpc_request");
                 tracing::warn!(
-                    "RPC batch request failed (attempt {}/{}): {}. Retrying in {}s...",
-                    attempt + 1,
-                    RPC_MAX_RETRIES,
-                    e,
-                    delay
+                    attempt = attempt + 1,
+                    max_retries = RPC_MAX_RETRIES,
+                    error = %e,
+                    retry_in_secs = delay,
+                    "RPC batch request failed"
                 );
 
                 last_error = Some(format!("HTTP request failed: {}", e));
@@ -114,12 +119,13 @@ pub(crate) async fn fetch_blocks_batch(
             Ok(resp) => {
                 if attempt > 0 {
                     tracing::info!(
-                        "RPC batch request succeeded after {} retries (blocks {} to {})",
-                        attempt,
+                        retries = attempt,
                         start_block,
-                        start_block + count as u64 - 1
+                        end_block = start_block + count as u64 - 1,
+                        "RPC batch request recovered"
                     );
                 }
+                metrics.record_rpc_request("success");
                 batch_response = Some(resp);
                 break;
             }
@@ -129,12 +135,13 @@ pub(crate) async fn fetch_blocks_batch(
                     .copied()
                     .unwrap_or(*RPC_RETRY_DELAYS.last().unwrap_or(&30));
 
+                metrics.error("rpc", "rpc_parse");
                 tracing::warn!(
-                    "Failed to parse RPC response (attempt {}/{}): {}. Retrying in {}s...",
-                    attempt + 1,
-                    RPC_MAX_RETRIES,
-                    e,
-                    delay
+                    attempt = attempt + 1,
+                    max_retries = RPC_MAX_RETRIES,
+                    error = %e,
+                    retry_in_secs = delay,
+                    "failed to parse RPC response"
                 );
 
                 last_error = Some(format!("Failed to parse response: {}", e));
@@ -213,7 +220,11 @@ pub(crate) async fn fetch_blocks_batch(
         // Combine block + receipts into a single result
         match (block_result, receipts_result) {
             (Ok(block), Ok(receipts)) => {
-                tracing::debug!("Block {} complete ({} receipts)", block_num, receipts.len());
+                tracing::debug!(
+                    block = block_num,
+                    receipts = receipts.len(),
+                    "block complete"
+                );
                 results.push(FetchResult::Success(Box::new(FetchedBlock {
                     number: block_num,
                     block,
@@ -221,14 +232,14 @@ pub(crate) async fn fetch_blocks_batch(
                 })));
             }
             (Err(e), _) => {
-                tracing::warn!("Failed to fetch block {}: {}", block_num, e);
+                tracing::warn!(block = block_num, error = %e, "failed to fetch block");
                 results.push(FetchResult::Error {
                     block_num,
                     error: e,
                 });
             }
             (_, Err(e)) => {
-                tracing::warn!("Failed to fetch receipts for block {}: {}", block_num, e);
+                tracing::warn!(block = block_num, error = %e, "failed to fetch receipts");
                 results.push(FetchResult::Error {
                     block_num,
                     error: e,
@@ -241,14 +252,17 @@ pub(crate) async fn fetch_blocks_batch(
 }
 
 /// Get block number with internal retry logic for network failures
-pub(crate) async fn get_block_number_with_retry(provider: &HttpProvider) -> Result<u64> {
+pub(crate) async fn get_block_number_with_retry(
+    provider: &HttpProvider,
+    metrics: &Metrics,
+) -> Result<u64> {
     let mut last_error = None;
 
     for attempt in 0..RPC_MAX_RETRIES {
         match provider.get_block_number().await {
             Ok(block_num) => {
                 if attempt > 0 {
-                    tracing::info!("RPC connection restored after {} retries", attempt);
+                    tracing::info!(retries = attempt, "RPC connection restored");
                 }
                 return Ok(block_num);
             }
@@ -258,12 +272,13 @@ pub(crate) async fn get_block_number_with_retry(provider: &HttpProvider) -> Resu
                     .copied()
                     .unwrap_or(*RPC_RETRY_DELAYS.last().unwrap_or(&30));
 
+                metrics.error("rpc", "rpc_request");
                 tracing::warn!(
-                    "RPC request failed (attempt {}/{}): {}. Retrying in {}s...",
-                    attempt + 1,
-                    RPC_MAX_RETRIES,
-                    e,
-                    delay
+                    attempt = attempt + 1,
+                    max_retries = RPC_MAX_RETRIES,
+                    error = %e,
+                    retry_in_secs = delay,
+                    "RPC request failed"
                 );
 
                 last_error = Some(e);

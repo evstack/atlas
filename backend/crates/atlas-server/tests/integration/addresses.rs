@@ -147,7 +147,7 @@ async fn set_erc20_supply_history_complete(pool: &sqlx::PgPool, complete: bool) 
 fn get_address_detail() {
     common::run(async {
         let pool = common::pool();
-        seed_address_data(pool).await;
+        seed_address_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -172,7 +172,7 @@ fn get_address_detail() {
 fn get_address_transactions() {
     common::run(async {
         let pool = common::pool();
-        seed_address_data(pool).await;
+        seed_address_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -196,9 +196,9 @@ fn get_address_transactions() {
 fn get_erc20_address_detail_prefers_indexed_supply() {
     common::run(async {
         let pool = common::pool();
-        seed_address_data(pool).await;
-        seed_erc20_address_data(pool).await;
-        set_erc20_supply_history_complete(pool, true).await;
+        seed_address_data(&pool).await;
+        seed_erc20_address_data(&pool).await;
+        set_erc20_supply_history_complete(&pool, true).await;
 
         let app = common::test_router();
         let response = app

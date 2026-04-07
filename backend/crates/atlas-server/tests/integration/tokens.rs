@@ -186,7 +186,7 @@ async fn set_erc20_supply_history_complete(pool: &sqlx::PgPool, complete: bool) 
 fn list_tokens() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
+        seed_token_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -209,7 +209,7 @@ fn list_tokens() {
 fn get_token_detail() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
+        seed_token_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -237,13 +237,13 @@ fn get_token_detail() {
 fn get_token_detail_prefers_indexed_supply_over_stale_stored_value() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
-        set_erc20_supply_history_complete(pool, true).await;
+        seed_token_data(&pool).await;
+        set_erc20_supply_history_complete(&pool, true).await;
 
         sqlx::query("UPDATE erc20_contracts SET total_supply = $2 WHERE address = $1")
             .bind(TOKEN_A)
             .bind(bigdecimal::BigDecimal::from(700_000i64))
-            .execute(pool)
+            .execute(&pool)
             .await
             .expect("update stale total supply");
 
@@ -268,7 +268,7 @@ fn get_token_detail_prefers_indexed_supply_over_stale_stored_value() {
 fn get_token_holders() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
+        seed_token_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -296,7 +296,7 @@ fn get_token_holders() {
 fn get_tx_erc20_transfers() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
+        seed_token_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -323,8 +323,8 @@ fn get_tx_erc20_transfers() {
 fn get_token_chart_returns_exact_bucket_count_for_non_aligned_window() {
     common::run(async {
         let pool = common::pool();
-        seed_token_data(pool).await;
-        seed_token_chart_data(pool).await;
+        seed_token_data(&pool).await;
+        seed_token_chart_data(&pool).await;
 
         let app = common::test_router();
         let response = app

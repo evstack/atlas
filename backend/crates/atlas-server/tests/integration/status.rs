@@ -88,7 +88,7 @@ fn status_returns_chain_info() {
 fn stats_charts_return_exact_bucket_count_for_non_aligned_window() {
     common::run(async {
         let pool = common::pool();
-        seed_chart_data(pool).await;
+        seed_chart_data(&pool).await;
 
         let app = common::test_router();
 

@@ -28,9 +28,11 @@ pub struct ChainStatus {
     pub indexed_at: String,
 }
 
-async fn latest_height_and_indexed_at(state: &AppState) -> Result<(i64, String), sqlx::Error> {
+pub(super) async fn latest_indexed_block(
+    state: &AppState,
+) -> Result<Option<(i64, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
     if let Some(block) = state.head_tracker.latest().await {
-        return Ok((block.number, block.indexed_at.to_rfc3339()));
+        return Ok(Some((block.number, block.indexed_at)));
     }
 
     // Fallback: single key-value lookup from indexer_state (sub-ms, avoids blocks table)
@@ -40,8 +42,12 @@ async fn latest_height_and_indexed_at(state: &AppState) -> Result<(i64, String),
     .fetch_optional(&state.pool)
     .await?;
 
-    if let Some((block_height, updated_at)) = row {
-        return Ok((block_height, updated_at.to_rfc3339()));
+    Ok(row)
+}
+
+async fn latest_height_and_indexed_at(state: &AppState) -> Result<(i64, String), sqlx::Error> {
+    if let Some((block_height, indexed_at)) = latest_indexed_block(state).await? {
+        return Ok((block_height, indexed_at.to_rfc3339()));
     }
 
     Ok((0, String::new()))
@@ -104,6 +110,9 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://test@localhost:5432/test")
             .expect("lazy pool");
+        let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+            .build_recorder()
+            .handle();
         State(Arc::new(AppState {
             pool,
             block_events_tx: block_tx,
@@ -122,6 +131,8 @@ mod tests {
             background_color_light: None,
             success_color: None,
             error_color: None,
+            metrics: crate::metrics::Metrics::new(),
+            prometheus_handle,
         }))
     }
 

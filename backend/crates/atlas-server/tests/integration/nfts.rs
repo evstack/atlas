@@ -86,7 +86,7 @@ async fn seed_nft_data(pool: &sqlx::PgPool) {
 fn list_nft_collections() {
     common::run(async {
         let pool = common::pool();
-        seed_nft_data(pool).await;
+        seed_nft_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -109,7 +109,7 @@ fn list_nft_collections() {
 fn list_collection_tokens() {
     common::run(async {
         let pool = common::pool();
-        seed_nft_data(pool).await;
+        seed_nft_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -142,7 +142,7 @@ fn list_collection_tokens() {
 fn get_collection_transfers() {
     common::run(async {
         let pool = common::pool();
-        seed_nft_data(pool).await;
+        seed_nft_data(&pool).await;
 
         let app = common::test_router();
         let response = app

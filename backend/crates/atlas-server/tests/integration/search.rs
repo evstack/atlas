@@ -78,7 +78,7 @@ async fn seed_search_data(pool: &sqlx::PgPool) {
 fn search_by_block_hash() {
     common::run(async {
         let pool = common::pool();
-        seed_search_data(pool).await;
+        seed_search_data(&pool).await;
 
         // Search by block hash (66 chars = 0x + 64 hex)
         let block_hash = format!("0x{:064x}", SEARCH_BLOCK);
@@ -111,7 +111,7 @@ fn search_by_block_hash() {
 fn search_by_tx_hash() {
     common::run(async {
         let pool = common::pool();
-        seed_search_data(pool).await;
+        seed_search_data(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -141,7 +141,7 @@ fn search_by_tx_hash() {
 fn search_by_address() {
     common::run(async {
         let pool = common::pool();
-        seed_search_data(pool).await;
+        seed_search_data(&pool).await;
 
         let app = common::test_router();
         let response = app

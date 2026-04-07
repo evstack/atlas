@@ -162,6 +162,9 @@ mod tests {
         let head_tracker = Arc::new(crate::head::HeadTracker::empty(10));
         let (tx, _) = broadcast::channel(1);
         let (da_tx, _) = broadcast::channel(1);
+        let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+            .build_recorder()
+            .handle();
         Arc::new(AppState {
             pool,
             block_events_tx: tx,
@@ -180,6 +183,8 @@ mod tests {
             background_color_light: None,
             success_color: None,
             error_color: None,
+            metrics: crate::metrics::Metrics::new(),
+            prometheus_handle,
         })
     }
 

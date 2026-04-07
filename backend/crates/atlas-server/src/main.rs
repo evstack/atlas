@@ -14,6 +14,7 @@ mod config;
 mod faucet;
 mod head;
 mod indexer;
+mod metrics;
 mod snapshot;
 mod state_keys;
 
@@ -29,11 +30,22 @@ const PORTABLE_PG_RESTORE_FLAGS: &[&str] = &[
 ];
 const RESET_DB_FOR_RESTORE_SQL: &str = "DROP SCHEMA public CASCADE; CREATE SCHEMA public;";
 
-fn init_tracing(filter: &str) {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(filter))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+fn init_tracing(filter: &str, format: &str) {
+    let env_filter = tracing_subscriber::EnvFilter::new(filter);
+    match format {
+        "json" => {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(tracing_subscriber::fmt::layer().json())
+                .init();
+        }
+        _ => {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(tracing_subscriber::fmt::layer())
+                .init();
+        }
+    }
 }
 
 fn required_db_url(db_url: &str) -> Result<&str> {
@@ -246,7 +258,7 @@ async fn main() -> Result<()> {
     match cli.command {
         cli::Command::Run(args) => run(*args).await,
         cli::Command::Migrate(args) => {
-            init_tracing(&args.log.level);
+            init_tracing(&args.log.level, &args.log.format);
             tracing::info!("Running database migrations");
             let database_url = required_db_url(&args.db.url)?;
             atlas_common::db::run_migrations(database_url).await?;
@@ -263,8 +275,12 @@ async fn main() -> Result<()> {
 }
 
 async fn run(args: cli::RunArgs) -> Result<()> {
-    init_tracing(&args.log.level);
+    init_tracing(&args.log.level, &args.log.format);
     tracing::info!("Starting Atlas Server");
+
+    // Install Prometheus metrics recorder
+    let prometheus_handle = metrics::install_prometheus_recorder();
+    let metrics = metrics::Metrics::new();
 
     let config = config::Config::from_run_args(args.clone())?;
     let faucet_config = config::FaucetConfig::from_faucet_args(&args.faucet)?;
@@ -293,9 +309,9 @@ async fn run(args: cli::RunArgs) -> Result<()> {
         None
     };
 
-    tracing::info!("Fetching chain ID from RPC");
+    tracing::info!("fetching chain ID from RPC");
     let chain_id = fetch_chain_id(&config.rpc_url).await?;
-    tracing::info!("Chain ID: {}", chain_id);
+    tracing::info!(chain_id, "chain ID fetched");
 
     tracing::info!("Running database migrations");
     atlas_common::db::run_migrations(&config.database_url).await?;
@@ -313,6 +329,26 @@ async fn run(args: cli::RunArgs) -> Result<()> {
     } else {
         head::HeadTracker::bootstrap(&api_pool, config.sse_replay_buffer_blocks).await?
     });
+
+    // Set max pool size gauges
+    metrics.set_db_pool_max("api", config.api_db_max_connections as f64);
+    metrics.set_db_pool_max("indexer", config.indexer_db_max_connections as f64);
+
+    // Spawn pool stats sampler
+    {
+        let api_pool_ref = api_pool.clone();
+        let indexer_pool_ref = indexer_pool.clone();
+        let metrics_ref = metrics.clone();
+        tokio::spawn(async move {
+            loop {
+                metrics_ref.set_db_pool_size("api", api_pool_ref.size() as f64);
+                metrics_ref.set_db_pool_idle("api", api_pool_ref.num_idle() as f64);
+                metrics_ref.set_db_pool_size("indexer", indexer_pool_ref.size() as f64);
+                metrics_ref.set_db_pool_idle("indexer", indexer_pool_ref.num_idle() as f64);
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+    }
 
     let state = Arc::new(api::AppState {
         pool: api_pool,
@@ -332,6 +368,8 @@ async fn run(args: cli::RunArgs) -> Result<()> {
         background_color_light: config.background_color_light.clone(),
         success_color: config.success_color.clone(),
         error_color: config.error_color.clone(),
+        metrics: metrics.clone(),
+        prometheus_handle,
     });
 
     let da_pool = indexer_pool.clone();
@@ -340,6 +378,7 @@ async fn run(args: cli::RunArgs) -> Result<()> {
         config.clone(),
         block_events_tx,
         head_tracker,
+        metrics.clone(),
     );
     tokio::spawn(async move {
         if let Err(e) = run_with_retry(|| indexer.run()).await {
@@ -353,9 +392,9 @@ async fn run(args: cli::RunArgs) -> Result<()> {
             .as_deref()
             .expect("DA tracking requires EVNODE_URL");
         tracing::info!(
-            "DA tracking enabled (workers: {}, rate_limit: {} req/s)",
-            config.da_worker_concurrency,
-            config.da_rpc_requests_per_second
+            workers = config.da_worker_concurrency,
+            rate_limit_rps = config.da_rpc_requests_per_second,
+            "DA tracking enabled"
         );
         let da_worker = indexer::DaWorker::new(
             da_pool,
@@ -363,6 +402,7 @@ async fn run(args: cli::RunArgs) -> Result<()> {
             config.da_worker_concurrency,
             config.da_rpc_requests_per_second,
             da_events_tx,
+            metrics.clone(),
         )?;
         tokio::spawn(async move {
             if let Err(e) = run_with_retry(|| da_worker.run()).await {
@@ -373,10 +413,14 @@ async fn run(args: cli::RunArgs) -> Result<()> {
 
     let metadata_pool = indexer_pool;
     let metadata_config = config.clone();
+    let metadata_metrics = metrics.clone();
     tokio::spawn(async move {
         if let Err(e) = run_with_retry(|| async {
-            let fetcher =
-                indexer::MetadataFetcher::new(metadata_pool.clone(), metadata_config.clone())?;
+            let fetcher = indexer::MetadataFetcher::new(
+                metadata_pool.clone(),
+                metadata_config.clone(),
+                metadata_metrics.clone(),
+            )?;
             fetcher.run().await
         })
         .await
@@ -399,7 +443,7 @@ async fn run(args: cli::RunArgs) -> Result<()> {
 
     let app = api::build_router(state, config.cors_origin.clone());
     let addr = format!("{}:{}", config.api_host, config.api_port);
-    tracing::info!("API listening on {}", addr);
+    tracing::info!(addr = %addr, "API listening");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app)
@@ -410,23 +454,23 @@ async fn run(args: cli::RunArgs) -> Result<()> {
 }
 
 async fn check(args: cli::RunArgs) -> Result<()> {
-    init_tracing(&args.log.level);
+    init_tracing(&args.log.level, &args.log.format);
 
     let config = config::Config::from_run_args(args.clone())?;
     config::FaucetConfig::from_faucet_args(&args.faucet)?;
 
     // Test DB connectivity
-    tracing::info!("Testing database connectivity...");
+    tracing::info!("testing database connectivity");
     let pool = atlas_common::db::create_pool(&config.database_url, 1).await?;
     sqlx::query("SELECT 1").execute(&pool).await?;
-    tracing::info!("Database OK");
+    tracing::info!("database OK");
 
     // Test RPC connectivity
-    tracing::info!("Testing RPC connectivity...");
+    tracing::info!("testing RPC connectivity");
     let chain_id = fetch_chain_id(&config.rpc_url).await?;
-    tracing::info!("RPC OK — chain_id={}", chain_id);
+    tracing::info!(chain_id, "RPC OK");
 
-    tracing::info!("Configuration is valid");
+    tracing::info!("configuration is valid");
     Ok(())
 }
 
@@ -562,10 +606,10 @@ where
                     .unwrap_or(MAX_RETRY_DELAY);
 
                 tracing::error!(
-                    "Fatal error (internal retries exhausted): {}. Restarting in {}s (attempt {})...",
-                    e,
-                    delay,
-                    retry_count + 1
+                    error = %e,
+                    restart_in_secs = delay,
+                    attempt = retry_count + 1,
+                    "fatal error, internal retries exhausted"
                 );
 
                 tokio::time::sleep(Duration::from_secs(delay)).await;

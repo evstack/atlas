@@ -23,7 +23,7 @@ fn snapshot_dump_and_restore_round_trip() {
 
         // Insert test data
         sqlx::query("INSERT INTO indexer_state (key, value) VALUES ('snapshot_test', 'hello') ON CONFLICT (key) DO UPDATE SET value = 'hello'")
-            .execute(pool)
+            .execute(&pool)
             .await
             .expect("insert test data");
 
@@ -50,7 +50,7 @@ fn snapshot_dump_and_restore_round_trip() {
 
         // Create a separate database for restore
         sqlx::query("CREATE DATABASE test_restore")
-            .execute(pool)
+            .execute(&pool)
             .await
             .expect("create test_restore database");
 
@@ -88,7 +88,7 @@ fn snapshot_dump_and_restore_round_trip() {
         // Cleanup
         restore_pool.close().await;
         sqlx::query("DROP DATABASE test_restore")
-            .execute(pool)
+            .execute(&pool)
             .await
             .expect("drop test_restore database");
     });
