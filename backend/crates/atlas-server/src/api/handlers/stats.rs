@@ -239,13 +239,12 @@ pub async fn get_gas_price_chart(
 
     let points = rows
         .into_iter()
-        .map(|(bucket, tx_avg_gas_price, block_avg_base_fee_per_gas)| GasPricePoint {
-            bucket: bucket.to_rfc3339(),
-            avg_gas_price: resolve_avg_gas_price(
-                tx_avg_gas_price,
-                block_avg_base_fee_per_gas,
-            ),
-        })
+        .map(
+            |(bucket, tx_avg_gas_price, block_avg_base_fee_per_gas)| GasPricePoint {
+                bucket: bucket.to_rfc3339(),
+                avg_gas_price: resolve_avg_gas_price(tx_avg_gas_price, block_avg_base_fee_per_gas),
+            },
+        )
         .collect();
 
     Ok(Json(points))
