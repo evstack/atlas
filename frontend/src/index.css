@@ -56,6 +56,18 @@
   }
 }
 
+@layer utilities {
+  /* Keep legacy text-gray-* readable in dark mode without affecting bg/border gray utilities. */
+  :root:not([data-theme='light']) .text-gray-200,
+  :root:not([data-theme='light']) .text-gray-300,
+  :root:not([data-theme='light']) .text-gray-400,
+  :root:not([data-theme='light']) .text-gray-500,
+  :root:not([data-theme='light']) .text-gray-600,
+  :root:not([data-theme='light']) .text-gray-700 {
+    color: rgb(248 250 252 / var(--tw-text-opacity, 1));
+  }
+}
+
 @layer components {
   body {
     @apply font-sans antialiased transition-colors duration-200;
