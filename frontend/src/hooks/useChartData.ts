@@ -21,22 +21,6 @@ interface ChartData {
   gasPriceError: string | null;
 }
 
-function fillMissingGasPriceBuckets(points: GasPricePoint[]): GasPricePoint[] {
-  let lastObservedPrice: number | null = null;
-
-  return points.map((point) => {
-    if (point.avg_gas_price !== null) {
-      lastObservedPrice = point.avg_gas_price;
-      return point;
-    }
-
-    return {
-      ...point,
-      avg_gas_price: lastObservedPrice,
-    };
-  });
-}
-
 function getChartErrorMessage(err: unknown, fallback: string): string {
   if (err && typeof err === 'object' && 'error' in err && typeof (err as { error: unknown }).error === 'string') {
     return (err as { error: string }).error;
@@ -140,7 +124,7 @@ export function useChartData(window: ChartWindow): ChartData {
       try {
         setGasPriceError(null);
         const gasPrice = await getGasPriceChart(window);
-        if (mounted) setGasPriceChart(fillMissingGasPriceBuckets(gasPrice));
+        if (mounted) setGasPriceChart(gasPrice);
       } catch (err) {
         if (mounted) {
           setGasPriceError(getChartErrorMessage(err, 'Failed to load gas price chart'));

@@ -192,7 +192,7 @@ pub async fn get_gas_price_chart(
                 max_ts      AS end_ts
             FROM latest
         ),
-        agg AS (
+        tx_agg AS (
             SELECT
                 (b.start_ts + (((transactions.timestamp - b.start_ts) / $1) * $1))::bigint AS bucket_ts,
                 AVG(gas_price::float8)                                                       AS avg_gas_price
@@ -202,13 +202,25 @@ pub async fn get_gas_price_chart(
               AND transactions.timestamp <= b.end_ts
               AND gas_price > 0
             GROUP BY 1
+        ),
+        block_agg AS (
+            SELECT
+                (b.start_ts + (((blocks.timestamp - b.start_ts) / $1) * $1))::bigint AS bucket_ts,
+                AVG(base_fee_per_gas::float8)                                            AS avg_base_fee_per_gas
+            FROM blocks
+            CROSS JOIN bounds b
+            WHERE blocks.timestamp >= b.start_ts
+              AND blocks.timestamp <= b.end_ts
+              AND base_fee_per_gas IS NOT NULL
+            GROUP BY 1
         )
         SELECT
             to_timestamp(gs::float8) AS bucket,
-            a.avg_gas_price
-        FROM bounds b
-        CROSS JOIN generate_series(b.start_ts, b.end_ts - $1, $1::bigint) AS gs
-        LEFT JOIN agg a ON a.bucket_ts = gs
+            COALESCE(t.avg_gas_price, ba.avg_base_fee_per_gas) AS avg_gas_price
+        FROM bounds bo
+        CROSS JOIN generate_series(bo.start_ts, bo.end_ts - $1, $1::bigint) AS gs
+        LEFT JOIN tx_agg t ON t.bucket_ts = gs
+        LEFT JOIN block_agg ba ON ba.bucket_ts = gs
         ORDER BY gs ASC
         "#,
     )

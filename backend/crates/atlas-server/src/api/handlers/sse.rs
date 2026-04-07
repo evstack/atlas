@@ -202,6 +202,7 @@ mod tests {
             timestamp: 1_700_000_000 + number,
             gas_used: 21_000,
             gas_limit: 30_000_000,
+            base_fee_per_gas: Some("1000000000".to_string()),
             transaction_count: 1,
             indexed_at: Utc::now(),
         }

@@ -424,7 +424,7 @@ impl Indexer {
         known_nft: &HashSet<String>,
         fetched: FetchedBlock,
     ) {
-        use alloy::consensus::Transaction as TxTrait;
+        use alloy::consensus::{BlockHeader, Transaction as TxTrait};
 
         let block = fetched.block;
         let block_num = fetched.number;
@@ -448,6 +448,12 @@ impl Indexer {
         batch.b_timestamps.push(block.header.timestamp as i64);
         batch.b_gas_used.push(block.header.gas_used as i64);
         batch.b_gas_limits.push(block.header.gas_limit as i64);
+        batch.b_base_fee_per_gas.push(
+            block
+                .header
+                .base_fee_per_gas()
+                .map(|base_fee| base_fee.to_string()),
+        );
         batch.b_tx_counts.push(tx_count);
 
         // --- Transactions ---
