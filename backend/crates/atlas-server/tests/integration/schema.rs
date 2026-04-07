@@ -29,6 +29,8 @@ fn all_expected_tables_exist() {
         for expected in [
             "addresses",
             "address_labels",
+            "archive_blocks",
+            "archive_state",
             "block_da_status",
             "blocks",
             "contract_abis",
@@ -117,6 +119,9 @@ fn key_indexes_exist() {
             "tx_hash_lookup_pkey",
             // da status (powers pending-DA queries)
             "idx_block_da_status_pending",
+            // archive
+            "idx_archive_blocks_pending",
+            "idx_archive_blocks_uploaded",
         ] {
             assert!(
                 indexes.contains(&expected.to_string()),

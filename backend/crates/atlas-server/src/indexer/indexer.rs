@@ -23,6 +23,7 @@ use super::fetcher::{
     fetch_blocks_batch, get_block_number_with_retry, FetchResult, FetchedBlock, SharedRateLimiter,
     WorkItem,
 };
+use crate::archive::{insert_archive_entries, ArchiveEntry};
 use crate::config::Config;
 use crate::head::HeadTracker;
 use crate::state_keys::ERC20_SUPPLY_HISTORY_COMPLETE_KEY;
@@ -38,6 +39,7 @@ const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 pub struct Indexer {
     pool: PgPool,
     config: Config,
+    chain_id: u64,
     /// Tracks the maximum partition number that has been created
     /// Used to avoid checking pg_class on every batch
     current_max_partition: std::sync::atomic::AtomicU64,
@@ -51,12 +53,14 @@ impl Indexer {
     pub fn new(
         pool: PgPool,
         config: Config,
+        chain_id: u64,
         block_events_tx: broadcast::Sender<()>,
         head_tracker: Arc<HeadTracker>,
     ) -> Self {
         Self {
             pool,
             config,
+            chain_id,
             // Will be initialized on first run based on start block
             current_max_partition: std::sync::atomic::AtomicU64::new(0),
             block_events_tx,
@@ -256,6 +260,7 @@ impl Indexer {
             let mut blocks_received = 0;
             let mut failed_blocks: Vec<(u64, String)> = Vec::new();
             let mut batch = BlockBatch::new();
+            let mut fetched_blocks_for_archive: Vec<FetchedBlock> = Vec::new();
 
             // Receive all blocks for this batch
             while blocks_received < batch_size {
@@ -266,6 +271,9 @@ impl Indexer {
 
                         // Collect consecutive blocks in order (sync, no await)
                         while let Some(data) = buffer.remove(&next_to_process) {
+                            if self.config.archive.is_some() {
+                                fetched_blocks_for_archive.push(data.clone());
+                            }
                             Self::collect_block(&mut batch, &known_erc20, &known_nft, data);
                             next_to_process += 1;
                         }
@@ -304,8 +312,25 @@ impl Indexer {
                 .await;
             let _ = self.block_events_tx.send(());
 
+            // Build archive entries outside the hot loop (serialization + zstd compression)
+            let archive_entries = if let Some(archive) = &self.config.archive {
+                let chain_id = self.chain_id;
+                let prefix = archive.prefix.clone();
+                let blocks = fetched_blocks_for_archive;
+                tokio::task::spawn_blocking(move || {
+                    blocks
+                        .iter()
+                        .map(|b| ArchiveEntry::from_fetched_block(chain_id, &prefix, b))
+                        .collect::<Result<Vec<_>>>()
+                })
+                .await??
+            } else {
+                Vec::new()
+            };
+
             // One DB transaction for the entire batch
-            self.write_batch(&mut copy_client, batch, true).await?;
+            self.write_batch(&mut copy_client, batch, archive_entries, true)
+                .await?;
 
             // Write succeeded — now safe to update the persistent in-memory sets
             known_erc20.extend(new_erc20);
@@ -349,6 +374,18 @@ impl Indexer {
                             Some(FetchResult::Success(fetched)) => {
                                 // Write retried block immediately
                                 let mut mini_batch = BlockBatch::new();
+                                let archive_entries = if let Some(archive) = &self.config.archive {
+                                    let chain_id = self.chain_id;
+                                    let prefix = archive.prefix.clone();
+                                    let f = fetched.clone();
+                                    tokio::task::spawn_blocking(move || {
+                                        ArchiveEntry::from_fetched_block(chain_id, &prefix, &f)
+                                            .map(|e| vec![e])
+                                    })
+                                    .await??
+                                } else {
+                                    Vec::new()
+                                };
                                 Self::collect_block(
                                     &mut mini_batch,
                                     &known_erc20,
@@ -360,8 +397,13 @@ impl Indexer {
                                 // Don't update the watermark — the main batch already wrote
                                 // a higher last_indexed_block; overwriting it with this
                                 // block's lower number would cause a regression on restart.
-                                self.write_batch(&mut copy_client, mini_batch, false)
-                                    .await?;
+                                self.write_batch(
+                                    &mut copy_client,
+                                    mini_batch,
+                                    archive_entries,
+                                    false,
+                                )
+                                .await?;
                                 known_erc20.extend(new_erc20);
                                 known_nft.extend(new_nft);
                                 tracing::info!("Block {} retry succeeded", block_num);
@@ -668,6 +710,7 @@ impl Indexer {
         &self,
         copy_client: &mut Client,
         batch: BlockBatch,
+        archive_entries: Vec<ArchiveEntry>,
         update_watermark: bool,
     ) -> Result<()> {
         if batch.b_numbers.is_empty() {
@@ -682,6 +725,7 @@ impl Indexer {
         copy_event_logs(&mut pg_tx, &batch).await?;
         copy_nft_transfers(&mut pg_tx, &batch).await?;
         copy_erc20_transfers(&mut pg_tx, &batch).await?;
+        insert_archive_entries(&mut pg_tx, archive_entries).await?;
 
         let BlockBatch {
             tl_hashes,
@@ -967,11 +1011,13 @@ impl Indexer {
 
     async fn truncate_tables(&self) -> Result<()> {
         sqlx::query(
-            "TRUNCATE blocks, transactions, addresses, nft_contracts, nft_tokens, nft_transfers,
-             erc20_contracts, erc20_transfers, erc20_balances, event_logs, proxy_contracts, indexer_state CASCADE"
+            "TRUNCATE blocks, transactions, event_logs, addresses, nft_contracts, nft_tokens,
+             nft_transfers, indexer_state, erc20_contracts, erc20_transfers, erc20_balances,
+             event_signatures, address_labels, proxy_contracts, contract_abis, failed_blocks,
+             tx_hash_lookup, block_da_status, archive_blocks, archive_state CASCADE",
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

@@ -1,6 +1,7 @@
 mod common;
 
 mod addresses;
+mod archive;
 mod blocks;
 mod nfts;
 mod schema;

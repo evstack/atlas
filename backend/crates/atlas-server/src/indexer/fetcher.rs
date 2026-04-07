@@ -34,6 +34,7 @@ pub(crate) enum FetchResult {
 }
 
 /// Data fetched from RPC for a single block
+#[derive(Clone)]
 pub(crate) struct FetchedBlock {
     pub(crate) number: u64,
     pub(crate) block: Block,
