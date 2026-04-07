@@ -73,6 +73,8 @@ pub fn test_router() -> Router {
         chain_id: 42,
         chain_name: "Test Chain".to_string(),
         chain_logo_url: None,
+        chain_logo_url_light: None,
+        chain_logo_url_dark: None,
         accent_color: None,
         background_color_dark: None,
         background_color_light: None,

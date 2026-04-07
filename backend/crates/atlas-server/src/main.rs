@@ -14,6 +14,7 @@ mod config;
 mod faucet;
 mod head;
 mod indexer;
+mod state_keys;
 
 /// Retry delays for exponential backoff (in seconds)
 const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
@@ -280,6 +281,8 @@ async fn run(args: cli::RunArgs) -> Result<()> {
         chain_id,
         chain_name: config.chain_name.clone(),
         chain_logo_url: config.chain_logo_url.clone(),
+        chain_logo_url_light: config.chain_logo_url_light.clone(),
+        chain_logo_url_dark: config.chain_logo_url_dark.clone(),
         accent_color: config.accent_color.clone(),
         background_color_dark: config.background_color_dark.clone(),
         background_color_light: config.background_color_light.clone(),

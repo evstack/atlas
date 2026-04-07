@@ -16,6 +16,8 @@ pub mod transactions;
 use atlas_common::{Block, BLOCK_COLUMNS};
 use sqlx::PgPool;
 
+use crate::state_keys::ERC20_SUPPLY_HISTORY_COMPLETE_KEY;
+
 pub async fn get_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Error> {
     sqlx::query_as(&format!(
         "SELECT {} FROM blocks ORDER BY number DESC LIMIT 1",
@@ -23,6 +25,19 @@ pub async fn get_latest_block(pool: &PgPool) -> Result<Option<Block>, sqlx::Erro
     ))
     .fetch_optional(pool)
     .await
+}
+
+pub async fn has_complete_erc20_supply_history(pool: &PgPool) -> Result<bool, sqlx::Error> {
+    let value: Option<(String,)> =
+        sqlx::query_as("SELECT value FROM indexer_state WHERE key = $1 LIMIT 1")
+            .bind(ERC20_SUPPLY_HISTORY_COMPLETE_KEY)
+            .fetch_optional(pool)
+            .await?;
+
+    Ok(matches!(
+        value.as_ref().map(|(value,)| value.as_str()),
+        Some("true")
+    ))
 }
 fn exact_count_sql(table_name: &str) -> Result<&'static str, sqlx::Error> {
     match table_name {

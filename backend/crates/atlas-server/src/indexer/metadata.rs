@@ -5,7 +5,6 @@ use alloy::{
     sol,
 };
 use anyhow::Result;
-use bigdecimal::BigDecimal;
 use sqlx::PgPool;
 use std::{str::FromStr, sync::Arc, time::Duration};
 
@@ -29,7 +28,6 @@ sol! {
         function name() external view returns (string memory);
         function symbol() external view returns (string memory);
         function decimals() external view returns (uint8);
-        function totalSupply() external view returns (uint256);
     }
 }
 
@@ -283,7 +281,7 @@ async fn fetch_nft_contract_metadata(
     Ok(())
 }
 
-/// Fetch ERC-20 contract metadata (name, symbol, decimals, totalSupply)
+/// Fetch ERC-20 contract metadata (name, symbol, decimals)
 async fn fetch_erc20_contract_metadata(
     pool: &PgPool,
     provider: &HttpProvider,
@@ -301,20 +299,11 @@ async fn fetch_erc20_contract_metadata(
     // Fetch decimals
     let decimals = contract.decimals().call().await.ok().map(|r| r as i16);
 
-    // Fetch totalSupply
-    let total_supply = contract
-        .totalSupply()
-        .call()
-        .await
-        .ok()
-        .map(|r| BigDecimal::from_str(&r.to_string()).unwrap_or_default());
-
     sqlx::query(
         "UPDATE erc20_contracts SET
             name = COALESCE($2, name),
             symbol = COALESCE($3, symbol),
             decimals = COALESCE($4, decimals),
-            total_supply = COALESCE($5, total_supply),
             metadata_fetched = true
          WHERE address = $1",
     )
@@ -322,7 +311,6 @@ async fn fetch_erc20_contract_metadata(
     .bind(name)
     .bind(symbol)
     .bind(decimals)
-    .bind(total_supply)
     .execute(pool)
     .await?;
 
