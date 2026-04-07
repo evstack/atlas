@@ -26,6 +26,7 @@ use super::fetcher::{
 use crate::config::Config;
 use crate::head::HeadTracker;
 use crate::metrics::Metrics;
+use crate::state_keys::ERC20_SUPPLY_HISTORY_COMPLETE_KEY;
 
 /// Partition size: 10 million blocks per partition
 const PARTITION_SIZE: u64 = 10_000_000;
@@ -122,6 +123,12 @@ impl Indexer {
 
         // Get starting block
         let start_block = self.get_start_block().await?;
+        let erc20_supply_history_status = self.get_erc20_supply_history_status().await?;
+        let mut erc20_supply_backfill_pending = matches!(erc20_supply_history_status, Some(false))
+            || (erc20_supply_history_status.is_none() && start_block == 0);
+        if erc20_supply_history_status.is_none() && start_block == 0 {
+            self.set_erc20_supply_history_complete(false).await?;
+        }
         tracing::info!(start_block, "starting indexing");
 
         let latest_indexed_block = self.head_tracker.latest().await;
@@ -220,6 +227,10 @@ impl Indexer {
             tracing::debug!(chain_head = head, current = current_block, "chain head");
 
             if current_block > head {
+                if erc20_supply_backfill_pending {
+                    self.set_erc20_supply_history_complete(true).await?;
+                    erc20_supply_backfill_pending = false;
+                }
                 // At head, wait for new blocks
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
@@ -438,6 +449,11 @@ impl Indexer {
 
             current_block = end_block + 1;
             indexed_head = Some(actual_head_block);
+
+            if erc20_supply_backfill_pending && current_block > head {
+                self.set_erc20_supply_history_complete(true).await?;
+                erc20_supply_backfill_pending = false;
+            }
 
             // Record metrics and log progress
             self.metrics.record_blocks_indexed(batch_size as u64);
@@ -675,7 +691,9 @@ impl Indexer {
                         // Aggregate balance deltas — multiple transfers in the same batch
                         // for the same (address, contract) pair are summed in Rust,
                         // so we only need one DB upsert per unique pair.
-                        if from != ZERO_ADDRESS {
+                        if from == ZERO_ADDRESS {
+                            batch.apply_supply_delta(contract.clone(), value.clone());
+                        } else {
                             batch.apply_balance_delta(
                                 from,
                                 contract.clone(),
@@ -683,7 +701,9 @@ impl Indexer {
                                 block_num as i64,
                             );
                         }
-                        if to != ZERO_ADDRESS {
+                        if to == ZERO_ADDRESS {
+                            batch.apply_supply_delta(contract.clone(), -value);
+                        } else {
                             batch.apply_balance_delta(
                                 to,
                                 contract.clone(),
@@ -734,6 +754,7 @@ impl Indexer {
             ec_addresses,
             ec_first_seen_blocks,
             balance_map,
+            supply_map,
             last_block,
             ..
         } = batch;
@@ -859,6 +880,26 @@ impl Indexer {
                 &params,
             )
             .await?;
+        }
+
+        if !supply_map.is_empty() {
+            let mut supply_contracts = Vec::with_capacity(supply_map.len());
+            let mut supply_deltas = Vec::with_capacity(supply_map.len());
+            for (contract, delta) in supply_map {
+                supply_contracts.push(contract);
+                supply_deltas.push(delta.to_string());
+            }
+
+            let params: [&(dyn ToSql + Sync); 2] = [&supply_contracts, &supply_deltas];
+            pg_tx
+                .execute(
+                    "UPDATE erc20_contracts AS c
+                 SET total_supply = COALESCE(c.total_supply, 0) + s.supply_delta::numeric
+                 FROM unnest($1::text[], $2::text[]) AS s(contract_address, supply_delta)
+                 WHERE c.address = s.contract_address",
+                    &params,
+                )
+                .await?;
         }
 
         if update_watermark {
@@ -1002,6 +1043,30 @@ impl Indexer {
         .await?;
         Ok(())
     }
+
+    async fn get_erc20_supply_history_status(&self) -> Result<Option<bool>> {
+        let value: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM indexer_state WHERE key = $1 LIMIT 1")
+                .bind(ERC20_SUPPLY_HISTORY_COMPLETE_KEY)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        Ok(value.map(|(value,)| value == "true"))
+    }
+
+    async fn set_erc20_supply_history_complete(&self, complete: bool) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO indexer_state (key, value, updated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+        )
+        .bind(ERC20_SUPPLY_HISTORY_COMPLETE_KEY)
+        .bind(if complete { "true" } else { "false" })
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 fn lag_blocks(chain_head: u64, indexed_head: Option<u64>, start_block: u64) -> u64 {
@@ -1126,6 +1191,43 @@ mod tests {
         let contract = batch.ec_addresses[0].clone();
         let to = "0x2222222222222222222222222222222222222222";
         assert!(batch.balance_map.contains_key(&(to.to_string(), contract)));
+        assert_eq!(
+            batch.supply_map["0x3333333333333333333333333333333333333333"],
+            BigDecimal::from(1000)
+        );
+    }
+
+    #[test]
+    fn collect_erc20_burn_tracks_negative_supply_delta() {
+        let mut batch = BlockBatch::new();
+        let known_erc20 = HashSet::new();
+        let known_nft = HashSet::new();
+
+        let logs = serde_json::json!([{
+            "address": "0x3333333333333333333333333333333333333333",
+            "topics": [
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000001111111111111111111111111111111111111111",
+                "0x0000000000000000000000000000000000000000000000000000000000000000"
+            ],
+            "data": "0x00000000000000000000000000000000000000000000000000000000000003e8",
+            "blockNumber": "0x1",
+            "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "transactionIndex": "0x0",
+            "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "logIndex": "0x0",
+            "removed": false
+        }]);
+
+        let mut fb = empty_fetched_block(1);
+        fb.receipts = vec![make_receipt(logs)];
+        Indexer::collect_block(&mut batch, &known_erc20, &known_nft, fb);
+
+        assert_eq!(batch.balance_map.len(), 1);
+        assert_eq!(
+            batch.supply_map["0x3333333333333333333333333333333333333333"],
+            BigDecimal::from(-1000)
+        );
     }
 
     #[test]

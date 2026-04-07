@@ -104,6 +104,9 @@ pub(crate) struct BlockBatch {
     // erc20_balances — aggregated deltas per (address, contract)
     pub(crate) balance_map: HashMap<(String, String), BalanceDelta>,
 
+    // erc20 total supply deltas — aggregated per contract from mint/burn events
+    pub(crate) supply_map: HashMap<String, BigDecimal>,
+
     // Contracts newly discovered in this batch.
     // These are NOT merged into the persistent known_* sets until after a
     // successful write, so a failed write doesn't leave the in-memory sets
@@ -156,6 +159,16 @@ impl BlockBatch {
             });
         entry.delta += delta;
         entry.last_block = entry.last_block.max(block);
+    }
+
+    /// Add a total supply delta for a contract.
+    /// Only mint and burn transfers should touch this accumulator.
+    pub(crate) fn apply_supply_delta(&mut self, contract: String, delta: BigDecimal) {
+        let entry = self
+            .supply_map
+            .entry(contract)
+            .or_insert(BigDecimal::from(0));
+        *entry += delta;
     }
 
     pub(crate) fn materialize_blocks(&self, indexed_at: DateTime<Utc>) -> Vec<Block> {
@@ -259,6 +272,17 @@ mod tests {
             .get(&("0xaddr".to_string(), "0xtoken".to_string()))
             .unwrap();
         assert_eq!(entry.last_block, 100);
+    }
+
+    #[test]
+    fn apply_supply_delta_accumulates_by_contract() {
+        let mut batch = BlockBatch::new();
+        let contract = "0xtoken".to_string();
+
+        batch.apply_supply_delta(contract.clone(), BigDecimal::from(100));
+        batch.apply_supply_delta(contract.clone(), BigDecimal::from(-25));
+
+        assert_eq!(batch.supply_map[&contract], BigDecimal::from(75));
     }
 
     #[test]

@@ -5,3 +5,4 @@ pub mod faucet;
 pub mod head;
 pub mod indexer;
 pub mod metrics;
+pub mod state_keys;
