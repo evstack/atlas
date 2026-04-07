@@ -100,11 +100,12 @@ impl EvnodeClient {
                             .unwrap_or(*RETRY_DELAYS_MS.last().unwrap());
 
                         tracing::warn!(
-                            "ev-node GetBlock failed for height {} (attempt {}): {}. Retrying in {}ms",
                             height,
-                            attempt + 1,
-                            last_error.as_ref().unwrap(),
-                            delay_ms,
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            error = %last_error.as_ref().unwrap(),
+                            retry_in_ms = delay_ms,
+                            "ev-node GetBlock failed"
                         );
 
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;

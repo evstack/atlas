@@ -7,8 +7,9 @@ fn migrations_are_idempotent() {
     // sqlx tracks applied migrations in _sqlx_migrations; re-running is a no-op.
     // This verifies the tracking table is intact and no migration errors on repeat.
     common::run(async {
+        let pool = common::pool();
         sqlx::migrate!("../../migrations")
-            .run(common::pool())
+            .run(&pool)
             .await
             .expect("migrations should be idempotent");
     });
@@ -19,10 +20,11 @@ fn migrations_are_idempotent() {
 #[test]
 fn all_expected_tables_exist() {
     common::run(async {
+        let pool = common::pool();
         let tables: Vec<String> = sqlx::query_scalar(
             "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
         )
-        .fetch_all(common::pool())
+        .fetch_all(&pool)
         .await
         .expect("query tables");
 
@@ -57,13 +59,14 @@ fn all_expected_tables_exist() {
 #[test]
 fn partitioned_tables_have_initial_partition() {
     common::run(async {
+        let pool = common::pool();
         // Each partitioned table must have its _p0 partition created by the migration.
         let partitions: Vec<String> = sqlx::query_scalar(
             "SELECT relname::text FROM pg_class
              WHERE relname LIKE '%_p0' AND relkind = 'r'
              ORDER BY relname",
         )
-        .fetch_all(common::pool())
+        .fetch_all(&pool)
         .await
         .expect("query partitions");
 
@@ -87,6 +90,7 @@ fn partitioned_tables_have_initial_partition() {
 #[test]
 fn key_indexes_exist() {
     common::run(async {
+        let pool = common::pool();
         // Include both regular indexes (relkind='i') and partitioned indexes (relkind='I').
         let indexes: Vec<String> = sqlx::query_scalar(
             "SELECT c.relname::text FROM pg_class c
@@ -94,7 +98,7 @@ fn key_indexes_exist() {
              WHERE n.nspname = 'public' AND c.relkind IN ('i', 'I')
              ORDER BY c.relname",
         )
-        .fetch_all(common::pool())
+        .fetch_all(&pool)
         .await
         .expect("query indexes");
 
@@ -130,10 +134,11 @@ fn key_indexes_exist() {
 fn pg_trgm_extension_is_installed() {
     // Required for fuzzy search indexes on token names / symbols.
     common::run(async {
+        let pool = common::pool();
         let exists: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')",
         )
-        .fetch_one(common::pool())
+        .fetch_one(&pool)
         .await
         .expect("query extension");
 
@@ -160,7 +165,7 @@ fn duplicate_block_number_is_rejected() {
         .bind(block_number)
         .bind(format!("0x{:064x}", block_number))
         .bind(format!("0x{:064x}", block_number - 1))
-        .execute(pool)
+        .execute(&pool)
         .await
         .expect("insert block");
 
@@ -173,7 +178,7 @@ fn duplicate_block_number_is_rejected() {
         .bind(block_number)
         .bind(format!("0x{:064x}", block_number + 9999))
         .bind(format!("0x{:064x}", block_number - 1))
-        .execute(pool)
+        .execute(&pool)
         .await;
 
         assert!(result.is_err(), "duplicate block number should be rejected");
@@ -198,7 +203,7 @@ fn duplicate_transaction_is_rejected() {
         .bind(block_number)
         .bind(format!("0x{:064x}", block_number + 1))
         .bind(format!("0x{:064x}", block_number - 1))
-        .execute(pool)
+        .execute(&pool)
         .await
         .expect("insert parent block");
 
@@ -210,7 +215,7 @@ fn duplicate_transaction_is_rejected() {
         )
         .bind(&tx_hash)
         .bind(block_number)
-        .execute(pool)
+        .execute(&pool)
         .await
         .expect("insert tx");
 
@@ -222,7 +227,7 @@ fn duplicate_transaction_is_rejected() {
         )
         .bind(&tx_hash)
         .bind(block_number)
-        .execute(pool)
+        .execute(&pool)
         .await;
 
         assert!(result.is_err(), "duplicate transaction should be rejected");
@@ -248,8 +253,11 @@ fn duplicate_erc20_transfer_is_rejected() {
             .bind(block_number)
         };
 
-        insert().execute(pool).await.expect("insert erc20 transfer");
-        let result = insert().execute(pool).await;
+        insert()
+            .execute(&pool)
+            .await
+            .expect("insert erc20 transfer");
+        let result = insert().execute(&pool).await;
 
         assert!(
             result.is_err(),

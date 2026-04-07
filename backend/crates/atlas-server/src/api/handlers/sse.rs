@@ -13,6 +13,7 @@ use crate::api::handlers::get_latest_block;
 use crate::api::AppState;
 use crate::head::HeadTracker;
 use crate::indexer::DaSseUpdate;
+use crate::metrics::{Metrics, SseConnectionGuard};
 use atlas_common::Block;
 use sqlx::PgPool;
 use tracing::warn;
@@ -45,8 +46,11 @@ fn make_event_stream(
     head_tracker: Arc<HeadTracker>,
     mut block_rx: broadcast::Receiver<()>,
     mut da_rx: broadcast::Receiver<Vec<DaSseUpdate>>,
+    metrics: Option<Metrics>,
 ) -> impl Stream<Item = Result<Event, Infallible>> + Send {
     async_stream::stream! {
+        // Guard decrements the SSE connection gauge when the stream is dropped
+        let _guard = metrics.map(SseConnectionGuard::new);
         let mut last_block_number: Option<i64> = None;
 
         match head_tracker.latest().await {
@@ -147,6 +151,7 @@ pub async fn block_events(
         state.head_tracker.clone(),
         state.block_events_tx.subscribe(),
         state.da_events_tx.subscribe(),
+        Some(state.metrics.clone()),
     );
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
@@ -281,7 +286,13 @@ mod tests {
 
         let (tx, _) = broadcast::channel::<()>(16);
         let (da_tx, _) = broadcast::channel::<Vec<DaSseUpdate>>(16);
-        let stream = make_event_stream(dummy_pool(), tracker, tx.subscribe(), da_tx.subscribe());
+        let stream = make_event_stream(
+            dummy_pool(),
+            tracker,
+            tx.subscribe(),
+            da_tx.subscribe(),
+            None,
+        );
         tokio::pin!(stream);
 
         // Drop sender so loop terminates after the initial seed.
@@ -313,6 +324,7 @@ mod tests {
             tracker.clone(),
             tx.subscribe(),
             da_tx.subscribe(),
+            None,
         );
         tokio::pin!(stream);
 
@@ -353,6 +365,7 @@ mod tests {
             tracker.clone(),
             tx.subscribe(),
             da_tx.subscribe(),
+            None,
         );
         tokio::pin!(stream);
 
@@ -397,7 +410,13 @@ mod tests {
 
         let (tx, _) = broadcast::channel::<()>(16);
         let (da_tx, _) = broadcast::channel::<Vec<DaSseUpdate>>(1);
-        let stream = make_event_stream(dummy_pool(), tracker, tx.subscribe(), da_tx.subscribe());
+        let stream = make_event_stream(
+            dummy_pool(),
+            tracker,
+            tx.subscribe(),
+            da_tx.subscribe(),
+            None,
+        );
         tokio::pin!(stream);
 
         let _ = tokio::time::timeout(Duration::from_secs(1), stream.next())
