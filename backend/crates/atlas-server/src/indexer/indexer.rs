@@ -25,6 +25,8 @@ use super::fetcher::{
 };
 use crate::config::Config;
 use crate::head::HeadTracker;
+use crate::metrics::Metrics;
+use crate::state_keys::ERC20_SUPPLY_HISTORY_COMPLETE_KEY;
 
 /// Partition size: 10 million blocks per partition
 const PARTITION_SIZE: u64 = 10_000_000;
@@ -44,6 +46,7 @@ pub struct Indexer {
     block_events_tx: broadcast::Sender<()>,
     /// Shared in-memory tracker for the latest committed head and replay tail
     head_tracker: Arc<HeadTracker>,
+    metrics: Metrics,
 }
 
 impl Indexer {
@@ -52,6 +55,7 @@ impl Indexer {
         config: Config,
         block_events_tx: broadcast::Sender<()>,
         head_tracker: Arc<HeadTracker>,
+        metrics: Metrics,
     ) -> Self {
         Self {
             pool,
@@ -60,6 +64,7 @@ impl Indexer {
             current_max_partition: std::sync::atomic::AtomicU64::new(0),
             block_events_tx,
             head_tracker,
+            metrics,
         }
     }
 
@@ -80,7 +85,7 @@ impl Indexer {
             let (client, connection) = tokio_postgres::connect(database_url, tls).await?;
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
-                    tracing::error!("copy connection error: {}", e);
+                    tracing::error!(error = %e, "copy connection error");
                 }
             });
             Ok(client)
@@ -88,7 +93,7 @@ impl Indexer {
             let (client, connection) = tokio_postgres::connect(database_url, NoTls).await?;
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
-                    tracing::error!("copy connection error: {}", e);
+                    tracing::error!(error = %e, "copy connection error");
                 }
             });
             Ok(client)
@@ -107,31 +112,51 @@ impl Indexer {
         let rps = NonZeroU32::new(self.config.rpc_requests_per_second)
             .unwrap_or(NonZeroU32::new(100).unwrap());
         let rate_limiter: SharedRateLimiter = Arc::new(RateLimiter::direct(Quota::per_second(rps)));
-        tracing::info!("Rate limiting RPC requests to {} req/sec", rps);
+        tracing::info!(rps = %rps, "rate limiting RPC requests");
 
         // Handle reindex flag
         if self.config.reindex {
-            tracing::warn!("Reindex flag set - truncating all tables");
+            tracing::warn!("reindex flag set, truncating all tables");
             self.head_tracker.clear().await;
             self.truncate_tables().await?;
         }
 
         // Get starting block
         let start_block = self.get_start_block().await?;
-        tracing::info!("Starting indexing from block {}", start_block);
+        let erc20_supply_history_status = self.get_erc20_supply_history_status().await?;
+        let mut erc20_supply_backfill_pending = matches!(erc20_supply_history_status, Some(false))
+            || (erc20_supply_history_status.is_none() && start_block == 0);
+        if erc20_supply_history_status.is_none() && start_block == 0 {
+            self.set_erc20_supply_history_complete(false).await?;
+        }
+        tracing::info!(start_block, "starting indexing");
+
+        let latest_indexed_block = self.head_tracker.latest().await;
+        let mut indexed_head = latest_indexed_block
+            .as_ref()
+            .map(|block| block.number as u64);
+        if let Some(block) = latest_indexed_block.as_ref() {
+            self.metrics.set_indexer_head_block(block.number as u64);
+            self.metrics
+                .set_indexer_head_block_timestamp(block.timestamp);
+        }
+
+        let mut known_missing_blocks = self.get_missing_block_count().await?;
+        self.metrics
+            .set_indexer_missing_blocks(known_missing_blocks);
 
         // Load known contracts into memory to avoid a SELECT per transfer
         let mut known_erc20: HashSet<String> = self.load_known_erc20().await?;
-        tracing::info!("Loaded {} known ERC-20 contracts", known_erc20.len());
+        tracing::info!(count = known_erc20.len(), "loaded known ERC-20 contracts");
         let mut known_nft: HashSet<String> = self.load_known_nft().await?;
-        tracing::info!("Loaded {} known NFT contracts", known_nft.len());
+        tracing::info!(count = known_nft.len(), "loaded known NFT contracts");
 
         let num_workers = self.config.fetch_workers as usize;
         let rpc_batch_size = self.config.rpc_batch_size as usize;
         tracing::info!(
-            "Starting {} fetch workers with {} blocks per RPC batch",
-            num_workers,
-            rpc_batch_size
+            workers = num_workers,
+            rpc_batch_size,
+            "starting fetch workers"
         );
 
         // Channels for work distribution and results
@@ -152,9 +177,10 @@ impl Indexer {
             let limiter = Arc::clone(&rate_limiter);
             let client = http_client.clone();
             let url = rpc_url.clone();
+            let worker_metrics = self.metrics.clone();
 
             tokio::spawn(async move {
-                tracing::debug!("Worker {} started", worker_id);
+                tracing::debug!(worker_id, "worker started");
                 while let Ok(work_item) = work_rx.recv().await {
                     // Fetch batch of blocks using JSON-RPC batching
                     let results = fetch_blocks_batch(
@@ -163,6 +189,7 @@ impl Indexer {
                         work_item.start_block,
                         work_item.count,
                         &limiter,
+                        &worker_metrics,
                     )
                     .await;
 
@@ -173,7 +200,7 @@ impl Indexer {
                         }
                     }
                 }
-                tracing::debug!("Worker {} shutting down", worker_id);
+                tracing::debug!(worker_id, "worker shutting down");
             });
         }
 
@@ -186,7 +213,7 @@ impl Indexer {
 
         loop {
             // Get chain head with retry
-            let head = match get_block_number_with_retry(&provider).await {
+            let head = match get_block_number_with_retry(&provider, &self.metrics).await {
                 Ok(h) => h,
                 Err(e) => {
                     // This should only happen after all retries exhausted (very unlikely)
@@ -194,22 +221,31 @@ impl Indexer {
                     return Err(e);
                 }
             };
-            tracing::debug!("Chain head: {}, current: {}", head, current_block);
+            self.metrics.set_chain_head_block(head);
+            self.metrics
+                .set_indexer_lag_blocks(lag_blocks(head, indexed_head, start_block));
+            tracing::debug!(chain_head = head, current = current_block, "chain head");
 
             if current_block > head {
+                if erc20_supply_backfill_pending {
+                    self.set_erc20_supply_history_complete(true).await?;
+                    erc20_supply_backfill_pending = false;
+                }
                 // At head, wait for new blocks
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
 
+            let processing_start = std::time::Instant::now();
+
             // Calculate batch end
             let end_block = (current_block + self.config.batch_size - 1).min(head);
             let batch_size = (end_block - current_block + 1) as usize;
             tracing::debug!(
-                "Fetching batch: {} to {} ({} blocks)",
-                current_block,
-                end_block,
-                batch_size
+                start = current_block,
+                end = end_block,
+                blocks = batch_size,
+                "fetching batch"
             );
 
             // Ensure partitions exist for this batch range
@@ -232,9 +268,9 @@ impl Indexer {
                     block += count as u64;
                 }
                 tracing::debug!(
-                    "Sent {} blocks to workers in batches of {}",
-                    batch_size,
-                    blocks_per_batch
+                    blocks = batch_size,
+                    batch_size = blocks_per_batch,
+                    "sent blocks to workers"
                 );
             });
 
@@ -260,7 +296,7 @@ impl Indexer {
                         }
                     }
                     Some(FetchResult::Error { block_num, error }) => {
-                        tracing::warn!("Block {} failed to fetch: {}", block_num, error);
+                        tracing::warn!(block = block_num, error = %error, "block failed to fetch");
                         failed_blocks.push((block_num, error));
                         blocks_received += 1;
                         // Skip this block for now, continue with others
@@ -287,6 +323,8 @@ impl Indexer {
             // so this is safe even if the DB write is slow. If write_batch fails
             // the indexer retries the same blocks and head_tracker ignores
             // non-advancing publishes.
+            let head_block_timestamp = batch.last_block_timestamp();
+            let actual_head_block = batch.last_block;
             let committed_blocks = batch.materialize_blocks(Utc::now());
             self.head_tracker
                 .publish_committed_batch(committed_blocks)
@@ -294,7 +332,12 @@ impl Indexer {
             let _ = self.block_events_tx.send(());
 
             // One DB transaction for the entire batch
+            let db_write_start = std::time::Instant::now();
             self.write_batch(&mut copy_client, batch, true).await?;
+            self.metrics
+                .record_db_write_duration(db_write_start.elapsed().as_secs_f64());
+            self.metrics
+                .record_block_processing_duration(processing_start.elapsed().as_secs_f64());
 
             // Write succeeded — now safe to update the persistent in-memory sets
             known_erc20.extend(new_erc20);
@@ -307,9 +350,9 @@ impl Indexer {
             if !failed_blocks.is_empty() {
                 let block_nums: Vec<u64> = failed_blocks.iter().map(|(n, _)| *n).collect();
                 tracing::warn!(
-                    "Retrying {} failed blocks: {:?}",
-                    failed_blocks.len(),
-                    block_nums
+                    count = failed_blocks.len(),
+                    blocks = ?block_nums,
+                    "retrying failed blocks"
                 );
 
                 // Retry up to 3 times with increasing delay
@@ -320,19 +363,25 @@ impl Indexer {
 
                     let delay = Duration::from_secs(attempt * 2); // 2s, 4s, 6s
                     tracing::info!(
-                        "Retry attempt {} for {} blocks (waiting {:?})",
                         attempt,
-                        failed_blocks.len(),
-                        delay
+                        blocks = failed_blocks.len(),
+                        delay_secs = delay.as_secs(),
+                        "retry attempt for failed blocks"
                     );
                     tokio::time::sleep(delay).await;
 
                     let mut still_failed = Vec::new();
                     for (block_num, last_error) in failed_blocks {
                         // Fetch single block
-                        let results =
-                            fetch_blocks_batch(&http_client, &rpc_url, block_num, 1, &rate_limiter)
-                                .await;
+                        let results = fetch_blocks_batch(
+                            &http_client,
+                            &rpc_url,
+                            block_num,
+                            1,
+                            &rate_limiter,
+                            &self.metrics,
+                        )
+                        .await;
 
                         match results.into_iter().next() {
                             Some(FetchResult::Success(fetched)) => {
@@ -353,7 +402,7 @@ impl Indexer {
                                     .await?;
                                 known_erc20.extend(new_erc20);
                                 known_nft.extend(new_nft);
-                                tracing::info!("Block {} retry succeeded", block_num);
+                                tracing::info!(block = block_num, "block retry succeeded");
                             }
                             Some(FetchResult::Error { error, .. }) => {
                                 still_failed.push((block_num, error));
@@ -368,10 +417,13 @@ impl Indexer {
 
                 // Store any remaining failures in failed_blocks table
                 if !failed_blocks.is_empty() {
+                    self.metrics
+                        .record_failed_blocks(failed_blocks.len() as u64);
+                    self.metrics.error("indexer", "block_fetch");
                     tracing::error!(
-                        "Storing {} blocks in failed_blocks table after 3 retries: {:?}",
-                        failed_blocks.len(),
-                        failed_blocks.iter().map(|(n, _)| n).collect::<Vec<_>>()
+                        count = failed_blocks.len(),
+                        blocks = ?failed_blocks.iter().map(|(n, _)| n).collect::<Vec<_>>(),
+                        "storing blocks in failed_blocks table after 3 retries"
                     );
 
                     for (block_num, error) in &failed_blocks {
@@ -388,26 +440,51 @@ impl Indexer {
                         .execute(&self.pool)
                         .await?;
                     }
+
+                    known_missing_blocks += failed_blocks.len() as u64;
+                    self.metrics
+                        .set_indexer_missing_blocks(known_missing_blocks);
                 }
             }
 
             current_block = end_block + 1;
+            indexed_head = Some(actual_head_block);
 
-            // Log progress after every batch
+            if erc20_supply_backfill_pending && current_block > head {
+                self.set_erc20_supply_history_complete(true).await?;
+                erc20_supply_backfill_pending = false;
+            }
+
+            // Record metrics and log progress
+            self.metrics.record_blocks_indexed(batch_size as u64);
+            self.metrics.set_indexer_head_block(actual_head_block);
+            if let Some(timestamp) = head_block_timestamp {
+                self.metrics.set_indexer_head_block_timestamp(timestamp);
+            }
+            self.metrics
+                .set_indexer_lag_blocks(lag_blocks(head, indexed_head, start_block));
+
+            // Full cycle timing includes time between batches such as head sleep.
             let elapsed = last_log_time.elapsed();
+            self.metrics.record_batch_duration(elapsed.as_secs_f64());
             let blocks_per_sec = batch_size as f64 / elapsed.as_secs_f64();
             let progress = (end_block as f64 / head as f64) * 100.0;
 
             tracing::info!(
-                "Batch complete: {} to {} ({} blocks in {:.2}s = {:.1} blocks/sec) | Progress: {:.2}%",
-                end_block - batch_size as u64 + 1, end_block, batch_size, elapsed.as_secs_f64(), blocks_per_sec, progress
+                start_block = end_block - batch_size as u64 + 1,
+                end_block,
+                blocks = batch_size,
+                elapsed_secs = format_args!("{:.2}", elapsed.as_secs_f64()),
+                blocks_per_sec = format_args!("{:.1}", blocks_per_sec),
+                progress_pct = format_args!("{:.2}", progress),
+                "batch complete"
             );
 
             last_log_time = std::time::Instant::now();
 
             // If we hit the head (batch smaller than configured), sleep to avoid tight loop
             if (batch_size as u64) < self.config.batch_size {
-                tracing::debug!("At chain head, sleeping for 1s");
+                tracing::debug!("at chain head, sleeping");
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
@@ -620,7 +697,9 @@ impl Indexer {
                         // Aggregate balance deltas — multiple transfers in the same batch
                         // for the same (address, contract) pair are summed in Rust,
                         // so we only need one DB upsert per unique pair.
-                        if from != ZERO_ADDRESS {
+                        if from == ZERO_ADDRESS {
+                            batch.apply_supply_delta(contract.clone(), value.clone());
+                        } else {
                             batch.apply_balance_delta(
                                 from,
                                 contract.clone(),
@@ -628,7 +707,9 @@ impl Indexer {
                                 block_num as i64,
                             );
                         }
-                        if to != ZERO_ADDRESS {
+                        if to == ZERO_ADDRESS {
+                            batch.apply_supply_delta(contract.clone(), -value);
+                        } else {
                             batch.apply_balance_delta(
                                 to,
                                 contract.clone(),
@@ -679,6 +760,7 @@ impl Indexer {
             ec_addresses,
             ec_first_seen_blocks,
             balance_map,
+            supply_map,
             last_block,
             ..
         } = batch;
@@ -806,6 +888,26 @@ impl Indexer {
             .await?;
         }
 
+        if !supply_map.is_empty() {
+            let mut supply_contracts = Vec::with_capacity(supply_map.len());
+            let mut supply_deltas = Vec::with_capacity(supply_map.len());
+            for (contract, delta) in supply_map {
+                supply_contracts.push(contract);
+                supply_deltas.push(delta.to_string());
+            }
+
+            let params: [&(dyn ToSql + Sync); 2] = [&supply_contracts, &supply_deltas];
+            pg_tx
+                .execute(
+                    "UPDATE erc20_contracts AS c
+                 SET total_supply = COALESCE(c.total_supply, 0) + s.supply_delta::numeric
+                 FROM unnest($1::text[], $2::text[]) AS s(contract_address, supply_delta)
+                 WHERE c.address = s.contract_address",
+                    &params,
+                )
+                .await?;
+        }
+
         if update_watermark {
             let last_value = last_block.to_string();
             pg_tx
@@ -855,6 +957,13 @@ impl Indexer {
         }
     }
 
+    async fn get_missing_block_count(&self) -> Result<u64> {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM failed_blocks")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count.0.max(0) as u64)
+    }
+
     async fn ensure_partitions_exist(&self, block_number: u64) -> Result<()> {
         use std::sync::atomic::Ordering;
 
@@ -898,10 +1007,10 @@ impl Indexer {
             let partition_end = partition_start + PARTITION_SIZE;
 
             tracing::info!(
-                "Creating partitions for block range {} to {} (p{})",
-                partition_start,
-                partition_end,
-                p
+                partition = p,
+                range_start = partition_start,
+                range_end = partition_end,
+                "creating partitions"
             );
 
             // Create partitions for all partitioned tables
@@ -926,18 +1035,51 @@ impl Indexer {
         // Update our tracked max
         self.current_max_partition
             .store(partition_num, Ordering::Relaxed);
-        tracing::info!("Partitions up to p{} ready", partition_num);
+        tracing::info!(max_partition = partition_num, "partitions ready");
         Ok(())
     }
 
     async fn truncate_tables(&self) -> Result<()> {
         sqlx::query(
             "TRUNCATE blocks, transactions, addresses, nft_contracts, nft_tokens, nft_transfers,
-             erc20_contracts, erc20_transfers, erc20_balances, event_logs, proxy_contracts, indexer_state CASCADE"
+             erc20_contracts, erc20_transfers, erc20_balances, event_logs, proxy_contracts,
+             indexer_state, failed_blocks CASCADE",
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
         Ok(())
+    }
+
+    async fn get_erc20_supply_history_status(&self) -> Result<Option<bool>> {
+        let value: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM indexer_state WHERE key = $1 LIMIT 1")
+                .bind(ERC20_SUPPLY_HISTORY_COMPLETE_KEY)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        Ok(value.map(|(value,)| value == "true"))
+    }
+
+    async fn set_erc20_supply_history_complete(&self, complete: bool) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO indexer_state (key, value, updated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+        )
+        .bind(ERC20_SUPPLY_HISTORY_COMPLETE_KEY)
+        .bind(if complete { "true" } else { "false" })
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+}
+
+fn lag_blocks(chain_head: u64, indexed_head: Option<u64>, start_block: u64) -> u64 {
+    match indexed_head {
+        Some(indexed_head) => chain_head.saturating_sub(indexed_head),
+        None if chain_head < start_block => 0,
+        None => chain_head - start_block + 1,
     }
 }
 
@@ -1055,6 +1197,43 @@ mod tests {
         let contract = batch.ec_addresses[0].clone();
         let to = "0x2222222222222222222222222222222222222222";
         assert!(batch.balance_map.contains_key(&(to.to_string(), contract)));
+        assert_eq!(
+            batch.supply_map["0x3333333333333333333333333333333333333333"],
+            BigDecimal::from(1000)
+        );
+    }
+
+    #[test]
+    fn collect_erc20_burn_tracks_negative_supply_delta() {
+        let mut batch = BlockBatch::new();
+        let known_erc20 = HashSet::new();
+        let known_nft = HashSet::new();
+
+        let logs = serde_json::json!([{
+            "address": "0x3333333333333333333333333333333333333333",
+            "topics": [
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000001111111111111111111111111111111111111111",
+                "0x0000000000000000000000000000000000000000000000000000000000000000"
+            ],
+            "data": "0x00000000000000000000000000000000000000000000000000000000000003e8",
+            "blockNumber": "0x1",
+            "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "transactionIndex": "0x0",
+            "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "logIndex": "0x0",
+            "removed": false
+        }]);
+
+        let mut fb = empty_fetched_block(1);
+        fb.receipts = vec![make_receipt(logs)];
+        Indexer::collect_block(&mut batch, &known_erc20, &known_nft, fb);
+
+        assert_eq!(batch.balance_map.len(), 1);
+        assert_eq!(
+            batch.supply_map["0x3333333333333333333333333333333333333333"],
+            BigDecimal::from(-1000)
+        );
     }
 
     #[test]
@@ -1345,5 +1524,22 @@ mod tests {
         let contract = "0x4444444444444444444444444444444444444444".to_string();
         let state = &batch.nft_token_map[&(contract, "42".to_string())];
         assert_eq!(state.owner, "0x3333333333333333333333333333333333333333");
+    }
+
+    #[test]
+    fn lag_blocks_uses_indexed_head_when_available() {
+        assert_eq!(lag_blocks(100, Some(90), 0), 10);
+    }
+
+    #[test]
+    fn lag_blocks_counts_from_start_block_when_no_head_is_indexed() {
+        assert_eq!(lag_blocks(100, None, 95), 6);
+        assert_eq!(lag_blocks(100, None, 0), 101);
+    }
+
+    #[test]
+    fn lag_blocks_clamps_to_zero_when_chain_head_is_before_start_block() {
+        assert_eq!(lag_blocks(50, None, 100), 0);
+        assert_eq!(lag_blocks(50, Some(60), 0), 0);
     }
 }

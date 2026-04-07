@@ -24,6 +24,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 use super::evnode::EvnodeClient;
+use crate::metrics::Metrics;
 
 /// Maximum blocks processed per cycle.
 const BATCH_SIZE: i64 = 100;
@@ -72,6 +73,7 @@ pub struct DaWorker {
         >,
     >,
     da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>,
+    metrics: Metrics,
 }
 
 impl DaWorker {
@@ -81,6 +83,7 @@ impl DaWorker {
         concurrency: u32,
         requests_per_second: u32,
         da_events_tx: broadcast::Sender<Vec<DaSseUpdate>>,
+        metrics: Metrics,
     ) -> Result<Self> {
         let concurrency = NonZeroU32::new(concurrency)
             .ok_or_else(|| anyhow::anyhow!("DA_WORKER_CONCURRENCY must be greater than 0"))?;
@@ -93,20 +96,22 @@ impl DaWorker {
             requests_per_second,
             rate_limiter: Arc::new(RateLimiter::direct(Quota::per_second(rate))),
             da_events_tx,
+            metrics,
         })
     }
 
     pub async fn run(&self) -> Result<()> {
         tracing::info!(
-            "DA worker started (concurrency: {}, rate_limit: {} req/s)",
-            self.concurrency,
-            self.requests_per_second
+            concurrency = self.concurrency,
+            rate_limit_rps = self.requests_per_second,
+            "DA worker started"
         );
 
         loop {
             let processed = self.process_blocks(BATCH_SIZE).await?;
             if processed > 0 {
-                tracing::info!("DA worker cycle: processed {}", processed);
+                self.metrics.record_da_blocks_processed(processed as u64);
+                tracing::info!(processed, "DA worker cycle complete");
             } else {
                 tokio::time::sleep(IDLE_SLEEP).await;
             }
@@ -136,6 +141,7 @@ impl DaWorker {
         let pool = &self.pool;
         let client = &self.client;
         let rate_limiter = &self.rate_limiter;
+        let metrics = &self.metrics;
 
         let results: Vec<Option<DaSseUpdate>> = stream::iter(blocks)
             .map(|(block_number,)| async move {
@@ -156,20 +162,23 @@ impl DaWorker {
                             }),
                             Ok(_) => None,
                             Err(e) => {
+                                metrics.error("da_worker", "da_upsert");
                                 tracing::warn!(
-                                    "Failed to upsert DA status for block {}: {}",
-                                    block_number,
-                                    e
+                                    block = block_number,
+                                    error = %e,
+                                    "failed to upsert DA status"
                                 );
                                 None
                             }
                         }
                     }
                     Err(e) => {
+                        metrics.record_da_rpc_error();
+                        metrics.error("da_worker", "da_fetch");
                         tracing::warn!(
-                            "Failed to fetch DA status for block {}: {}",
-                            block_number,
-                            e
+                            block = block_number,
+                            error = %e,
+                            "failed to fetch DA status"
                         );
                         None
                     }
@@ -199,9 +208,16 @@ mod tests {
     #[tokio::test]
     async fn new_rejects_zero_concurrency() {
         let (tx, _) = broadcast::channel(1);
-        let err = DaWorker::new(test_pool(), "http://localhost:7331", 0, 50, tx)
-            .err()
-            .expect("zero concurrency should fail");
+        let err = DaWorker::new(
+            test_pool(),
+            "http://localhost:7331",
+            0,
+            50,
+            tx,
+            Metrics::new(),
+        )
+        .err()
+        .expect("zero concurrency should fail");
 
         assert!(err
             .to_string()
@@ -211,9 +227,16 @@ mod tests {
     #[tokio::test]
     async fn new_rejects_zero_rate_limit() {
         let (tx, _) = broadcast::channel(1);
-        let err = DaWorker::new(test_pool(), "http://localhost:7331", 4, 0, tx)
-            .err()
-            .expect("zero rate limit should fail");
+        let err = DaWorker::new(
+            test_pool(),
+            "http://localhost:7331",
+            4,
+            0,
+            tx,
+            Metrics::new(),
+        )
+        .err()
+        .expect("zero rate limit should fail");
 
         assert!(err
             .to_string()
@@ -223,7 +246,15 @@ mod tests {
     #[tokio::test]
     async fn notify_da_updates_sends_full_batch() {
         let (tx, mut rx) = broadcast::channel(1);
-        let worker = DaWorker::new(test_pool(), "http://localhost:7331", 4, 50, tx).unwrap();
+        let worker = DaWorker::new(
+            test_pool(),
+            "http://localhost:7331",
+            4,
+            50,
+            tx,
+            Metrics::new(),
+        )
+        .unwrap();
         let updates = vec![
             DaSseUpdate {
                 block_number: 10,
@@ -248,7 +279,15 @@ mod tests {
     #[tokio::test]
     async fn notify_da_updates_skips_empty_batch() {
         let (tx, mut rx) = broadcast::channel(1);
-        let worker = DaWorker::new(test_pool(), "http://localhost:7331", 4, 50, tx).unwrap();
+        let worker = DaWorker::new(
+            test_pool(),
+            "http://localhost:7331",
+            4,
+            50,
+            tx,
+            Metrics::new(),
+        )
+        .unwrap();
 
         worker.notify_da_updates(&[]);
 

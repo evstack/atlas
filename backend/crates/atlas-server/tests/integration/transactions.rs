@@ -59,7 +59,7 @@ async fn seed_transactions(pool: &sqlx::PgPool) {
 fn list_transactions() {
     common::run(async {
         let pool = common::pool();
-        seed_transactions(pool).await;
+        seed_transactions(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -83,7 +83,7 @@ fn list_transactions() {
 fn get_transaction_by_hash() {
     common::run(async {
         let pool = common::pool();
-        seed_transactions(pool).await;
+        seed_transactions(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -126,7 +126,7 @@ fn get_transaction_not_found() {
 fn get_block_transactions() {
     common::run(async {
         let pool = common::pool();
-        seed_transactions(pool).await;
+        seed_transactions(&pool).await;
 
         let app = common::test_router();
         let response = app

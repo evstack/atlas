@@ -41,6 +41,10 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
+# Metrics
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+
 # Config
 dotenvy = "0.15"
 
@@ -55,7 +59,7 @@ hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Testing
-testcontainers = "0.27"
+testcontainers = { version = "0.27", features = ["blocking"] }
 testcontainers-modules = { version = "0.15", features = ["postgres"] }
 
 # CLI

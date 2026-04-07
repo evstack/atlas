@@ -17,12 +17,7 @@ import { formatNumber } from '../utils';
 import Loading from '../components/Loading';
 import { BlockStatsContext } from '../context/BlockStatsContext';
 import { useChartData } from '../hooks/useChartData';
-
-// ─── theme constants for recharts (matches CSS vars) ──────────────────────────
-const CHART_ACCENT = '#dc2626';
-const CHART_GRID = '#22222e';
-const CHART_AXIS_TEXT = '#94a3b8';
-const CHART_TOOLTIP_BG = '#0c0c10';
+import { useChartColors } from '../hooks/useChartColors';
 
 const WINDOWS: { label: string; value: ChartWindow }[] = [
   { label: '1H', value: '1h' },
@@ -44,6 +39,8 @@ export default function StatusPage() {
     dailyTxsLoading, blocksChartLoading, gasPriceLoading,
     dailyTxsError, blocksChartError, gasPriceError,
   } = useChartData(window);
+
+  const { accent: CHART_ACCENT, grid: CHART_GRID, axisText: CHART_AXIS_TEXT, tooltipBg: CHART_TOOLTIP_BG, tooltipText: CHART_TOOLTIP_TEXT } = useChartColors();
 
   useEffect(() => {
     let mounted = true;
@@ -137,7 +134,7 @@ export default function StatusPage() {
                     <Tooltip
                       contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                       labelStyle={{ color: CHART_AXIS_TEXT }}
-                      itemStyle={{ color: '#f8fafc' }}
+                      itemStyle={{ color: CHART_TOOLTIP_TEXT }}
                       formatter={(v: unknown) => [formatCompact(v as number), 'Transactions']}
                     />
                     <Bar dataKey="tx_count" fill={CHART_ACCENT} radius={[2, 2, 0, 0]} isAnimationActive={false} />
@@ -170,7 +167,7 @@ export default function StatusPage() {
                     <Tooltip
                       contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                       labelStyle={{ color: CHART_AXIS_TEXT }}
-                      itemStyle={{ color: '#f8fafc' }}
+                      itemStyle={{ color: CHART_TOOLTIP_TEXT }}
                       formatter={(v: unknown) => [formatCompact(v as number), 'Avg Gas Used']}
                       labelFormatter={(v) => formatBucketTooltip(v, window)}
                     />
@@ -206,7 +203,7 @@ export default function StatusPage() {
                     <Tooltip
                       contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                       labelStyle={{ color: CHART_AXIS_TEXT }}
-                      itemStyle={{ color: '#f8fafc' }}
+                      itemStyle={{ color: CHART_TOOLTIP_TEXT }}
                       formatter={(v: unknown) => [formatCompact(v as number), 'Transactions']}
                       labelFormatter={(v) => formatBucketTooltip(v, window)}
                     />
@@ -234,7 +231,7 @@ export default function StatusPage() {
                     <Tooltip
                       contentStyle={{ background: CHART_TOOLTIP_BG, border: `1px solid ${CHART_GRID}`, borderRadius: 8 }}
                       labelStyle={{ color: CHART_AXIS_TEXT }}
-                      itemStyle={{ color: '#f8fafc' }}
+                      itemStyle={{ color: CHART_TOOLTIP_TEXT }}
                       formatter={(v: unknown) => [formatGwei(v as number | null), 'Avg Gas Price']}
                       labelFormatter={(v) => formatBucketTooltip(v, window)}
                     />

@@ -23,6 +23,8 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 dotenvy = { workspace = true }
 bigdecimal = { workspace = true }
 hex = { workspace = true }

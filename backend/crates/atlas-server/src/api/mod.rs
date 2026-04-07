@@ -1,7 +1,8 @@
 pub mod error;
 pub mod handlers;
 
-use axum::{routing::get, Router};
+use axum::{middleware, routing::get, Router};
+use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +14,7 @@ use tower_http::trace::TraceLayer;
 use crate::faucet::SharedFaucetBackend;
 use crate::head::HeadTracker;
 use crate::indexer::DaSseUpdate;
+use crate::metrics::Metrics;
 
 pub struct AppState {
     pub pool: PgPool,
@@ -25,11 +27,15 @@ pub struct AppState {
     pub chain_id: u64,
     pub chain_name: String,
     pub chain_logo_url: Option<String>,
+    pub chain_logo_url_light: Option<String>,
+    pub chain_logo_url_dark: Option<String>,
     pub accent_color: Option<String>,
     pub background_color_dark: Option<String>,
     pub background_color_light: Option<String>,
     pub success_color: Option<String>,
     pub error_color: Option<String>,
+    pub metrics: Metrics,
+    pub prometheus_handle: PrometheusHandle,
 }
 
 /// Build the Axum router.
@@ -170,8 +176,12 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         .route("/api/status", get(handlers::status::get_status))
         // Config (white-label branding)
         .route("/api/config", get(handlers::config::get_config))
+        // Metrics
+        .route("/metrics", get(handlers::metrics::metrics))
         // Health
-        .route("/health", get(|| async { "OK" }));
+        .route("/health", get(|| async { "OK" }))
+        .route("/health/live", get(handlers::health::liveness))
+        .route("/health/ready", get(handlers::health::readiness));
 
     if state.faucet.is_some() {
         router = router
@@ -187,7 +197,9 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
             axum::http::StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(10),
         ))
-        // Merge SSE routes (no TimeoutLayer so connections stay alive)
+        // HTTP metrics middleware — placed after routing so MatchedPath is available
+        .layer(middleware::from_fn(crate::metrics::http_metrics_middleware))
+        // Merge SSE routes without TimeoutLayer so connections stay alive
         .merge(sse_routes)
         // Shared layers applied to all routes
         .layer(build_cors_layer(cors_origin))
@@ -262,6 +274,9 @@ mod tests {
         let head_tracker = Arc::new(crate::head::HeadTracker::empty(10));
         let (tx, _) = broadcast::channel(1);
         let (da_tx, _) = broadcast::channel(1);
+        let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+            .build_recorder()
+            .handle();
         Arc::new(AppState {
             pool,
             block_events_tx: tx,
@@ -273,11 +288,15 @@ mod tests {
             chain_id: 1,
             chain_name: "Test Chain".to_string(),
             chain_logo_url: None,
+            chain_logo_url_light: None,
+            chain_logo_url_dark: None,
             accent_color: None,
             background_color_dark: None,
             background_color_light: None,
             success_color: None,
             error_color: None,
+            metrics: Metrics::new(),
+            prometheus_handle,
         })
     }
 

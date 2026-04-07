@@ -105,6 +105,9 @@ pub(crate) struct BlockBatch {
     // erc20_balances — aggregated deltas per (address, contract)
     pub(crate) balance_map: HashMap<(String, String), BalanceDelta>,
 
+    // erc20 total supply deltas — aggregated per contract from mint/burn events
+    pub(crate) supply_map: HashMap<String, BigDecimal>,
+
     // Contracts newly discovered in this batch.
     // These are NOT merged into the persistent known_* sets until after a
     // successful write, so a failed write doesn't leave the in-memory sets
@@ -159,6 +162,16 @@ impl BlockBatch {
         entry.last_block = entry.last_block.max(block);
     }
 
+    /// Add a total supply delta for a contract.
+    /// Only mint and burn transfers should touch this accumulator.
+    pub(crate) fn apply_supply_delta(&mut self, contract: String, delta: BigDecimal) {
+        let entry = self
+            .supply_map
+            .entry(contract)
+            .or_insert(BigDecimal::from(0));
+        *entry += delta;
+    }
+
     pub(crate) fn materialize_blocks(&self, indexed_at: DateTime<Utc>) -> Vec<Block> {
         debug_assert_eq!(self.b_numbers.len(), self.b_hashes.len());
         debug_assert_eq!(self.b_numbers.len(), self.b_parent_hashes.len());
@@ -181,6 +194,10 @@ impl BlockBatch {
                 indexed_at,
             })
             .collect()
+    }
+
+    pub(crate) fn last_block_timestamp(&self) -> Option<i64> {
+        self.b_timestamps.last().copied()
     }
 }
 
@@ -261,6 +278,17 @@ mod tests {
     }
 
     #[test]
+    fn apply_supply_delta_accumulates_by_contract() {
+        let mut batch = BlockBatch::new();
+        let contract = "0xtoken".to_string();
+
+        batch.apply_supply_delta(contract.clone(), BigDecimal::from(100));
+        batch.apply_supply_delta(contract.clone(), BigDecimal::from(-25));
+
+        assert_eq!(batch.supply_map[&contract], BigDecimal::from(75));
+    }
+
+    #[test]
     fn materialize_blocks_preserves_parallel_block_fields() {
         let mut batch = BlockBatch::new();
         batch.b_numbers.push(42);
@@ -287,5 +315,14 @@ mod tests {
         assert_eq!(blocks[0].base_fee_per_gas.as_deref(), Some("1000000000"));
         assert_eq!(blocks[0].transaction_count, 3);
         assert_eq!(blocks[0].indexed_at, indexed_at);
+    }
+
+    #[test]
+    fn last_block_timestamp_returns_latest_collected_timestamp() {
+        let mut batch = BlockBatch::new();
+        batch.b_timestamps.push(1_700_000_001);
+        batch.b_timestamps.push(1_700_000_042);
+
+        assert_eq!(batch.last_block_timestamp(), Some(1_700_000_042));
     }
 }

@@ -32,7 +32,7 @@ async fn seed_blocks(pool: &sqlx::PgPool) {
 fn list_blocks_paginated() {
     common::run(async {
         let pool = common::pool();
-        seed_blocks(pool).await;
+        seed_blocks(&pool).await;
 
         let app = common::test_router();
         let response = app
@@ -61,7 +61,7 @@ fn list_blocks_paginated() {
 fn get_block_by_number() {
     common::run(async {
         let pool = common::pool();
-        seed_blocks(pool).await;
+        seed_blocks(&pool).await;
 
         let app = common::test_router();
         let response = app
