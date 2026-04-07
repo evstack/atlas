@@ -80,6 +80,13 @@ pub struct GasPricePoint {
     pub avg_gas_price: Option<f64>,
 }
 
+fn resolve_avg_gas_price(
+    tx_avg_gas_price: Option<f64>,
+    block_avg_base_fee_per_gas: Option<f64>,
+) -> Option<f64> {
+    tx_avg_gas_price.or(block_avg_base_fee_per_gas)
+}
+
 /// GET /api/stats/blocks-chart?window=1h|6h|24h|7d
 ///
 /// Returns tx count and avg gas utilization bucketed over the given window.
@@ -175,7 +182,7 @@ pub async fn get_daily_txs(
 /// GET /api/stats/gas-price?window=1h|6h|24h|7d
 ///
 /// Returns average gas price (in wei) per bucket over the given window.
-/// Anchored to the latest indexed transaction timestamp (not NOW()).
+/// Anchored to the latest indexed block timestamp (not NOW()).
 pub async fn get_gas_price_chart(
     State(state): State<Arc<AppState>>,
     Query(params): Query<WindowQuery>,
@@ -183,7 +190,7 @@ pub async fn get_gas_price_chart(
     let window = params.window;
     let bucket_secs = window.bucket_secs();
 
-    let rows: Vec<(chrono::DateTime<Utc>, Option<f64>)> = sqlx::query_as(
+    let rows: Vec<(chrono::DateTime<Utc>, Option<f64>, Option<f64>)> = sqlx::query_as(
         r#"
         WITH latest AS (SELECT MAX(timestamp) AS max_ts FROM blocks),
         bounds AS (
@@ -216,7 +223,8 @@ pub async fn get_gas_price_chart(
         )
         SELECT
             to_timestamp(gs::float8) AS bucket,
-            COALESCE(t.avg_gas_price, ba.avg_base_fee_per_gas) AS avg_gas_price
+            t.avg_gas_price,
+            ba.avg_base_fee_per_gas
         FROM bounds bo
         CROSS JOIN generate_series(bo.start_ts, bo.end_ts - $1, $1::bigint) AS gs
         LEFT JOIN tx_agg t ON t.bucket_ts = gs
@@ -231,9 +239,12 @@ pub async fn get_gas_price_chart(
 
     let points = rows
         .into_iter()
-        .map(|(bucket, avg_gas_price)| GasPricePoint {
+        .map(|(bucket, tx_avg_gas_price, block_avg_base_fee_per_gas)| GasPricePoint {
             bucket: bucket.to_rfc3339(),
-            avg_gas_price,
+            avg_gas_price: resolve_avg_gas_price(
+                tx_avg_gas_price,
+                block_avg_base_fee_per_gas,
+            ),
         })
         .collect();
 
@@ -274,5 +285,20 @@ mod tests {
         // SevenDays is now supported for gas price queries
         assert_eq!(Window::SevenDays.duration_secs(), 7 * 24 * 3_600);
         assert_eq!(Window::SevenDays.bucket_secs(), 43_200);
+    }
+
+    #[test]
+    fn resolve_avg_gas_price_prefers_transaction_average() {
+        assert_eq!(resolve_avg_gas_price(Some(42.0), Some(7.0)), Some(42.0));
+    }
+
+    #[test]
+    fn resolve_avg_gas_price_falls_back_to_base_fee() {
+        assert_eq!(resolve_avg_gas_price(None, Some(7.0)), Some(7.0));
+    }
+
+    #[test]
+    fn resolve_avg_gas_price_returns_none_when_bucket_is_empty() {
+        assert_eq!(resolve_avg_gas_price(None, None), None);
     }
 }
