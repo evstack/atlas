@@ -104,6 +104,8 @@ pub fn test_router() -> Router {
         rpc_url: String::new(),
         da_tracking_enabled: false,
         faucet: None,
+        faucet_amount_wei: None,
+        faucet_cooldown_minutes: None,
         chain_id: 42,
         chain_name: "Test Chain".to_string(),
         chain_logo_url: None,

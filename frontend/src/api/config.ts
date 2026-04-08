@@ -1,4 +1,11 @@
-import client from './client';
+import client from "./client";
+import type { ChainFeatures } from "../types";
+
+export interface FaucetConfig {
+  enabled: boolean;
+  amount_wei?: string;
+  cooldown_minutes?: number;
+}
 
 export interface BrandingConfig {
   chain_name: string;
@@ -10,8 +17,10 @@ export interface BrandingConfig {
   background_color_light?: string;
   success_color?: string;
   error_color?: string;
+  features: ChainFeatures;
+  faucet: FaucetConfig;
 }
 
 export async function getConfig(): Promise<BrandingConfig> {
-  return client.get<BrandingConfig>('/config');
+  return client.get<BrandingConfig>("/config");
 }
