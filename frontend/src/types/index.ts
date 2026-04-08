@@ -6,6 +6,7 @@ export interface Block {
   timestamp: number;
   gas_used: number;
   gas_limit: number;
+  base_fee_per_gas?: string | null;
   transaction_count: number;
   indexed_at: string;
   da_status?: BlockDaStatus | null;
@@ -122,6 +123,7 @@ export interface BlockSearchResult extends SearchResult {
   timestamp: number;
   gas_used: number;
   gas_limit: number;
+  base_fee_per_gas?: string | null;
   transaction_count: number;
   indexed_at: string;
 }

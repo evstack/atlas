@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use crate::api::error::ApiResult;
 use crate::api::AppState;
-use atlas_common::{AtlasError, Block, BlockDaStatus, PaginatedResponse, Pagination, Transaction};
+use atlas_common::{
+    AtlasError, Block, BlockDaStatus, PaginatedResponse, Pagination, Transaction, BLOCK_COLUMNS,
+};
 
 /// Block response with optional DA status.
 /// DA fields are always present in the JSON (null when no data),
@@ -36,13 +38,10 @@ pub async fn list_blocks(
     let limit = pagination.limit();
     let cursor = (total_count - 1) - (pagination.page.saturating_sub(1) as i64) * limit;
 
-    let blocks: Vec<Block> = sqlx::query_as(
-        "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
-         FROM blocks
-         WHERE number <= $2
-         ORDER BY number DESC
-         LIMIT $1",
-    )
+    let blocks: Vec<Block> = sqlx::query_as(&format!(
+        "SELECT {} FROM blocks WHERE number <= $2 ORDER BY number DESC LIMIT $1",
+        BLOCK_COLUMNS
+    ))
     .bind(limit)
     .bind(cursor)
     .fetch_all(&state.pool)
@@ -82,11 +81,10 @@ pub async fn get_block(
     State(state): State<Arc<AppState>>,
     Path(number): Path<i64>,
 ) -> ApiResult<Json<BlockResponse>> {
-    let block: Block = sqlx::query_as(
-        "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
-         FROM blocks
-         WHERE number = $1",
-    )
+    let block: Block = sqlx::query_as(&format!(
+        "SELECT {} FROM blocks WHERE number = $1",
+        BLOCK_COLUMNS
+    ))
     .bind(number)
     .fetch_optional(&state.pool)
     .await?

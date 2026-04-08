@@ -15,7 +15,7 @@ export interface DailyTxPoint {
 
 export interface GasPricePoint {
   bucket: string; // ISO timestamp
-  avg_gas_price: number; // wei
+  avg_gas_price: number | null; // wei
 }
 
 export function getBlocksChart(window: ChartWindow): Promise<BlockChartPoint[]> {

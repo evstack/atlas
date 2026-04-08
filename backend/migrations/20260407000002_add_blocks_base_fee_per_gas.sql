@@ -1,0 +1,2 @@
+ALTER TABLE blocks
+ADD COLUMN IF NOT EXISTS base_fee_per_gas NUMERIC(78, 0);

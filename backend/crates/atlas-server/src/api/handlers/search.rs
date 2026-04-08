@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::api::error::ApiResult;
 use crate::api::AppState;
-use atlas_common::{Address, Block, Erc20Contract, NftContract, Transaction};
+use atlas_common::{Address, Block, Erc20Contract, NftContract, Transaction, BLOCK_COLUMNS};
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
@@ -151,11 +151,10 @@ async fn search_block_by_hash(
     hash: &str,
 ) -> Result<Option<Block>, atlas_common::AtlasError> {
     // Hash is already lowercased by caller
-    sqlx::query_as(
-        "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
-         FROM blocks
-         WHERE hash = $1"
-    )
+    sqlx::query_as(&format!(
+        "SELECT {} FROM blocks WHERE hash = $1",
+        BLOCK_COLUMNS
+    ))
     .bind(hash)
     .fetch_optional(&state.pool)
     .await
@@ -166,11 +165,10 @@ async fn search_block_by_number(
     state: &AppState,
     number: i64,
 ) -> Result<Option<Block>, atlas_common::AtlasError> {
-    sqlx::query_as(
-        "SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
-         FROM blocks
-         WHERE number = $1"
-    )
+    sqlx::query_as(&format!(
+        "SELECT {} FROM blocks WHERE number = $1",
+        BLOCK_COLUMNS
+    ))
     .bind(number)
     .fetch_optional(&state.pool)
     .await
