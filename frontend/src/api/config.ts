@@ -46,7 +46,9 @@ function normalizeFaucet(value: unknown): FaucetConfig {
     ...(typeof faucet.amount_wei === "string"
       ? { amount_wei: faucet.amount_wei }
       : {}),
-    ...(typeof faucet.cooldown_minutes === "number"
+    ...(Number.isFinite(faucet.cooldown_minutes) &&
+      Number.isInteger(faucet.cooldown_minutes) &&
+      faucet.cooldown_minutes >= 0
       ? { cooldown_minutes: faucet.cooldown_minutes }
       : {}),
   };

@@ -41,6 +41,8 @@ export default function useFaucetInfo(enabled = true): UseFaucetInfoResult {
       try {
         const info = await getFaucetInfo();
         if (requestVersion !== requestVersionRef.current) return;
+        setError(null);
+        setNotFound(false);
         setFaucetInfo(info);
       } catch (err: unknown) {
         if (background || requestVersion !== requestVersionRef.current) return;
