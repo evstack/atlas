@@ -1,17 +1,30 @@
-import { useEffect, useState, useContext, type ReactNode } from 'react';
-import { getConfig, type BrandingConfig } from '../api/config';
-import { deriveSurfaceShades, applyPalette, hexToRgbTriplet } from '../utils/color';
-import { ThemeContext } from './theme-context';
-import { BrandingContext, brandingDefaults } from './branding-context';
-import { resolveBrandingValue, resolveLogoUrl } from './branding';
-import defaultLogoImg from '../assets/logo.png';
+import { useEffect, useState, useContext, type ReactNode } from "react";
+import {
+  getConfig,
+  normalizeBrandingConfig,
+  type BrandingConfig,
+} from "../api/config";
+import {
+  deriveSurfaceShades,
+  applyPalette,
+  hexToRgbTriplet,
+} from "../utils/color";
+import { ThemeContext } from "./theme-context";
+import { BrandingContext, brandingDefaults } from "./branding-context";
+import { resolveBrandingValue, resolveLogoUrl } from "./branding";
+import defaultLogoImg from "../assets/logo.png";
 
-const CACHE_KEY = 'branding_config';
+const CACHE_KEY = "branding_config";
 
 function readCache(): BrandingConfig | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
-    return raw ? (JSON.parse(raw) as BrandingConfig) : null;
+    return raw
+      ? normalizeBrandingConfig(
+          JSON.parse(raw) as Partial<BrandingConfig> &
+            Pick<BrandingConfig, "chain_name">,
+        )
+      : null;
   } catch {
     return null;
   }
@@ -20,9 +33,9 @@ function readCache(): BrandingConfig | null {
 function setFavicon(href: string) {
   let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
   if (!link) {
-    link = document.createElement('link');
-    link.rel = 'icon';
-    link.type = 'image/png';
+    link = document.createElement("link");
+    link.rel = "icon";
+    link.type = "image/png";
     document.head.appendChild(link);
   }
   link.href = href;
@@ -30,7 +43,7 @@ function setFavicon(href: string) {
 
 export function BrandingProvider({ children }: { children: ReactNode }) {
   const themeCtx = useContext(ThemeContext);
-  const theme = themeCtx?.theme ?? 'dark';
+  const theme = themeCtx?.theme ?? "dark";
   const [branding, setBranding] = useState(() => {
     const cached = readCache();
     return cached ? resolveBrandingValue(cached, theme) : brandingDefaults;
@@ -47,7 +60,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         if (!config) setBranding({ ...brandingDefaults, loaded: true });
       });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -75,25 +88,31 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    setRgbVar('--color-accent-primary', config.accent_color);
-    setRgbVar('--color-accent-success', config.success_color);
-    setRgbVar('--color-accent-error', config.error_color);
+    setRgbVar("--color-accent-primary", config.accent_color);
+    setRgbVar("--color-accent-success", config.success_color);
+    setRgbVar("--color-accent-error", config.error_color);
   }, [config]);
 
   // Apply background palette reactively on theme change
   useEffect(() => {
     if (!config) return;
 
-    if (theme === 'dark' && config.background_color_dark) {
+    if (theme === "dark" && config.background_color_dark) {
       try {
-        const palette = deriveSurfaceShades(config.background_color_dark, 'dark');
+        const palette = deriveSurfaceShades(
+          config.background_color_dark,
+          "dark",
+        );
         applyPalette(palette);
       } catch {
         // fall through to default CSS vars
       }
-    } else if (theme === 'light' && config.background_color_light) {
+    } else if (theme === "light" && config.background_color_light) {
       try {
-        const palette = deriveSurfaceShades(config.background_color_light, 'light');
+        const palette = deriveSurfaceShades(
+          config.background_color_light,
+          "light",
+        );
         applyPalette(palette);
       } catch {
         // fall through to default CSS vars
@@ -102,11 +121,19 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
       // Remove any inline overrides so the CSS defaults take effect
       const root = document.documentElement;
       const vars = [
-        '--color-surface-900', '--color-surface-800', '--color-surface-700',
-        '--color-surface-600', '--color-surface-500', '--color-body-bg',
-        '--color-body-text', '--color-border', '--color-text-primary',
-        '--color-text-secondary', '--color-text-muted', '--color-text-subtle',
-        '--color-text-faint',
+        "--color-surface-900",
+        "--color-surface-800",
+        "--color-surface-700",
+        "--color-surface-600",
+        "--color-surface-500",
+        "--color-body-bg",
+        "--color-body-text",
+        "--color-border",
+        "--color-text-primary",
+        "--color-text-secondary",
+        "--color-text-muted",
+        "--color-text-subtle",
+        "--color-text-faint",
       ];
       vars.forEach((v) => {
         root.style.removeProperty(v);
@@ -118,22 +145,22 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     return (
       <div
         style={{
-          position: 'fixed',
+          position: "fixed",
           inset: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: theme === 'dark' ? '#0f172a' : '#f8fafc',
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: theme === "dark" ? "#0f172a" : "#f8fafc",
         }}
       >
         <div
           style={{
-            width: '2rem',
-            height: '2rem',
-            borderRadius: '50%',
-            border: `3px solid ${theme === 'dark' ? '#334155' : '#cbd5e1'}`,
-            borderTopColor: theme === 'dark' ? '#94a3b8' : '#64748b',
-            animation: 'spin 0.8s linear infinite',
+            width: "2rem",
+            height: "2rem",
+            borderRadius: "50%",
+            border: `3px solid ${theme === "dark" ? "#334155" : "#cbd5e1"}`,
+            borderTopColor: theme === "dark" ? "#94a3b8" : "#64748b",
+            animation: "spin 0.8s linear infinite",
           }}
         />
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>

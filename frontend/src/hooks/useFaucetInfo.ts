@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getFaucetInfo } from "../api/faucet";
 import type { ApiError, FaucetInfo } from "../types";
 import { toApiError } from "../utils";
@@ -16,14 +16,18 @@ export default function useFaucetInfo(enabled = true): UseFaucetInfoResult {
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<ApiError | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const requestVersionRef = useRef(0);
 
   const fetchInfo = useCallback(
     async (options?: { background?: boolean }) => {
+      const requestVersion = ++requestVersionRef.current;
       if (!enabled) {
-        setFaucetInfo(null);
-        setLoading(false);
-        setError(null);
-        setNotFound(false);
+        if (requestVersion === requestVersionRef.current) {
+          setFaucetInfo(null);
+          setLoading(false);
+          setError(null);
+          setNotFound(false);
+        }
         return;
       }
 
@@ -36,9 +40,10 @@ export default function useFaucetInfo(enabled = true): UseFaucetInfoResult {
 
       try {
         const info = await getFaucetInfo();
+        if (requestVersion !== requestVersionRef.current) return;
         setFaucetInfo(info);
       } catch (err: unknown) {
-        if (background) return;
+        if (background || requestVersion !== requestVersionRef.current) return;
         const apiError = toApiError(err, "Failed to load faucet information");
         if (apiError.status === 404) {
           setFaucetInfo(null);
@@ -47,7 +52,7 @@ export default function useFaucetInfo(enabled = true): UseFaucetInfoResult {
           setError(apiError);
         }
       } finally {
-        if (!background) {
+        if (!background && requestVersion === requestVersionRef.current) {
           setLoading(false);
         }
       }
@@ -57,6 +62,7 @@ export default function useFaucetInfo(enabled = true): UseFaucetInfoResult {
 
   useEffect(() => {
     if (!enabled) {
+      requestVersionRef.current += 1;
       setFaucetInfo(null);
       setLoading(false);
       setError(null);

@@ -30,7 +30,7 @@ function isValidAddress(address: string): boolean {
 }
 
 export default function FaucetPage() {
-  const { faucet } = useBranding();
+  const { faucet, loaded } = useBranding();
   const { faucetInfo, loading, error, notFound, refetch } = useFaucetInfo(
     faucet.enabled,
   );
@@ -94,6 +94,10 @@ export default function FaucetPage() {
 
     return cards;
   }, [faucet.amount_wei, faucet.cooldown_minutes, faucetInfo?.balance_wei]);
+
+  if (!loaded) {
+    return <Loading size="lg" text="Checking faucet availability..." />;
+  }
 
   if (!faucet.enabled || notFound || disabled) {
     return <NotFoundPage />;
