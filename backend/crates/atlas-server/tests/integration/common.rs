@@ -82,6 +82,11 @@ pub fn pool() -> PgPool {
         .expect("create lazy pool")
 }
 
+pub fn database_url() -> &'static str {
+    let env = ENV.as_ref().expect("integration test environment");
+    &env.database_url
+}
+
 pub fn test_router() -> Router {
     let pool = pool();
     let head_tracker = Arc::new(HeadTracker::empty(10));
