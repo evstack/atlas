@@ -133,6 +133,7 @@ mod tests {
             error_color: None,
             metrics: crate::metrics::Metrics::new(),
             prometheus_handle,
+            solc_cache_dir: "/tmp/solc-cache".to_string(),
         }))
     }
 

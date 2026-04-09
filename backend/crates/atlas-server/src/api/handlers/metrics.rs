@@ -56,6 +56,7 @@ mod tests {
             error_color: None,
             metrics: recorder_metrics,
             prometheus_handle,
+            solc_cache_dir: "/tmp/solc-cache".to_string(),
         });
 
         let body = super::metrics(State(state)).await;

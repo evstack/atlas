@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
-import { useTransaction, useTransactionDecodedLogs } from '../hooks';
+import { useTransaction, useTransactionDecodedLogs, useCombinedAbi } from '../hooks';
 import { AddressLink, BlockLink, StatusBadge, CopyButton, EventLogs, Loading } from '../components';
-import { formatTimestamp, formatEtherExact, formatGas, formatGasPrice, formatNumber, truncateHash, formatTokenAmountExact } from '../utils';
+import { formatTimestamp, formatEtherExact, formatGas, formatGasPrice, formatNumber, truncateHash, formatTokenAmountExact, decodeInputData } from '../utils';
 import { getTxErc20Transfers, getTxNftTransfers } from '../api/transactions';
 import { getToken } from '../api/tokens';
 
@@ -19,6 +19,9 @@ export default function TransactionDetailPage() {
   const [nftsLoading, setNftsLoading] = useState<boolean>(true);
   const [tokenMeta, setTokenMeta] = useState<Record<string, { symbol: string | null; decimals: number }>>({});
   const [showInput, setShowInput] = useState(false);
+
+  const { combinedAbi } = useCombinedAbi(transaction?.to_address ?? undefined);
+  const decodedCall = decodeInputData(transaction?.input_data, combinedAbi?.combined_abi);
 
   const tokensCount = erc20.length;
   const nftsCount = nfts.length;
@@ -258,9 +261,25 @@ export default function TransactionDetailPage() {
                   onClick={() => setShowInput((v) => !v)}
                   aria-expanded={showInput}
                 >
-                  {showInput ? 'Hide' : 'Show'}
+                  {showInput ? 'Hide raw' : 'Show raw'}
                 </button>
               </div>
+              {decodedCall && (
+                <div className="mb-3 bg-dark-700 p-3 text-sm font-mono">
+                  <span className="text-blue-400">{decodedCall.name}</span>
+                  <span className="text-gray-400">(</span>
+                  {decodedCall.args.map((arg, i) => (
+                    <span key={i}>
+                      {i > 0 && <span className="text-gray-500">, </span>}
+                      <span className="text-gray-400 text-xs">{arg.type} </span>
+                      <span className="text-yellow-300">{arg.name}</span>
+                      <span className="text-gray-400">: </span>
+                      <span className="text-gray-200 break-all">{arg.value}</span>
+                    </span>
+                  ))}
+                  <span className="text-gray-400">)</span>
+                </div>
+              )}
               {showInput && (
                 <div className="bg-dark-700 p-3 overflow-x-auto">
                   <pre className="hash text-gray-300 text-xs whitespace-pre-wrap break-all">

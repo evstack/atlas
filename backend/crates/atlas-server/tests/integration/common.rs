@@ -111,6 +111,7 @@ pub fn test_router() -> Router {
         error_color: None,
         metrics: atlas_server::metrics::Metrics::new(),
         prometheus_handle,
+        solc_cache_dir: "/tmp/solc-cache".to_string(),
     });
 
     build_router(state, None)

@@ -55,6 +55,9 @@ pub struct Config {
     pub background_color_light: Option<String>,
     pub success_color: Option<String>,
     pub error_color: Option<String>,
+
+    // Contract verification
+    pub solc_cache_dir: String,
 }
 
 #[derive(Clone)]
@@ -207,6 +210,8 @@ impl Config {
             background_color_light: parse_optional_env(env::var("BACKGROUND_COLOR_LIGHT").ok()),
             success_color: parse_optional_env(env::var("SUCCESS_COLOR").ok()),
             error_color: parse_optional_env(env::var("ERROR_COLOR").ok()),
+            solc_cache_dir: env::var("SOLC_CACHE_DIR")
+                .unwrap_or_else(|_| "/tmp/solc-cache".to_string()),
         })
     }
 }
@@ -335,6 +340,7 @@ impl Config {
             background_color_light: parse_optional_env(args.branding.background_light),
             success_color: parse_optional_env(args.branding.success_color),
             error_color: parse_optional_env(args.branding.error_color),
+            solc_cache_dir: args.api.solc_cache_dir,
         })
     }
 }
@@ -454,6 +460,7 @@ mod tests_from_run_args {
                 port: 3000,
                 cors_origin: None,
                 sse_replay_buffer_blocks: 4096,
+                solc_cache_dir: "/tmp/solc-cache".to_string(),
             },
             indexer: cli::IndexerArgs {
                 start_block: 0,

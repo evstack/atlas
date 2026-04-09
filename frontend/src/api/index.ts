@@ -6,4 +6,5 @@ export * from './tokens';
 export * from './logs';
 export * from './search';
 export * from './faucet';
+export * from './contracts';
 export { default as client } from './client';

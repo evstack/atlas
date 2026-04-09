@@ -1,6 +1,8 @@
 //! Proxy contract detection and API
 //!
 //! Detects and stores relationships between proxy contracts and their implementations.
+//! Detection is done lazily on first request via `eth_getStorageAt` against known proxy slots,
+//! and cached in `proxy_contracts` for subsequent requests.
 
 use axum::{
     extract::{Path, State},
@@ -10,7 +12,122 @@ use std::sync::Arc;
 
 use crate::api::error::ApiResult;
 use crate::api::AppState;
-use atlas_common::{ContractAbi, ProxyContract};
+use atlas_common::{AtlasError, ContractAbi, ProxyContract};
+
+// EIP-1967 implementation slot: keccak256("eip1967.proxy.implementation") - 1
+const EIP1967_IMPL_SLOT: &str =
+    "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+// EIP-1822 (UUPS) implementation slot: keccak256("PROXIABLE")
+const EIP1822_IMPL_SLOT: &str =
+    "0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7";
+
+/// Try to read a storage slot via eth_getStorageAt and return a non-zero address if found.
+async fn read_address_slot(
+    rpc_url: &str,
+    address: &str,
+    slot: &str,
+) -> Result<Option<String>, AtlasError> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_getStorageAt",
+        "params": [address, slot, "latest"],
+        "id": 1
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| AtlasError::Internal(e.to_string()))?;
+
+    let resp: serde_json::Value = client
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| AtlasError::Rpc(format!("eth_getStorageAt failed: {e}")))?
+        .json()
+        .await
+        .map_err(|e| AtlasError::Rpc(format!("failed to parse eth_getStorageAt response: {e}")))?;
+
+    let raw = resp
+        .get("result")
+        .and_then(|r| r.as_str())
+        .unwrap_or("0x");
+
+    // Result is 32 bytes; address occupies the last 20 bytes (40 hex chars).
+    let hex = raw.trim_start_matches("0x");
+    if hex.len() < 40 || hex.chars().all(|c| c == '0') {
+        return Ok(None);
+    }
+    let addr = format!("0x{}", &hex[hex.len() - 40..]).to_lowercase();
+    if addr == "0x0000000000000000000000000000000000000000" {
+        return Ok(None);
+    }
+    Ok(Some(addr))
+}
+
+/// Detect a proxy pattern for `address` via RPC and, if found, persist it in `proxy_contracts`.
+/// Returns the cached or newly detected `ProxyContract`, or `None` if not a proxy.
+async fn resolve_proxy(
+    state: &AppState,
+    address: &str,
+) -> Result<Option<ProxyContract>, AtlasError> {
+    // 1. Check DB cache first.
+    let cached: Option<ProxyContract> = sqlx::query_as(
+        "SELECT proxy_address, implementation_address, proxy_type, admin_address,
+                detected_at_block, last_checked_block, updated_at
+         FROM proxy_contracts WHERE proxy_address = $1",
+    )
+    .bind(address)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if cached.is_some() {
+        return Ok(cached);
+    }
+
+    // 2. Not in DB — try RPC detection.
+    let detected = if let Some(impl_addr) =
+        read_address_slot(&state.rpc_url, address, EIP1967_IMPL_SLOT).await?
+    {
+        Some((impl_addr, "eip1967"))
+    } else if let Some(impl_addr) =
+        read_address_slot(&state.rpc_url, address, EIP1822_IMPL_SLOT).await?
+    {
+        Some((impl_addr, "eip1822"))
+    } else {
+        None
+    };
+
+    let Some((impl_addr, proxy_type)) = detected else {
+        return Ok(None);
+    };
+
+    // 3. Persist so future requests hit the DB cache.
+    sqlx::query(
+        "INSERT INTO proxy_contracts
+            (proxy_address, implementation_address, proxy_type, detected_at_block, last_checked_block)
+         VALUES ($1, $2, $3, 0, 0)
+         ON CONFLICT (proxy_address) DO NOTHING",
+    )
+    .bind(address)
+    .bind(&impl_addr)
+    .bind(proxy_type)
+    .execute(&state.pool)
+    .await?;
+
+    // 4. Re-fetch so the returned struct has the real DB timestamps.
+    let proxy: Option<ProxyContract> = sqlx::query_as(
+        "SELECT proxy_address, implementation_address, proxy_type, admin_address,
+                detected_at_block, last_checked_block, updated_at
+         FROM proxy_contracts WHERE proxy_address = $1",
+    )
+    .bind(address)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    Ok(proxy)
+}
 
 /// GET /api/contracts/:address/proxy - Get proxy information for a contract
 pub async fn get_proxy_info(
@@ -19,15 +136,7 @@ pub async fn get_proxy_info(
 ) -> ApiResult<Json<ProxyInfoResponse>> {
     let address = normalize_address(&address);
 
-    // Check if this address is a proxy
-    let proxy: Option<ProxyContract> = sqlx::query_as(
-        "SELECT proxy_address, implementation_address, proxy_type, admin_address, detected_at_block, last_checked_block, updated_at
-         FROM proxy_contracts
-         WHERE proxy_address = $1",
-    )
-    .bind(&address)
-    .fetch_optional(&state.pool)
-    .await?;
+    let proxy = resolve_proxy(&state, &address).await?;
 
     // Check if this address is an implementation for any proxies
     let proxies_using_this: Vec<ProxyContract> = sqlx::query_as(
@@ -91,15 +200,8 @@ pub async fn get_combined_abi(
 ) -> ApiResult<Json<CombinedAbiResponse>> {
     let address = normalize_address(&address);
 
-    // Check if this is a proxy
-    let proxy: Option<ProxyContract> = sqlx::query_as(
-        "SELECT proxy_address, implementation_address, proxy_type, admin_address, detected_at_block, last_checked_block, updated_at
-         FROM proxy_contracts
-         WHERE proxy_address = $1",
-    )
-    .bind(&address)
-    .fetch_optional(&state.pool)
-    .await?;
+    // Resolve proxy (DB cache → RPC detection)
+    let proxy = resolve_proxy(&state, &address).await?;
 
     // Get proxy ABI
     let proxy_abi: Option<ContractAbi> = sqlx::query_as(

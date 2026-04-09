@@ -10,3 +10,4 @@ export { default as StatusBadge } from './StatusBadge';
 export { default as CopyButton } from './CopyButton';
 export { default as EventLogs } from './EventLogs';
 export { default as ContractTypeBadge } from './ContractTypeBadge';
+export { default as ContractTab } from './ContractTab';
