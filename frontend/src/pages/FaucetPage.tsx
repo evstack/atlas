@@ -1,10 +1,11 @@
-import { useContext, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { TxHashLink, Loading, Error } from '../components';
-import { formatEtherExact, formatNumber, toApiError } from '../utils';
-import type { ApiError } from '../types';
-import { requestFaucet } from '../api/faucet';
-import { FaucetInfoContext } from '../context/FaucetInfoContext';
-import NotFoundPage from './NotFoundPage';
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { TxHashLink, Loading, Error } from "../components";
+import { formatEtherExact, formatNumber, toApiError } from "../utils";
+import type { ApiError } from "../types";
+import { requestFaucet } from "../api/faucet";
+import useFaucetInfo from "../hooks/useFaucetInfo";
+import { useBranding } from "../hooks/useBranding";
+import NotFoundPage from "./NotFoundPage";
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
@@ -29,8 +30,11 @@ function isValidAddress(address: string): boolean {
 }
 
 export default function FaucetPage() {
-  const { faucetInfo, loading, error, notFound, refetch } = useContext(FaucetInfoContext);
-  const [address, setAddress] = useState('');
+  const { faucet, loaded } = useBranding();
+  const { faucetInfo, loading, error, notFound, refetch } = useFaucetInfo(
+    faucet.enabled,
+  );
+  const [address, setAddress] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -52,32 +56,50 @@ export default function FaucetPage() {
     setSubmitError((current) => (current?.status === 429 ? null : current));
   }, [cooldownUntil, now]);
 
-  const cooldownRemainingSeconds = cooldownUntil ? Math.max(0, Math.ceil((cooldownUntil - now) / 1000)) : 0;
-  const canSubmit = Boolean(faucetInfo) && !submitting && cooldownRemainingSeconds === 0;
+  const cooldownRemainingSeconds = cooldownUntil
+    ? Math.max(0, Math.ceil((cooldownUntil - now) / 1000))
+    : 0;
+  const canSubmit =
+    Boolean(faucetInfo) && !submitting && cooldownRemainingSeconds === 0;
 
   const infoCards = useMemo(() => {
-    if (!faucetInfo) return [];
+    const cards = [];
 
-    return [
-      {
-        label: 'Balance',
-        value: `${formatEtherExact(faucetInfo.balance_wei).replace(/^(\d+\.\d{4})\d*$/, '$1')} ETH`,
-        hint: 'Current faucet wallet balance',
-      },
-      {
-        label: 'Drip amount',
-        value: `${formatEtherExact(faucetInfo.amount_wei)} ETH`,
-        hint: 'Per successful request',
-      },
-      {
-        label: 'Cooldown',
-        value: faucetInfo.cooldown_minutes === 1 ? '1 minute' : `${formatNumber(faucetInfo.cooldown_minutes)} minutes`,
-        hint: 'Per address and per IP',
-      },
-    ];
-  }, [faucetInfo]);
+    if (faucetInfo?.balance_wei) {
+      cards.push({
+        label: "Balance",
+        value: `${formatEtherExact(faucetInfo.balance_wei).replace(/^(\d+\.\d{4})\d*$/, "$1")} ETH`,
+        hint: "Current faucet wallet balance",
+      });
+    }
 
-  if (notFound || disabled) {
+    if (faucet.amount_wei) {
+      cards.push({
+        label: "Drip amount",
+        value: `${formatEtherExact(faucet.amount_wei)} ETH`,
+        hint: "Per successful request",
+      });
+    }
+
+    if (typeof faucet.cooldown_minutes === "number") {
+      cards.push({
+        label: "Cooldown",
+        value:
+          faucet.cooldown_minutes === 1
+            ? "1 minute"
+            : `${formatNumber(faucet.cooldown_minutes)} minutes`,
+        hint: "Per address and per IP",
+      });
+    }
+
+    return cards;
+  }, [faucet.amount_wei, faucet.cooldown_minutes, faucetInfo?.balance_wei]);
+
+  if (!loaded) {
+    return <Loading size="lg" text="Checking faucet availability..." />;
+  }
+
+  if (!faucet.enabled || notFound || disabled) {
     return <NotFoundPage />;
   }
 
@@ -94,7 +116,7 @@ export default function FaucetPage() {
 
     const trimmedAddress = address.trim();
     if (!isValidAddress(trimmedAddress)) {
-      setSubmitError({ error: 'Enter a valid EVM address.', status: 400 });
+      setSubmitError({ error: "Enter a valid EVM address.", status: 400 });
       return;
     }
 
@@ -119,7 +141,7 @@ export default function FaucetPage() {
       setCooldownUntil(null);
       void refetch({ background: true });
     } catch (err: unknown) {
-      const apiError = toApiError(err, 'Failed to request faucet funds');
+      const apiError = toApiError(err, "Failed to request faucet funds");
       if (apiError.status === 404) {
         setDisabled(true);
         return;
@@ -136,20 +158,27 @@ export default function FaucetPage() {
     }
   };
 
-  const cooldownBanner = submitError?.status === 429 ? (
-    <div className="card border-l-4 border-l-amber-400">
-      <p className="text-amber-300 font-medium">Rate limited</p>
-      <p className="text-gray-400 text-sm mt-1">{submitError.error}</p>
-      <p className="text-gray-200 text-sm mt-2">
-        Try again in <span className="font-mono">{formatCountdown(cooldownRemainingSeconds || (submitError.retryAfterSeconds ?? 0))}</span>.
-      </p>
-    </div>
-  ) : submitError ? (
-    <div className="card border-l-4 border-l-accent-error">
-      <p className="text-accent-error font-medium">Request failed</p>
-      <p className="text-gray-400 text-sm mt-1">{submitError.error}</p>
-    </div>
-  ) : null;
+  const cooldownBanner =
+    submitError?.status === 429 ? (
+      <div className="card border-l-4 border-l-amber-400">
+        <p className="text-amber-300 font-medium">Rate limited</p>
+        <p className="text-gray-400 text-sm mt-1">{submitError.error}</p>
+        <p className="text-gray-200 text-sm mt-2">
+          Try again in{" "}
+          <span className="font-mono">
+            {formatCountdown(
+              cooldownRemainingSeconds || (submitError.retryAfterSeconds ?? 0),
+            )}
+          </span>
+          .
+        </p>
+      </div>
+    ) : submitError ? (
+      <div className="card border-l-4 border-l-accent-error">
+        <p className="text-accent-error font-medium">Request failed</p>
+        <p className="text-gray-400 text-sm mt-1">{submitError.error}</p>
+      </div>
+    ) : null;
 
   return (
     <div className="relative">
@@ -160,17 +189,24 @@ export default function FaucetPage() {
         <div className="card p-6 md:p-8">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-xs uppercase tracking-[0.28em] text-gray-500">Faucet</p>
-              <h1 className="mt-2 text-3xl font-bold text-fg">Request test ETH</h1>
+              <p className="text-xs uppercase tracking-[0.28em] text-gray-500">
+                Faucet
+              </p>
+              <h1 className="mt-2 text-3xl font-bold text-fg">
+                Request test ETH
+              </h1>
               <p className="mt-3 text-sm leading-6 text-gray-400">
-                Drips are rate-limited per address and per IP. Use this faucet for test networks only.
+                Drips are rate-limited per address and per IP. Use this faucet
+                for test networks only.
               </p>
             </div>
           </div>
 
           <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
             <label className="block">
-              <span className="text-sm font-medium text-fg">Destination address</span>
+              <span className="text-sm font-medium text-fg">
+                Destination address
+              </span>
               <input
                 type="text"
                 value={address}
@@ -189,13 +225,14 @@ export default function FaucetPage() {
                 className="btn btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {submitting
-                  ? 'Sending...'
+                  ? "Sending..."
                   : cooldownRemainingSeconds > 0
                     ? `Retry in ${formatCountdown(cooldownRemainingSeconds)}`
-                    : 'Request faucet funds'}
+                    : "Request faucet funds"}
               </button>
               <p className="text-xs text-gray-500">
-                Enter a checksummed or lowercase EVM address. Empty or malformed inputs are rejected.
+                Enter a checksummed or lowercase EVM address. Empty or malformed
+                inputs are rejected.
               </p>
             </div>
           </form>
@@ -204,8 +241,15 @@ export default function FaucetPage() {
         <div className="grid gap-4 sm:grid-cols-3">
           {infoCards.map((card) => (
             <div key={card.label} className="card p-4">
-              <p className="text-xs uppercase tracking-[0.24em] text-gray-500">{card.label}</p>
-              <p className="mt-2 text-lg font-semibold text-fg truncate" title={card.value}>{card.value}</p>
+              <p className="text-xs uppercase tracking-[0.24em] text-gray-500">
+                {card.label}
+              </p>
+              <p
+                className="mt-2 text-lg font-semibold text-fg truncate"
+                title={card.value}
+              >
+                {card.value}
+              </p>
               <p className="mt-1 text-xs text-gray-500">{card.hint}</p>
             </div>
           ))}
@@ -215,7 +259,9 @@ export default function FaucetPage() {
 
         {txHash && (
           <div className="card p-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-gray-500">Transaction sent</p>
+            <p className="text-xs uppercase tracking-[0.24em] text-gray-500">
+              Transaction sent
+            </p>
             <p className="mt-2 text-sm text-gray-300">
               Faucet transfer broadcast successfully. Track it here:
             </p>

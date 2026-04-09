@@ -285,6 +285,8 @@ async fn run(args: cli::RunArgs) -> Result<()> {
     let config = config::Config::from_run_args(args.clone())?;
     let faucet_config = config::FaucetConfig::from_faucet_args(&args.faucet)?;
     let snapshot_config = config::SnapshotConfig::from_env(&config.database_url)?;
+    let faucet_amount_wei = faucet_config.amount_wei.as_ref().map(ToString::to_string);
+    let faucet_cooldown_minutes = faucet_config.cooldown_minutes;
 
     let faucet = if faucet_config.enabled {
         tracing::info!("Faucet enabled");
@@ -358,6 +360,8 @@ async fn run(args: cli::RunArgs) -> Result<()> {
         rpc_url: config.rpc_url.clone(),
         da_tracking_enabled: config.da_tracking_enabled,
         faucet,
+        faucet_amount_wei,
+        faucet_cooldown_minutes,
         chain_id,
         chain_name: config.chain_name.clone(),
         chain_logo_url: config.chain_logo_url.clone(),

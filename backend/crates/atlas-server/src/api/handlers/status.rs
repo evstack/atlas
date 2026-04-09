@@ -7,15 +7,9 @@ use crate::api::handlers::get_table_count;
 use crate::api::AppState;
 
 #[derive(Serialize)]
-pub struct ChainFeatures {
-    pub da_tracking: bool,
-}
-
-#[derive(Serialize)]
 pub struct HeightResponse {
     pub block_height: i64,
     pub indexed_at: String,
-    pub features: ChainFeatures,
 }
 
 #[derive(Serialize)]
@@ -57,14 +51,10 @@ async fn latest_height_and_indexed_at(state: &AppState) -> Result<(i64, String),
 /// Returns in <1ms, optimized for frequent polling.
 pub async fn get_height(State(state): State<Arc<AppState>>) -> ApiResult<Json<HeightResponse>> {
     let (block_height, indexed_at) = latest_height_and_indexed_at(&state).await?;
-    let features = ChainFeatures {
-        da_tracking: state.da_tracking_enabled,
-    };
 
     Ok(Json(HeightResponse {
         block_height,
         indexed_at,
-        features,
     }))
 }
 
@@ -122,6 +112,8 @@ mod tests {
             rpc_url: String::new(),
             da_tracking_enabled: false,
             faucet: None,
+            faucet_amount_wei: None,
+            faucet_cooldown_minutes: None,
             chain_id: 1,
             chain_name: "Test Chain".to_string(),
             chain_logo_url: None,
@@ -149,7 +141,6 @@ mod tests {
 
         assert_eq!(status.block_height, 42);
         assert!(!status.indexed_at.is_empty());
-        assert!(!status.features.da_tracking);
     }
 
     #[tokio::test]
