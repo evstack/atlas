@@ -44,7 +44,10 @@ interface VerifyFormProps {
 function VerifyForm({ address, onVerified }: VerifyFormProps) {
   const [compilerVersion, setCompilerVersion] = useState('');
   const [contractName, setContractName] = useState('');
+  const [mode, setMode] = useState<'single' | 'multi'>('single');
   const [sourceCode, setSourceCode] = useState('');
+  const [sourceFiles, setSourceFiles] = useState<{ name: string; content: string }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [optimizationEnabled, setOptimizationEnabled] = useState(false);
   const [optimizationRunsPreset, setOptimizationRunsPreset] = useState<string>('200');
   const [customOptimizationRuns, setCustomOptimizationRuns] = useState('');
@@ -55,12 +58,57 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  function switchMode(next: 'single' | 'multi') {
+    setMode(next);
+    setError(null);
+    if (next === 'multi') {
+      setSourceCode('');
+      setSourceFiles([]);
+    } else {
+      setSourceFiles([]);
+    }
+  }
+
+  function removeFile(index: number) {
+    setSourceFiles(prev => prev.filter((_, i) => i !== index));
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? []);
+    if (picked.length === 0) return;
+    const loaded = await Promise.all(
+      picked.map(file =>
+        new Promise<{ name: string; content: string }>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve({ name: file.name, content: reader.result as string });
+          reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+          reader.readAsText(file);
+        }),
+      ),
+    );
+    setSourceFiles(prev => {
+      const existing = new Map(prev.map(f => [f.name, f]));
+      for (const f of loaded) existing.set(f.name, f);
+      return Array.from(existing.values());
+    });
+    // Reset input so the same files can be re-added after removal
+    e.target.value = '';
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!compilerVersion.trim()) {
       setError('Select a compiler version.');
       return;
     }
+
+    if (mode === 'multi') {
+      if (sourceFiles.length === 0) {
+        setError('Add at least one .sol file.');
+        return;
+      }
+    }
+
     setSubmitting(true);
     setError(null);
 
@@ -69,16 +117,27 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
         ? customOptimizationRuns
         : optimizationRunsPreset;
 
-    const req: VerifyContractRequest = {
-      source_code: sourceCode,
-      compiler_version: compilerVersion.trim(),
-      optimization_enabled: optimizationEnabled,
-      optimization_runs: optimizationEnabled ? parseInt(optimizationRunsValue, 10) || 200 : undefined,
-      contract_name: contractName.trim(),
-      constructor_args: constructorArgs.trim() || undefined,
-      evm_version: evmVersion.trim() || undefined,
-      license_type: licenseType.trim() || undefined,
-    };
+    const req: VerifyContractRequest = mode === 'single'
+      ? {
+          source_code: sourceCode,
+          compiler_version: compilerVersion.trim(),
+          optimization_enabled: optimizationEnabled,
+          optimization_runs: optimizationEnabled ? parseInt(optimizationRunsValue, 10) || 200 : undefined,
+          contract_name: contractName.trim(),
+          constructor_args: constructorArgs.trim() || undefined,
+          evm_version: evmVersion.trim() || undefined,
+          license_type: licenseType.trim() || undefined,
+        }
+      : {
+          source_files: Object.fromEntries(sourceFiles.map(f => [f.name.trim(), f.content])),
+          compiler_version: compilerVersion.trim(),
+          optimization_enabled: optimizationEnabled,
+          optimization_runs: optimizationEnabled ? parseInt(optimizationRunsValue, 10) || 200 : undefined,
+          contract_name: contractName.trim(),
+          constructor_args: constructorArgs.trim() || undefined,
+          evm_version: evmVersion.trim() || undefined,
+          license_type: licenseType.trim() || undefined,
+        };
 
     try {
       await verifyContract(address, req);
@@ -131,18 +190,86 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
           </label>
         </div>
 
-        <label className="flex flex-col gap-1">
-          <span className="text-sm text-gray-400">Solidity Source Code <span className="text-red-400">*</span></span>
-          <textarea
-            className={themedTextareaClassName}
-            rows={14}
-            placeholder="// SPDX-License-Identifier: MIT&#10;pragma solidity ^0.8.0;&#10;&#10;contract MyToken { ... }"
-            value={sourceCode}
-            onChange={e => setSourceCode(e.target.value)}
-            required
-          />
-          <span className="text-xs text-gray-500">Paste a flattened Solidity file (all imports merged).</span>
-        </label>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => switchMode('single')}
+              className={`px-3 py-1 text-sm border rounded-l-lg ${
+                mode === 'single'
+                  ? 'border-accent-primary text-accent-primary bg-accent-primary/10'
+                  : 'border-dark-500 text-gray-400 hover:border-gray-400'
+              }`}
+            >
+              Single file
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode('multi')}
+              className={`px-3 py-1 text-sm border rounded-r-lg ${
+                mode === 'multi'
+                  ? 'border-accent-primary text-accent-primary bg-accent-primary/10'
+                  : 'border-dark-500 text-gray-400 hover:border-gray-400'
+              }`}
+            >
+              Multi-file
+            </button>
+          </div>
+
+          {mode === 'single' ? (
+            <label className="flex flex-col gap-1">
+              <span className="text-sm text-gray-400">Solidity Source Code <span className="text-red-400">*</span></span>
+              <textarea
+                className={themedTextareaClassName}
+                rows={14}
+                placeholder="// SPDX-License-Identifier: MIT&#10;pragma solidity ^0.8.0;&#10;&#10;contract MyToken { ... }"
+                value={sourceCode}
+                onChange={e => setSourceCode(e.target.value)}
+                required
+              />
+              <span className="text-xs text-gray-500">Paste a flattened Solidity file (all imports merged).</span>
+            </label>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <span className="text-sm text-gray-400">Source Files <span className="text-red-400">*</span></span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".sol"
+                multiple
+                className="hidden"
+                onChange={handleFileChange}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 self-start px-4 py-2 text-sm border border-dark-500 rounded-xl text-gray-300 hover:border-gray-400 hover:text-fg bg-dark-700/80 backdrop-blur shadow-md shadow-black/20"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                {sourceFiles.length === 0 ? 'Select .sol files' : 'Add more files'}
+              </button>
+              {sourceFiles.length > 0 && (
+                <ul className="flex flex-col gap-1">
+                  {sourceFiles.map((file, index) => (
+                    <li key={file.name} className="flex items-center justify-between px-3 py-2 bg-dark-700/60 border border-dark-500 rounded-lg text-sm font-mono text-gray-300">
+                      <span>{file.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeFile(index)}
+                        className="text-gray-500 hover:text-red-400 ml-4 shrink-0"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <span className="text-xs text-gray-500">Select all .sol files that make up the contract (imports included).</span>
+            </div>
+          )}
+        </div>
 
         <div className="flex items-center gap-4">
           <label className="flex items-center gap-2 cursor-pointer">
