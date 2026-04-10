@@ -234,10 +234,11 @@ pub async fn verify_contract(
     let abi = compiled_contract.abi;
 
     // Upsert into contract_abis
-    let constructor_args_bytes: Option<Vec<u8>> = constructor_bytes
-        .is_empty()
-        .then_some(None)
-        .unwrap_or(Some(constructor_bytes));
+    let constructor_args_bytes: Option<Vec<u8>> = if constructor_bytes.is_empty() {
+        None
+    } else {
+        Some(constructor_bytes)
+    };
     let optimization_runs = if req.optimization_enabled {
         req.optimization_runs.or(Some(200))
     } else {

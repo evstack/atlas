@@ -49,10 +49,7 @@ async fn read_address_slot(
         .await
         .map_err(|e| AtlasError::Rpc(format!("failed to parse eth_getStorageAt response: {e}")))?;
 
-    let raw = resp
-        .get("result")
-        .and_then(|r| r.as_str())
-        .unwrap_or("0x");
+    let raw = resp.get("result").and_then(|r| r.as_str()).unwrap_or("0x");
 
     // Result is 32 bytes; address occupies the last 20 bytes (40 hex chars).
     let hex = raw.trim_start_matches("0x");
@@ -91,12 +88,10 @@ async fn resolve_proxy(
         read_address_slot(&state.rpc_url, address, EIP1967_IMPL_SLOT).await?
     {
         Some((impl_addr, "eip1967"))
-    } else if let Some(impl_addr) =
-        read_address_slot(&state.rpc_url, address, EIP1822_IMPL_SLOT).await?
-    {
-        Some((impl_addr, "eip1822"))
     } else {
-        None
+        read_address_slot(&state.rpc_url, address, EIP1822_IMPL_SLOT)
+            .await?
+            .map(|impl_addr| (impl_addr, "eip1822"))
     };
 
     let Some((impl_addr, proxy_type)) = detected else {

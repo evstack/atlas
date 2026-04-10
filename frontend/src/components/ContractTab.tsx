@@ -256,7 +256,7 @@ function SearchableOptionSelect({
   monospace = false,
   emptyLabel,
 }: SearchableOptionSelectProps) {
-  const [query, setQuery] = useState('');
+  const [draftQuery, setDraftQuery] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(-1);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -264,23 +264,20 @@ function SearchableOptionSelect({
     () => options.find(option => option.value === value),
     [options, value],
   );
-
-  useEffect(() => {
-    setQuery(selectedOption?.label ?? '');
-  }, [selectedOption]);
+  const query = draftQuery ?? selectedOption?.label ?? '';
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
       if (!rootRef.current?.contains(event.target as Node)) {
         setOpen(false);
         setHighlight(-1);
-        setQuery(selectedOption?.label ?? '');
+        setDraftQuery(null);
       }
     }
 
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [selectedOption]);
+  }, []);
 
   const filteredOptions = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -299,7 +296,7 @@ function SearchableOptionSelect({
 
   function selectOption(option: { value: string; label: string }) {
     onChange(option.value);
-    setQuery(option.value === '' ? '' : option.label);
+    setDraftQuery(null);
     setOpen(false);
     setHighlight(-1);
   }
@@ -309,7 +306,7 @@ function SearchableOptionSelect({
       if (e.key === 'Escape') {
         setOpen(false);
         setHighlight(-1);
-        setQuery(selectedOption?.label ?? '');
+        setDraftQuery(null);
       }
       return;
     }
@@ -344,7 +341,7 @@ function SearchableOptionSelect({
     if (e.key === 'Escape') {
       setOpen(false);
       setHighlight(-1);
-      setQuery(selectedOption?.label ?? '');
+      setDraftQuery(null);
     }
   }
 
@@ -354,7 +351,7 @@ function SearchableOptionSelect({
         type="text"
         value={query}
         onChange={(e) => {
-          setQuery(e.target.value);
+          setDraftQuery(e.target.value);
           setOpen(true);
           setHighlight(0);
         }}
