@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent, FormEvent, InputHTMLAttributes } from 'react';
 import type { ContractDetail, AbiItem, VerifyContractRequest } from '../types';
 import { verifyContract } from '../api/contracts';
 import {
@@ -41,13 +42,32 @@ interface VerifyFormProps {
   onVerified: () => void;
 }
 
+interface SourceFileEntry {
+  path: string;
+  name: string;
+  content: string;
+}
+
+type DirectoryInputAttributes = InputHTMLAttributes<HTMLInputElement> & {
+  directory?: string;
+  mozdirectory?: string;
+  webkitdirectory?: string;
+};
+
+const directoryInputAttributes: DirectoryInputAttributes = {
+  directory: '',
+  mozdirectory: '',
+  webkitdirectory: '',
+};
+
 function VerifyForm({ address, onVerified }: VerifyFormProps) {
   const [compilerVersion, setCompilerVersion] = useState('');
   const [contractName, setContractName] = useState('');
   const [mode, setMode] = useState<'single' | 'multi'>('single');
   const [sourceCode, setSourceCode] = useState('');
-  const [sourceFiles, setSourceFiles] = useState<{ name: string; content: string }[]>([]);
+  const [sourceFiles, setSourceFiles] = useState<SourceFileEntry[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const [optimizationEnabled, setOptimizationEnabled] = useState(false);
   const [optimizationRunsPreset, setOptimizationRunsPreset] = useState<string>('200');
   const [customOptimizationRuns, setCustomOptimizationRuns] = useState('');
@@ -73,29 +93,44 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
     setSourceFiles(prev => prev.filter((_, i) => i !== index));
   }
 
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const picked = Array.from(e.target.files ?? []);
-    if (picked.length === 0) return;
+  function sourcePathForFile(file: File): string {
+    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+    return (relativePath && relativePath.trim()) || file.name;
+  }
+
+  async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? []).filter(file => file.name.endsWith('.sol'));
+    if (picked.length === 0) {
+      setError('No Solidity source files were found in the selected upload.');
+      e.target.value = '';
+      return;
+    }
     const loaded = await Promise.all(
       picked.map(file =>
-        new Promise<{ name: string; content: string }>((resolve, reject) => {
+        new Promise<SourceFileEntry>((resolve, reject) => {
           const reader = new FileReader();
-          reader.onload = () => resolve({ name: file.name, content: reader.result as string });
+          reader.onload = () =>
+            resolve({
+              path: sourcePathForFile(file),
+              name: file.name,
+              content: reader.result as string,
+            });
           reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
           reader.readAsText(file);
         }),
       ),
     );
     setSourceFiles(prev => {
-      const existing = new Map(prev.map(f => [f.name, f]));
-      for (const f of loaded) existing.set(f.name, f);
+      const existing = new Map(prev.map(f => [f.path, f]));
+      for (const f of loaded) existing.set(f.path, f);
       return Array.from(existing.values());
     });
+    setError(null);
     // Reset input so the same files can be re-added after removal
     e.target.value = '';
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!compilerVersion.trim()) {
       setError('Select a compiler version.');
@@ -129,7 +164,7 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
           license_type: licenseType.trim() || undefined,
         }
       : {
-          source_files: Object.fromEntries(sourceFiles.map(f => [f.name.trim(), f.content])),
+          source_files: Object.fromEntries(sourceFiles.map(f => [f.path.trim(), f.content])),
           compiler_version: compilerVersion.trim(),
           optimization_enabled: optimizationEnabled,
           optimization_runs: optimizationEnabled ? parseInt(optimizationRunsValue, 10) || 200 : undefined,
@@ -240,21 +275,49 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
                 className="hidden"
                 onChange={handleFileChange}
               />
+              <input
+                ref={directoryInputRef}
+                type="file"
+                accept=".sol"
+                multiple
+                className="hidden"
+                onChange={handleFileChange}
+                {...directoryInputAttributes}
+              />
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => directoryInputRef.current?.click()}
+                  className="flex items-center gap-2 self-start px-4 py-2 text-sm border border-accent-primary/40 rounded-xl text-accent-primary hover:border-accent-primary hover:text-fg bg-accent-primary/10 backdrop-blur shadow-md shadow-black/20"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h5l2 2h11v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                  </svg>
+                  {sourceFiles.length === 0 ? 'Select project folder' : 'Replace or add folder'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 self-start px-4 py-2 text-sm border border-dark-500 rounded-xl text-gray-300 hover:border-gray-400 hover:text-fg bg-dark-700/80 backdrop-blur shadow-md shadow-black/20"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  {sourceFiles.length === 0 ? 'Add flat files' : 'Add more flat files'}
+                </button>
+              </div>
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 self-start px-4 py-2 text-sm border border-dark-500 rounded-xl text-gray-300 hover:border-gray-400 hover:text-fg bg-dark-700/80 backdrop-blur shadow-md shadow-black/20"
+                onClick={() => setSourceFiles([])}
+                className="text-xs text-gray-500 hover:text-gray-300 self-start"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                {sourceFiles.length === 0 ? 'Select .sol files' : 'Add more files'}
+                Clear file list
               </button>
               {sourceFiles.length > 0 && (
                 <ul className="flex flex-col gap-1">
                   {sourceFiles.map((file, index) => (
-                    <li key={file.name} className="flex items-center justify-between px-3 py-2 bg-dark-700/60 border border-dark-500 rounded-lg text-sm font-mono text-gray-300">
-                      <span>{file.name}</span>
+                    <li key={file.path} className="flex items-center justify-between px-3 py-2 bg-dark-700/60 border border-dark-500 rounded-lg text-sm font-mono text-gray-300 gap-4">
+                      <span className="break-all">{file.path}</span>
                       <button
                         type="button"
                         onClick={() => removeFile(index)}
@@ -266,7 +329,7 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
                   ))}
                 </ul>
               )}
-              <span className="text-xs text-gray-500">Select all .sol files that make up the contract (imports included).</span>
+              <span className="text-xs text-gray-500">Use the project folder picker to preserve import paths. Flat file upload only works when imports do not rely on directories.</span>
             </div>
           )}
         </div>

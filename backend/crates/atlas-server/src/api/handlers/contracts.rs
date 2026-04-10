@@ -479,19 +479,32 @@ fn build_standard_json_input(
         contract_outputs.push(serde_json::json!("evm.deployedBytecode"));
     }
 
+    let mut settings = serde_json::Map::from_iter([
+        (
+            "optimizer".to_string(),
+            serde_json::json!({
+                "enabled": req.optimization_enabled,
+                "runs": runs,
+            }),
+        ),
+        (
+            "outputSelection".to_string(),
+            serde_json::json!({
+                "*": { "*": contract_outputs }
+            }),
+        ),
+    ]);
+    if let Some(evm_version) = req.evm_version.as_deref() {
+        settings.insert(
+            "evmVersion".to_string(),
+            serde_json::Value::String(evm_version.to_string()),
+        );
+    }
+
     Ok(serde_json::json!({
         "language": "Solidity",
         "sources": sources,
-        "settings": {
-            "optimizer": {
-                "enabled": req.optimization_enabled,
-                "runs": runs,
-            },
-            "evmVersion": req.evm_version.as_deref().unwrap_or("default"),
-            "outputSelection": {
-                "*": { "*": contract_outputs }
-            }
-        }
+        "settings": settings,
     }))
 }
 
@@ -839,5 +852,25 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn build_standard_json_input_omits_evm_version_when_not_provided() {
+        let req = VerifyRequest {
+            source_code: Some("pragma solidity ^0.8.20; contract C {}".to_string()),
+            source_files: None,
+            compiler_version: "v0.8.20+commit.a1b79de6".to_string(),
+            optimization_enabled: false,
+            optimization_runs: None,
+            contract_name: "C".to_string(),
+            constructor_args: None,
+            evm_version: None,
+            license_type: None,
+        };
+
+        let input = build_standard_json_input(&req, true).unwrap();
+        let settings = input.get("settings").and_then(|v| v.as_object()).unwrap();
+
+        assert!(!settings.contains_key("evmVersion"));
     }
 }

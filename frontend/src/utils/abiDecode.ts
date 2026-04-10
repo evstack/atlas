@@ -121,10 +121,9 @@ function keccak256Hex(input: string): string {
   return bytesToHex(keccak256(bytes));
 }
 
-// Keccak-256 implementation (Ethereum's variant of SHA-3)
-// Based on the NIST Keccak reference implementation, adapted for JS.
+// Keccak-256 implementation (Ethereum's variant of SHA-3).
 function keccak256(data: Uint8Array): Uint8Array {
-  const state = new BigInt64Array(25);
+  const state = Array<bigint>(25).fill(0n);
   const rate = 136; // 1088 / 8 for keccak256
   const output = 32;
 
@@ -138,7 +137,7 @@ function keccak256(data: Uint8Array): Uint8Array {
   for (let i = 0; i < padded.length; i += rate) {
     for (let j = 0; j < rate; j += 8) {
       const lane = readLane(padded, i + j);
-      state[j / 8] ^= lane;
+      state[j / 8] = mask64(state[j / 8] ^ lane);
     }
     keccakF(state);
   }
@@ -156,26 +155,25 @@ function readLane(buf: Uint8Array, offset: number): bigint {
   for (let i = 0; i < 8; i++) {
     val |= BigInt(buf[offset + i] ?? 0) << BigInt(8 * i);
   }
-  return BigInt.asIntN(64, val);
+  return mask64(val);
 }
 
 function writeLane(buf: Uint8Array, offset: number, val: bigint) {
-  const u = BigInt.asUintN(64, val);
+  const u = mask64(val);
   for (let i = 0; i < 8; i++) {
     buf[offset + i] = Number((u >> BigInt(8 * i)) & 0xffn);
   }
 }
 
-// Rotation constants
-const ROT: number[] = [
-  1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 2, 14, 27, 41, 56, 8, 25, 43, 62, 18, 39, 61, 20, 44,
-];
-// Pi indices
-const PI: number[] = [
-  10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4, 15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1,
-];
-// Round constants
-const RC: bigint[] = [
+const ROTATION_OFFSETS = [
+  [0, 36, 3, 41, 18],
+  [1, 44, 10, 45, 2],
+  [62, 6, 43, 15, 61],
+  [28, 55, 25, 21, 56],
+  [27, 20, 39, 8, 14],
+] as const;
+
+const ROUND_CONSTANTS: bigint[] = [
   0x0000000000000001n, 0x0000000000008082n, 0x800000000000808an, 0x8000000080008000n,
   0x000000000000808bn, 0x0000000080000001n, 0x8000000080008081n, 0x8000000000008009n,
   0x000000000000008an, 0x0000000000000088n, 0x0000000080008009n, 0x000000008000000an,
@@ -184,42 +182,56 @@ const RC: bigint[] = [
   0x8000000080008081n, 0x8000000000008080n, 0x0000000080000001n, 0x8000000080008008n,
 ];
 
+function mask64(x: bigint): bigint {
+  return BigInt.asUintN(64, x);
+}
+
 function rol64(x: bigint, n: number): bigint {
   n = ((n % 64) + 64) % 64;
   if (n === 0) return x;
-  const u = BigInt.asUintN(64, x);
-  return BigInt.asIntN(64, (u << BigInt(n)) | (u >> BigInt(64 - n)));
+  const u = mask64(x);
+  return mask64((u << BigInt(n)) | (u >> BigInt(64 - n)));
 }
 
-function keccakF(A: BigInt64Array) {
+function keccakF(state: bigint[]) {
   for (let round = 0; round < 24; round++) {
-    // θ
-    const C = new BigInt64Array(5);
+    const c = Array<bigint>(5).fill(0n);
     for (let x = 0; x < 5; x++) {
-      C[x] = A[x] ^ A[x + 5] ^ A[x + 10] ^ A[x + 15] ^ A[x + 20];
-    }
-    const D = new BigInt64Array(5);
-    for (let x = 0; x < 5; x++) {
-      D[x] = C[(x + 4) % 5] ^ rol64(C[(x + 1) % 5], 1);
-    }
-    for (let i = 0; i < 25; i++) A[i] ^= D[i % 5];
-
-    // ρ and π
-    const B = new BigInt64Array(25);
-    B[0] = A[0];
-    for (let t = 0; t < 24; t++) {
-      B[PI[t]] = rol64(A[t === 0 ? 0 : PI[t - 1]], ROT[t]);
+      c[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20];
     }
 
-    // χ
+    const d = Array<bigint>(5).fill(0n);
+    for (let x = 0; x < 5; x++) {
+      d[x] = c[(x + 4) % 5] ^ rol64(c[(x + 1) % 5], 1);
+    }
     for (let x = 0; x < 5; x++) {
       for (let y = 0; y < 5; y++) {
-        A[x + 5 * y] = B[x + 5 * y] ^ (~B[(x + 1) % 5 + 5 * y] & B[(x + 2) % 5 + 5 * y]);
+        const index = x + 5 * y;
+        state[index] = mask64(state[index] ^ d[x]);
       }
     }
 
-    // ι
-    A[0] ^= RC[round];
+    const b = Array<bigint>(25).fill(0n);
+    for (let x = 0; x < 5; x++) {
+      for (let y = 0; y < 5; y++) {
+        const index = x + 5 * y;
+        const newX = y;
+        const newY = (2 * x + 3 * y) % 5;
+        b[newX + 5 * newY] = rol64(state[index], ROTATION_OFFSETS[x][y]);
+      }
+    }
+
+    for (let x = 0; x < 5; x++) {
+      for (let y = 0; y < 5; y++) {
+        const index = x + 5 * y;
+        const current = b[index];
+        const next = b[(x + 1) % 5 + 5 * y];
+        const nextNext = b[(x + 2) % 5 + 5 * y];
+        state[index] = mask64(current ^ (mask64(~next) & nextNext));
+      }
+    }
+
+    state[0] = mask64(state[0] ^ ROUND_CONSTANTS[round]);
   }
 }
 
@@ -230,7 +242,11 @@ function hexToBytes(hex: string): Uint8Array {
   const padded = clean.length % 2 === 0 ? clean : '0' + clean;
   const bytes = new Uint8Array(padded.length / 2);
   for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(padded.slice(i * 2, i * 2 + 2), 16);
+    const value = parseInt(padded.slice(i * 2, i * 2 + 2), 16);
+    if (Number.isNaN(value)) {
+      throw new Error(`Invalid hex byte at index ${i}`);
+    }
+    bytes[i] = value;
   }
   return bytes;
 }
