@@ -5,6 +5,20 @@ use std::sync::Arc;
 use crate::api::AppState;
 
 #[derive(Serialize)]
+pub struct ChainFeatures {
+    pub da_tracking: bool,
+}
+
+#[derive(Serialize)]
+pub struct FaucetConfig {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amount_wei: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cooldown_minutes: Option<u64>,
+}
+
+#[derive(Serialize)]
 pub struct BrandingConfig {
     pub chain_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -23,6 +37,8 @@ pub struct BrandingConfig {
     pub success_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_color: Option<String>,
+    pub features: ChainFeatures,
+    pub faucet: FaucetConfig,
 }
 
 /// GET /api/config - Returns white-label branding configuration
@@ -38,6 +54,14 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> Json<BrandingConf
         background_color_light: state.background_color_light.clone(),
         success_color: state.success_color.clone(),
         error_color: state.error_color.clone(),
+        features: ChainFeatures {
+            da_tracking: state.da_tracking_enabled,
+        },
+        faucet: FaucetConfig {
+            enabled: state.faucet.is_some(),
+            amount_wei: state.faucet_amount_wei.clone(),
+            cooldown_minutes: state.faucet_cooldown_minutes,
+        },
     })
 }
 
@@ -57,17 +81,27 @@ mod tests {
             background_color_light: None,
             success_color: None,
             error_color: None,
+            features: ChainFeatures { da_tracking: false },
+            faucet: FaucetConfig {
+                enabled: false,
+                amount_wei: None,
+                cooldown_minutes: None,
+            },
         };
 
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(json["chain_name"], "TestChain");
         assert_eq!(json["accent_color"], "#3b82f6");
+        assert_eq!(json["features"]["da_tracking"], false);
+        assert_eq!(json["faucet"]["enabled"], false);
         assert!(json.get("logo_url").is_none());
         assert!(json.get("logo_url_light").is_none());
         assert!(json.get("logo_url_dark").is_none());
         assert!(json.get("background_color_dark").is_none());
         assert!(json.get("success_color").is_none());
         assert!(json.get("error_color").is_none());
+        assert!(json["faucet"].get("amount_wei").is_none());
+        assert!(json["faucet"].get("cooldown_minutes").is_none());
     }
 
     #[test]
@@ -82,6 +116,12 @@ mod tests {
             background_color_light: Some("#faf5ef".to_string()),
             success_color: Some("#10b981".to_string()),
             error_color: Some("#ef4444".to_string()),
+            features: ChainFeatures { da_tracking: true },
+            faucet: FaucetConfig {
+                enabled: true,
+                amount_wei: Some("100000000000000000".to_string()),
+                cooldown_minutes: Some(30),
+            },
         };
 
         let json = serde_json::to_value(&config).unwrap();
@@ -94,5 +134,9 @@ mod tests {
         assert_eq!(json["background_color_light"], "#faf5ef");
         assert_eq!(json["success_color"], "#10b981");
         assert_eq!(json["error_color"], "#ef4444");
+        assert_eq!(json["features"]["da_tracking"], true);
+        assert_eq!(json["faucet"]["enabled"], true);
+        assert_eq!(json["faucet"]["amount_wei"], "100000000000000000");
+        assert_eq!(json["faucet"]["cooldown_minutes"], 30);
     }
 }

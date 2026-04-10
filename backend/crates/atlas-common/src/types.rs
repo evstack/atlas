@@ -12,6 +12,7 @@ pub struct Block {
     pub timestamp: i64,
     pub gas_used: i64,
     pub gas_limit: i64,
+    pub base_fee_per_gas: Option<String>,
     pub transaction_count: i32,
     pub indexed_at: DateTime<Utc>,
 }
@@ -258,7 +259,7 @@ pub struct FullContractAbi {
 
 /// SQL column list for the `blocks` table, matching the field order in [`Block`].
 pub const BLOCK_COLUMNS: &str =
-    "number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at";
+    "number, hash, parent_hash, timestamp, gas_used, gas_limit, base_fee_per_gas::text AS base_fee_per_gas, transaction_count, indexed_at";
 
 /// Pagination parameters
 #[derive(Debug, Clone, Deserialize)]

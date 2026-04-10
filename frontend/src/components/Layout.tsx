@@ -1,21 +1,17 @@
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { useMemo } from 'react';
-import SearchBar from './SearchBar';
-import useBlockSSE from '../hooks/useBlockSSE';
-import useFaucetInfo from '../hooks/useFaucetInfo';
-import SmoothCounter from './SmoothCounter';
-import defaultLogoImg from '../assets/logo.png';
-import { BlockStatsContext } from '../context/BlockStatsContext';
-import { FaucetInfoContext } from '../context/FaucetInfoContext';
-import { useTheme } from '../hooks/useTheme';
-import { useBranding } from '../hooks/useBranding';
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { useMemo } from "react";
+import SearchBar from "./SearchBar";
+import useBlockSSE from "../hooks/useBlockSSE";
+import SmoothCounter from "./SmoothCounter";
+import defaultLogoImg from "../assets/logo.png";
+import { BlockStatsContext } from "../context/BlockStatsContext";
+import { useTheme } from "../hooks/useTheme";
+import { useBranding } from "../hooks/useBranding";
 
 export default function Layout() {
   const location = useLocation();
-  const isHome = location.pathname === '/';
+  const isHome = location.pathname === "/";
   const sse = useBlockSSE();
-  const faucetInfoResult = useFaucetInfo();
-  const { faucetInfo } = faucetInfoResult;
 
   const blockTimeLabel = useMemo(() => {
     if (sse.bps !== null && sse.bps > 0) {
@@ -25,17 +21,17 @@ export default function Layout() {
       }
       return `${secs.toFixed(1)} s`;
     }
-    return '—';
+    return "—";
   }, [sse.bps]);
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     `inline-flex items-center h-10 px-4 rounded-full leading-none transition-colors duration-150 ${
       isActive
-        ? 'bg-dark-700/70 text-fg'
-        : 'text-gray-400 hover:text-fg hover:bg-dark-700/40'
+        ? "bg-dark-700/70 text-fg"
+        : "text-gray-400 hover:text-fg hover:bg-dark-700/40"
     }`;
   const { theme, toggleTheme } = useTheme();
-  const isDark = theme === 'dark';
-  const { chainName, logoUrl } = useBranding();
+  const isDark = theme === "dark";
+  const { chainName, logoUrl, faucet } = useBranding();
   const logoSrc = logoUrl || defaultLogoImg;
 
   return (
@@ -46,8 +42,16 @@ export default function Layout() {
           <div className="grid grid-cols-3 items-center h-16">
             {/* Logo */}
             <div className="flex md:justify-start justify-center">
-              <Link to="/" className="flex items-center" aria-label={`${chainName} Home`}>
-                <img src={logoSrc} alt={chainName} className="h-12 w-auto rounded-lg" />
+              <Link
+                to="/"
+                className="flex items-center"
+                aria-label={`${chainName} Home`}
+              >
+                <img
+                  src={logoSrc}
+                  alt={chainName}
+                  className="h-12 w-auto rounded-lg"
+                />
               </Link>
             </div>
 
@@ -71,7 +75,7 @@ export default function Layout() {
               <NavLink to="/status" className={navLinkClass}>
                 Status
               </NavLink>
-              {faucetInfo && (
+              {faucet.enabled && (
                 <NavLink to="/faucet" className={navLinkClass}>
                   Faucet
                 </NavLink>
@@ -83,7 +87,9 @@ export default function Layout() {
               <button
                 type="button"
                 onClick={toggleTheme}
-                aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+                aria-label={
+                  isDark ? "Switch to light mode" : "Switch to dark mode"
+                }
                 className="inline-flex items-center justify-center w-10 h-10 rounded-full border border-transparent hover:border-dark-600/60 bg-transparent hover:bg-dark-700/40 transition-colors mr-4"
               >
                 {isDark ? (
@@ -117,14 +123,18 @@ export default function Layout() {
               </button>
               <div className="flex items-center gap-3 text-sm text-gray-300">
                 <span
-                  className={`inline-block w-2.5 h-2.5 rounded-full ${sse.connected ? 'bg-green-500 live-dot' : sse.height !== null ? 'bg-accent-primary live-dot' : 'bg-gray-600'}`}
-                  title={sse.connected ? 'SSE connected' : sse.height !== null ? 'Polling' : 'Idle'}
+                  className={`inline-block w-2.5 h-2.5 rounded-full ${sse.connected ? "bg-green-500 live-dot" : sse.height !== null ? "bg-accent-primary live-dot" : "bg-gray-600"}`}
+                  title={
+                    sse.connected
+                      ? "SSE connected"
+                      : sse.height !== null
+                        ? "Polling"
+                        : "Idle"
+                  }
                 />
                 <SmoothCounter value={sse.height} />
                 <span className="text-gray-600">|</span>
-                <span
-                  className="font-mono tabular-nums inline-block w-16 text-right whitespace-nowrap"
-                >
+                <span className="font-mono tabular-nums inline-block w-16 text-right whitespace-nowrap">
                   {blockTimeLabel}
                 </span>
               </div>
@@ -151,7 +161,7 @@ export default function Layout() {
             <NavLink to="/status" className={navLinkClass}>
               Status
             </NavLink>
-            {faucetInfo && (
+            {faucet.enabled && (
               <NavLink to="/faucet" className={navLinkClass}>
                 Faucet
               </NavLink>
@@ -159,7 +169,9 @@ export default function Layout() {
             <button
               type="button"
               onClick={toggleTheme}
-              aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              aria-label={
+                isDark ? "Switch to light mode" : "Switch to dark mode"
+              }
               className="inline-flex items-center justify-center w-10 h-10 rounded-full border border-transparent hover:border-dark-600/60 bg-transparent hover:bg-dark-700/40 transition-colors"
             >
               {isDark ? (
@@ -219,9 +231,7 @@ export default function Layout() {
               subscribeDaResync: sse.subscribeDaResync,
             }}
           >
-            <FaucetInfoContext.Provider value={faucetInfoResult}>
-              <Outlet />
-            </FaucetInfoContext.Provider>
+            <Outlet />
           </BlockStatsContext.Provider>
         </div>
       </main>

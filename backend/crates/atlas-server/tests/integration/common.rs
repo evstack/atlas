@@ -82,6 +82,11 @@ pub fn pool() -> PgPool {
         .expect("create lazy pool")
 }
 
+pub fn database_url() -> &'static str {
+    let env = ENV.as_ref().expect("integration test environment");
+    &env.database_url
+}
+
 pub fn test_router() -> Router {
     let pool = pool();
     let head_tracker = Arc::new(HeadTracker::empty(10));
@@ -99,6 +104,8 @@ pub fn test_router() -> Router {
         rpc_url: String::new(),
         da_tracking_enabled: false,
         faucet: None,
+        faucet_amount_wei: None,
+        faucet_cooldown_minutes: None,
         chain_id: 42,
         chain_name: "Test Chain".to_string(),
         chain_logo_url: None,

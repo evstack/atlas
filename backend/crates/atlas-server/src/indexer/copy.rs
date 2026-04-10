@@ -26,6 +26,7 @@ pub async fn copy_blocks(
             timestamp BIGINT,
             gas_used BIGINT,
             gas_limit BIGINT,
+            base_fee_per_gas TEXT,
             transaction_count INT,
             indexed_at TIMESTAMPTZ
         ) ON COMMIT DELETE ROWS;
@@ -35,7 +36,7 @@ pub async fn copy_blocks(
 
     let sink = tx
         .copy_in(
-            "COPY tmp_blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at) FROM STDIN BINARY",
+            "COPY tmp_blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, base_fee_per_gas, transaction_count, indexed_at) FROM STDIN BINARY",
         )
         .await?;
     let writer = BinaryCopyInWriter::new(
@@ -47,6 +48,7 @@ pub async fn copy_blocks(
             Type::INT8,
             Type::INT8,
             Type::INT8,
+            Type::TEXT,
             Type::INT4,
             Type::TIMESTAMPTZ,
         ],
@@ -54,13 +56,14 @@ pub async fn copy_blocks(
     pin!(writer);
 
     for i in 0..batch.b_numbers.len() {
-        let row: [&(dyn ToSql + Sync); 8] = [
+        let row: [&(dyn ToSql + Sync); 9] = [
             &batch.b_numbers[i],
             &batch.b_hashes[i],
             &batch.b_parent_hashes[i],
             &batch.b_timestamps[i],
             &batch.b_gas_used[i],
             &batch.b_gas_limits[i],
+            &batch.b_base_fee_per_gas[i],
             &batch.b_tx_counts[i],
             &indexed_at,
         ];
@@ -70,8 +73,8 @@ pub async fn copy_blocks(
     writer.finish().await?;
 
     tx.execute(
-        "INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at)
-         SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, indexed_at
+        "INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, base_fee_per_gas, transaction_count, indexed_at)
+         SELECT number, hash, parent_hash, timestamp, gas_used, gas_limit, base_fee_per_gas::numeric, transaction_count, indexed_at
          FROM tmp_blocks
          ON CONFLICT (number) DO UPDATE SET
             hash = EXCLUDED.hash,
@@ -79,6 +82,7 @@ pub async fn copy_blocks(
             timestamp = EXCLUDED.timestamp,
             gas_used = EXCLUDED.gas_used,
             gas_limit = EXCLUDED.gas_limit,
+            base_fee_per_gas = EXCLUDED.base_fee_per_gas,
             transaction_count = EXCLUDED.transaction_count,
             indexed_at = EXCLUDED.indexed_at",
         &[],

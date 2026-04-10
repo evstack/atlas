@@ -6,6 +6,7 @@ export interface Block {
   timestamp: number;
   gas_used: number;
   gas_limit: number;
+  base_fee_per_gas?: string | null;
   transaction_count: number;
   indexed_at: string;
   da_status?: BlockDaStatus | null;
@@ -20,7 +21,7 @@ export interface BlockDaStatus {
   updated_at: string;
 }
 
-// Chain feature flags returned by /api/status
+// Chain feature flags returned by /api/config
 export interface ChainFeatures {
   da_tracking: boolean;
 }
@@ -47,7 +48,7 @@ export interface Address {
   first_seen_block: number;
   tx_count: number;
   // New fields from updated API
-  address_type?: 'eoa' | 'contract' | 'nft' | 'erc20';
+  address_type?: "eoa" | "contract" | "nft" | "erc20";
   name?: string | null;
   symbol?: string | null;
   total_supply?: string | null;
@@ -111,23 +112,24 @@ export interface PaginatedResponse<T> {
 }
 
 export interface SearchResult {
-  type: 'block' | 'transaction' | 'address' | 'nft' | 'nft_collection';
+  type: "block" | "transaction" | "address" | "nft" | "nft_collection";
 }
 
 export interface BlockSearchResult extends SearchResult {
-  type: 'block';
+  type: "block";
   number: number;
   hash: string;
   parent_hash: string;
   timestamp: number;
   gas_used: number;
   gas_limit: number;
+  base_fee_per_gas?: string | null;
   transaction_count: number;
   indexed_at: string;
 }
 
 export interface TransactionSearchResult extends SearchResult {
-  type: 'transaction';
+  type: "transaction";
   hash: string;
   block_number: number;
   block_index: number;
@@ -143,7 +145,7 @@ export interface TransactionSearchResult extends SearchResult {
 }
 
 export interface AddressSearchResult extends SearchResult {
-  type: 'address';
+  type: "address";
   address: string;
   is_contract: boolean;
   first_seen_block: number;
@@ -151,7 +153,7 @@ export interface AddressSearchResult extends SearchResult {
 }
 
 export interface NftSearchResult extends SearchResult {
-  type: 'nft';
+  type: "nft";
   contract_address: string;
   token_id: string;
   owner: string;
@@ -160,7 +162,7 @@ export interface NftSearchResult extends SearchResult {
 }
 
 export interface NftCollectionSearchResult extends SearchResult {
-  type: 'nft_collection';
+  type: "nft_collection";
   address: string;
   name: string | null;
   symbol: string | null;
@@ -242,7 +244,7 @@ export interface AddressTransfer {
   value: string; // ERC-20 amount (raw) or NFT token ID
   block_number: number;
   timestamp: number;
-  transfer_type: 'erc20' | 'nft';
+  transfer_type: "erc20" | "nft";
   token_name: string | null;
   token_symbol: string | null;
 }
@@ -291,7 +293,6 @@ export interface DecodedParam {
   value: string;
   indexed: boolean;
 }
-
 
 // Proxy Contract types
 export interface ProxyInfo {

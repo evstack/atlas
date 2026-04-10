@@ -1,10 +1,8 @@
-import client from './client';
-import type { ChainFeatures } from '../types';
+import client from "./client";
 
 export interface HeightResponse {
   block_height: number;
   indexed_at?: string; // ISO timestamp, absent when no blocks indexed
-  features: ChainFeatures;
 }
 
 export interface ChainStatusResponse {
@@ -17,9 +15,9 @@ export interface ChainStatusResponse {
 }
 
 export async function getHeight(): Promise<HeightResponse> {
-  return client.get<HeightResponse>('/height');
+  return client.get<HeightResponse>("/height");
 }
 
 export async function getChainStatus(): Promise<ChainStatusResponse> {
-  return client.get<ChainStatusResponse>('/status');
+  return client.get<ChainStatusResponse>("/status");
 }

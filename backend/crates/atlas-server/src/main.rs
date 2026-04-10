@@ -15,11 +15,20 @@ mod faucet;
 mod head;
 mod indexer;
 mod metrics;
+mod snapshot;
 mod state_keys;
 
 /// Retry delays for exponential backoff (in seconds)
 const RETRY_DELAYS: &[u64] = &[5, 10, 20, 30, 60];
 const MAX_RETRY_DELAY: u64 = 60;
+const PORTABLE_PG_DUMP_FLAGS: &[&str] = &["--format=custom", "--no-owner", "--no-acl"];
+const PORTABLE_PG_RESTORE_FLAGS: &[&str] = &[
+    "--format=custom",
+    "--no-owner",
+    "--no-acl",
+    "--exit-on-error",
+];
+const RESET_DB_FOR_RESTORE_SQL: &str = "DROP SCHEMA public CASCADE; CREATE SCHEMA public;";
 
 fn init_tracing(filter: &str, format: &str) {
     let env_filter = tracing_subscriber::EnvFilter::new(filter);
@@ -47,10 +56,28 @@ fn required_db_url(db_url: &str) -> Result<&str> {
     Ok(db_url)
 }
 
-struct PostgresConnectionConfig {
-    database_name: String,
-    env_vars: Vec<(&'static str, String)>,
+pub(crate) struct PostgresConnectionConfig {
+    pub(crate) database_name: String,
+    pub(crate) env_vars: Vec<(&'static str, String)>,
 }
+
+const PG_ENV_VARS: &[&str] = &[
+    "PGHOST",
+    "PGHOSTADDR",
+    "PGPORT",
+    "PGUSER",
+    "PGPASSWORD",
+    "PGDATABASE",
+    "PGSERVICE",
+    "PGSSLMODE",
+    "PGSSLCERT",
+    "PGSSLKEY",
+    "PGSSLROOTCERT",
+    "PGSSLCRL",
+    "PGAPPNAME",
+    "PGOPTIONS",
+    "PGCONNECT_TIMEOUT",
+];
 
 fn set_pg_env(env_vars: &mut Vec<(&'static str, String)>, key: &'static str, value: &str) {
     if value.is_empty() {
@@ -66,7 +93,7 @@ fn set_pg_env(env_vars: &mut Vec<(&'static str, String)>, key: &'static str, val
     }
 }
 
-fn postgres_connection_config(db_url: &str) -> Result<PostgresConnectionConfig> {
+pub(crate) fn postgres_connection_config(db_url: &str) -> Result<PostgresConnectionConfig> {
     let url = reqwest::Url::parse(required_db_url(db_url)?).context("Invalid DATABASE_URL")?;
     match url.scheme() {
         "postgres" | "postgresql" => {}
@@ -154,28 +181,44 @@ fn postgres_connection_config(db_url: &str) -> Result<PostgresConnectionConfig> 
 
 fn postgres_command(program: &str, config: &PostgresConnectionConfig) -> std::process::Command {
     let mut command = std::process::Command::new(program);
-    for env_var in [
-        "PGHOST",
-        "PGHOSTADDR",
-        "PGPORT",
-        "PGUSER",
-        "PGPASSWORD",
-        "PGDATABASE",
-        "PGSERVICE",
-        "PGSSLMODE",
-        "PGSSLCERT",
-        "PGSSLKEY",
-        "PGSSLROOTCERT",
-        "PGSSLCRL",
-        "PGAPPNAME",
-        "PGOPTIONS",
-        "PGCONNECT_TIMEOUT",
-    ] {
+    for env_var in PG_ENV_VARS {
         command.env_remove(env_var);
     }
     for (key, value) in &config.env_vars {
         command.env(key, value);
     }
+    command
+}
+
+pub(crate) fn postgres_command_async(
+    program: &str,
+    config: &PostgresConnectionConfig,
+) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(program);
+    for env_var in PG_ENV_VARS {
+        command.env_remove(env_var);
+    }
+    for (key, value) in &config.env_vars {
+        command.env(key, value);
+    }
+    command
+}
+
+fn portable_pg_dump_command(
+    program: &str,
+    config: &PostgresConnectionConfig,
+) -> std::process::Command {
+    let mut command = postgres_command(program, config);
+    command.args(PORTABLE_PG_DUMP_FLAGS);
+    command
+}
+
+pub(crate) fn portable_pg_dump_command_async(
+    program: &str,
+    config: &PostgresConnectionConfig,
+) -> tokio::process::Command {
+    let mut command = postgres_command_async(program, config);
+    command.args(PORTABLE_PG_DUMP_FLAGS);
     command
 }
 
@@ -241,6 +284,9 @@ async fn run(args: cli::RunArgs) -> Result<()> {
 
     let config = config::Config::from_run_args(args.clone())?;
     let faucet_config = config::FaucetConfig::from_faucet_args(&args.faucet)?;
+    let snapshot_config = config::SnapshotConfig::from_env(&config.database_url)?;
+    let faucet_amount_wei = faucet_config.amount_wei.as_ref().map(ToString::to_string);
+    let faucet_cooldown_minutes = faucet_config.cooldown_minutes;
 
     let faucet = if faucet_config.enabled {
         tracing::info!("Faucet enabled");
@@ -314,6 +360,8 @@ async fn run(args: cli::RunArgs) -> Result<()> {
         rpc_url: config.rpc_url.clone(),
         da_tracking_enabled: config.da_tracking_enabled,
         faucet,
+        faucet_amount_wei,
+        faucet_cooldown_minutes,
         chain_id,
         chain_name: config.chain_name.clone(),
         chain_logo_url: config.chain_logo_url.clone(),
@@ -386,6 +434,18 @@ async fn run(args: cli::RunArgs) -> Result<()> {
         }
     });
 
+    // Spawn snapshot scheduler if enabled
+    if snapshot_config.enabled {
+        tracing::info!("Snapshot scheduler enabled");
+        tokio::spawn(async move {
+            if let Err(e) =
+                run_with_retry(|| snapshot::run_snapshot_loop(snapshot_config.clone())).await
+            {
+                tracing::error!("Snapshot scheduler terminated with error: {}", e);
+            }
+        });
+    }
+
     let app = api::build_router(state, config.cors_origin.clone());
     let addr = format!("{}:{}", config.api_host, config.api_port);
     tracing::info!(addr = %addr, "API listening");
@@ -421,8 +481,8 @@ async fn check(args: cli::RunArgs) -> Result<()> {
 
 fn cmd_db_dump(db_url: &str, output: &str) -> Result<()> {
     let config = postgres_connection_config(db_url)?;
-    let status = postgres_command("pg_dump", &config)
-        .args(["--format=custom", "--file", output])
+    let status = portable_pg_dump_command("pg_dump", &config)
+        .args(["--file", output])
         .status()
         .map_err(|e| anyhow::anyhow!("Failed to run pg_dump (is it installed?): {e}"))?;
 
@@ -435,10 +495,27 @@ fn cmd_db_dump(db_url: &str, output: &str) -> Result<()> {
 
 fn cmd_db_restore(db_url: &str, input: &str) -> Result<()> {
     let config = postgres_connection_config(db_url)?;
+
+    let reset_status = postgres_command("psql", &config)
+        .arg("--dbname")
+        .arg(&config.database_name)
+        .arg("-v")
+        .arg("ON_ERROR_STOP=1")
+        .arg("-c")
+        .arg(RESET_DB_FOR_RESTORE_SQL)
+        .status()
+        .map_err(|e| {
+            anyhow::anyhow!("Failed to run psql before restore (is it installed?): {e}")
+        })?;
+    if !reset_status.success() {
+        anyhow::bail!("psql exited with status {reset_status}");
+    }
+
     let status = postgres_command("pg_restore", &config)
         .arg("--dbname")
         .arg(&config.database_name)
-        .args(["--format=custom", "--clean", "--if-exists", input])
+        .args(PORTABLE_PG_RESTORE_FLAGS)
+        .arg(input)
         .status()
         .map_err(|e| anyhow::anyhow!("Failed to run pg_restore (is it installed?): {e}"))?;
 
@@ -672,5 +749,30 @@ mod tests {
         assert_eq!(env_value(&config, "PGUSER"), Some("query-user"));
         assert_eq!(env_value(&config, "PGPASSWORD"), Some("query-pass"));
         assert_eq!(env_value(&config, "PGDATABASE"), Some("query_db"));
+    }
+
+    #[test]
+    fn portable_pg_dump_flags_omit_source_ownership_and_acls() {
+        assert_eq!(
+            PORTABLE_PG_DUMP_FLAGS,
+            ["--format=custom", "--no-owner", "--no-acl"]
+        );
+    }
+
+    #[test]
+    fn portable_pg_restore_prepares_clean_schema_and_exits_on_first_error() {
+        assert_eq!(
+            PORTABLE_PG_RESTORE_FLAGS,
+            [
+                "--format=custom",
+                "--no-owner",
+                "--no-acl",
+                "--exit-on-error"
+            ]
+        );
+        assert_eq!(
+            RESET_DB_FOR_RESTORE_SQL,
+            "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+        );
     }
 }

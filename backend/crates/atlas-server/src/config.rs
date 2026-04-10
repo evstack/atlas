@@ -1,6 +1,7 @@
 use alloy::primitives::U256;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{bail, Context, Result};
+use chrono::NaiveTime;
 use std::{env, str::FromStr};
 
 #[cfg(test)]
@@ -370,11 +371,14 @@ impl FaucetConfig {
             bail!("faucet amount must be greater than 0");
         }
 
-        let cooldown_minutes = args.cooldown_minutes.ok_or_else(|| {
+        let cooldown_minutes = parse_optional_env(args.cooldown_minutes.clone()).ok_or_else(|| {
             anyhow::anyhow!(
                 "--atlas.faucet.cooldown-minutes (or FAUCET_COOLDOWN_MINUTES) must be set when faucet is enabled"
             )
         })?;
+        let cooldown_minutes = cooldown_minutes
+            .parse::<u64>()
+            .context("Invalid --atlas.faucet.cooldown-minutes / FAUCET_COOLDOWN_MINUTES")?;
         if cooldown_minutes == 0 {
             bail!("faucet cooldown must be greater than 0");
         }
@@ -387,6 +391,72 @@ impl FaucetConfig {
             private_key: Some(private_key),
             amount_wei: Some(amount_wei),
             cooldown_minutes: Some(cooldown_minutes),
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct SnapshotConfig {
+    pub enabled: bool,
+    pub time: NaiveTime,
+    pub retention: u32,
+    pub dir: String,
+    pub database_url: String,
+}
+
+impl std::fmt::Debug for SnapshotConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SnapshotConfig")
+            .field("enabled", &self.enabled)
+            .field("time", &self.time)
+            .field("retention", &self.retention)
+            .field("dir", &self.dir)
+            .field("database_url", &"[redacted]")
+            .finish()
+    }
+}
+
+impl SnapshotConfig {
+    pub fn from_env(database_url: &str) -> Result<Self> {
+        let enabled = env::var("SNAPSHOT_ENABLED")
+            .unwrap_or_else(|_| "false".to_string())
+            .parse::<bool>()
+            .context("Invalid SNAPSHOT_ENABLED")?;
+
+        if !enabled {
+            return Ok(Self {
+                enabled,
+                time: NaiveTime::from_hms_opt(3, 0, 0).unwrap(),
+                retention: 7,
+                dir: "/snapshots".to_string(),
+                database_url: database_url.to_string(),
+            });
+        }
+
+        let time_str = env::var("SNAPSHOT_TIME").unwrap_or_else(|_| "03:00".to_string());
+        let time = NaiveTime::parse_from_str(&time_str, "%H:%M")
+            .context("Invalid SNAPSHOT_TIME (expected HH:MM)")?;
+
+        let retention = env::var("SNAPSHOT_RETENTION")
+            .unwrap_or_else(|_| "7".to_string())
+            .parse::<u32>()
+            .context("Invalid SNAPSHOT_RETENTION")?;
+        if retention == 0 {
+            bail!("SNAPSHOT_RETENTION must be greater than 0");
+        }
+
+        let dir = env::var("SNAPSHOT_DIR").unwrap_or_else(|_| "/snapshots".to_string());
+        let dir = dir.trim().to_string();
+        if dir.is_empty() {
+            bail!("SNAPSHOT_DIR must not be empty");
+        }
+
+        Ok(Self {
+            enabled,
+            time,
+            retention,
+            dir,
+            database_url: database_url.to_string(),
         })
     }
 }
@@ -611,6 +681,26 @@ mod tests_from_run_args {
             config.chain_logo_url_dark.as_deref(),
             Some("/branding/dark.svg")
         );
+    }
+
+    #[test]
+    fn faucet_blank_cooldown_is_treated_as_missing() {
+        let mut args = minimal_run_args();
+        args.faucet.enabled = true;
+        args.faucet.amount = Some("0.1".to_string());
+        args.faucet.cooldown_minutes = Some("   ".to_string());
+
+        unsafe {
+            env::set_var(
+                "FAUCET_PRIVATE_KEY",
+                "0x59c6995e998f97a5a0044966f0945382dbd8c5df5440d8d6d0d0f66f6d7d6a0d",
+            );
+        }
+        let err = FaucetConfig::from_faucet_args(&args.faucet).unwrap_err();
+        assert!(err.to_string().contains("cooldown-minutes"));
+        unsafe {
+            env::remove_var("FAUCET_PRIVATE_KEY");
+        }
     }
 }
 
@@ -900,6 +990,111 @@ mod tests {
             faucet.amount_wei,
             Some(U256::from(123_456_789_123_456_789u128))
         );
+    }
+
+    fn clear_snapshot_env() {
+        env::remove_var("SNAPSHOT_ENABLED");
+        env::remove_var("SNAPSHOT_TIME");
+        env::remove_var("SNAPSHOT_RETENTION");
+        env::remove_var("SNAPSHOT_DIR");
+    }
+
+    #[test]
+    fn snapshot_config_defaults_disabled() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        clear_snapshot_env();
+
+        let config = SnapshotConfig::from_env("postgres://test@localhost/test").unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.time, NaiveTime::from_hms_opt(3, 0, 0).unwrap());
+        assert_eq!(config.retention, 7);
+        assert_eq!(config.dir, "/snapshots");
+    }
+
+    #[test]
+    fn snapshot_config_parses_valid_time() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        clear_snapshot_env();
+        env::set_var("SNAPSHOT_ENABLED", "true");
+
+        for (input, hour, minute) in [("00:00", 0, 0), ("03:00", 3, 0), ("23:59", 23, 59)] {
+            env::set_var("SNAPSHOT_TIME", input);
+            let config = SnapshotConfig::from_env("postgres://test@localhost/test").unwrap();
+            assert_eq!(
+                config.time,
+                NaiveTime::from_hms_opt(hour, minute, 0).unwrap(),
+                "failed for input {input}"
+            );
+        }
+        clear_snapshot_env();
+    }
+
+    #[test]
+    fn snapshot_config_rejects_invalid_time() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        clear_snapshot_env();
+        env::set_var("SNAPSHOT_ENABLED", "true");
+
+        for val in ["25:00", "abc", "12:60"] {
+            env::set_var("SNAPSHOT_TIME", val);
+            let err = SnapshotConfig::from_env("postgres://test@localhost/test").unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid SNAPSHOT_TIME"),
+                "expected error for {val}, got: {err}"
+            );
+        }
+        clear_snapshot_env();
+    }
+
+    #[test]
+    fn snapshot_config_rejects_zero_retention() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        clear_snapshot_env();
+        env::set_var("SNAPSHOT_ENABLED", "true");
+        env::set_var("SNAPSHOT_RETENTION", "0");
+
+        let err = SnapshotConfig::from_env("postgres://test@localhost/test").unwrap_err();
+        assert!(err.to_string().contains("must be greater than 0"));
+        clear_snapshot_env();
+    }
+
+    #[test]
+    fn snapshot_config_custom_dir() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        clear_snapshot_env();
+        env::set_var("SNAPSHOT_ENABLED", "true");
+        env::set_var("SNAPSHOT_DIR", "/data/backups");
+
+        let config = SnapshotConfig::from_env("postgres://test@localhost/test").unwrap();
+        assert_eq!(config.dir, "/data/backups");
+        clear_snapshot_env();
+    }
+
+    #[test]
+    fn snapshot_config_rejects_empty_dir() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        clear_snapshot_env();
+        env::set_var("SNAPSHOT_ENABLED", "true");
+        env::set_var("SNAPSHOT_DIR", "   ");
+
+        let err = SnapshotConfig::from_env("postgres://test@localhost/test").unwrap_err();
+        assert!(err.to_string().contains("SNAPSHOT_DIR must not be empty"));
+        clear_snapshot_env();
+    }
+
+    #[test]
+    fn snapshot_config_debug_redacts_database_url() {
+        let config = SnapshotConfig {
+            enabled: true,
+            time: NaiveTime::from_hms_opt(3, 0, 0).unwrap(),
+            retention: 7,
+            dir: "/snapshots".to_string(),
+            database_url: "postgres://atlas:secret@db/atlas".to_string(),
+        };
+
+        let debug = format!("{config:?}");
+        assert!(debug.contains("[redacted]"));
+        assert!(!debug.contains("secret"));
     }
 
     #[test]

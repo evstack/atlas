@@ -36,6 +36,7 @@ pub(crate) struct BlockBatch {
     pub(crate) b_timestamps: Vec<i64>,
     pub(crate) b_gas_used: Vec<i64>,
     pub(crate) b_gas_limits: Vec<i64>,
+    pub(crate) b_base_fee_per_gas: Vec<Option<String>>,
     pub(crate) b_tx_counts: Vec<i32>,
 
     // transactions (receipt data merged in at collection time)
@@ -177,6 +178,7 @@ impl BlockBatch {
         debug_assert_eq!(self.b_numbers.len(), self.b_timestamps.len());
         debug_assert_eq!(self.b_numbers.len(), self.b_gas_used.len());
         debug_assert_eq!(self.b_numbers.len(), self.b_gas_limits.len());
+        debug_assert_eq!(self.b_numbers.len(), self.b_base_fee_per_gas.len());
         debug_assert_eq!(self.b_numbers.len(), self.b_tx_counts.len());
 
         (0..self.b_numbers.len())
@@ -187,6 +189,7 @@ impl BlockBatch {
                 timestamp: self.b_timestamps[i],
                 gas_used: self.b_gas_used[i],
                 gas_limit: self.b_gas_limits[i],
+                base_fee_per_gas: self.b_base_fee_per_gas[i].clone(),
                 transaction_count: self.b_tx_counts[i],
                 indexed_at,
             })
@@ -294,6 +297,9 @@ mod tests {
         batch.b_timestamps.push(1_700_000_042);
         batch.b_gas_used.push(21_000);
         batch.b_gas_limits.push(30_000_000);
+        batch
+            .b_base_fee_per_gas
+            .push(Some("1000000000".to_string()));
         batch.b_tx_counts.push(3);
 
         let indexed_at = Utc.timestamp_opt(1_700_000_100, 0).unwrap();
@@ -306,6 +312,7 @@ mod tests {
         assert_eq!(blocks[0].timestamp, 1_700_000_042);
         assert_eq!(blocks[0].gas_used, 21_000);
         assert_eq!(blocks[0].gas_limit, 30_000_000);
+        assert_eq!(blocks[0].base_fee_per_gas.as_deref(), Some("1000000000"));
         assert_eq!(blocks[0].transaction_count, 3);
         assert_eq!(blocks[0].indexed_at, indexed_at);
     }

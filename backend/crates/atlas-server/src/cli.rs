@@ -335,7 +335,7 @@ pub struct FaucetArgs {
         value_name = "MINS",
         help = "Cooldown period in minutes between faucet requests per address"
     )]
-    pub cooldown_minutes: Option<u64>,
+    pub cooldown_minutes: Option<String>,
     // FAUCET_PRIVATE_KEY is intentionally env-only (security: never pass secrets as CLI flags)
 }
 
@@ -403,6 +403,34 @@ pub struct LogArgs {
         help = "Log output format: text or json"
     )]
     pub format: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_faucet_cooldown_env_is_ignored_when_faucet_disabled() {
+        unsafe {
+            std::env::set_var("DATABASE_URL", "postgres://atlas:atlas@localhost/atlas");
+            std::env::set_var("RPC_URL", "http://localhost:8545");
+            std::env::set_var("FAUCET_ENABLED", "false");
+            std::env::set_var("FAUCET_COOLDOWN_MINUTES", "");
+        }
+
+        let cli = Cli::try_parse_from(["atlas-server", "run"]).expect("parse cli");
+        match cli.command {
+            Command::Run(args) => assert_eq!(args.faucet.cooldown_minutes, Some(String::new())),
+            _ => panic!("expected run command"),
+        }
+
+        unsafe {
+            std::env::remove_var("DATABASE_URL");
+            std::env::remove_var("RPC_URL");
+            std::env::remove_var("FAUCET_ENABLED");
+            std::env::remove_var("FAUCET_COOLDOWN_MINUTES");
+        }
+    }
 }
 
 // ── db subcommand ─────────────────────────────────────────────────────────────
