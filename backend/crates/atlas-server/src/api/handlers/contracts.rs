@@ -670,7 +670,9 @@ fn extract_stored_contract_sources(
     }
 }
 
-fn extract_source_files(input: &serde_json::Value) -> Result<Option<serde_json::Value>, AtlasError> {
+fn extract_source_files(
+    input: &serde_json::Value,
+) -> Result<Option<serde_json::Value>, AtlasError> {
     let Some(sources) = input.get("sources") else {
         return Ok(None);
     };
@@ -1121,8 +1123,7 @@ mod tests {
             license_type: None,
         };
 
-        let stored =
-            extract_stored_contract_sources(&req, VerifyInputKind::StandardJson).unwrap();
+        let stored = extract_stored_contract_sources(&req, VerifyInputKind::StandardJson).unwrap();
 
         assert!(stored.is_multi_file);
         let files = stored
@@ -1158,8 +1159,7 @@ mod tests {
             license_type: None,
         };
 
-        let stored =
-            extract_stored_contract_sources(&req, VerifyInputKind::StandardJson).unwrap();
+        let stored = extract_stored_contract_sources(&req, VerifyInputKind::StandardJson).unwrap();
 
         assert!(!stored.is_multi_file);
         let files = stored
