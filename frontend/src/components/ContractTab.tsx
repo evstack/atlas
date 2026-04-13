@@ -651,9 +651,7 @@ function VerifiedView({ contract }: VerifiedViewProps) {
   const [abiExpanded, setAbiExpanded] = useState(false);
   const [activeFile, setActiveFile] = useState<string | null>(null);
 
-  const files = contract.is_multi_file && contract.source_files
-    ? contract.source_files
-    : null;
+  const files = contract.source_files ?? null;
   const firstFile = files ? Object.keys(files)[0] : null;
   const displayFile = activeFile ?? firstFile;
   const displaySource = files && displayFile ? files[displayFile] : contract.source_code;
@@ -693,7 +691,7 @@ function VerifiedView({ contract }: VerifiedViewProps) {
             <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">Source Code</h3>
           </div>
 
-          {files && (
+          {contract.is_multi_file && files && (
             <div className="flex flex-wrap gap-1 mb-2">
               {Object.keys(files).map(filename => (
                 <button

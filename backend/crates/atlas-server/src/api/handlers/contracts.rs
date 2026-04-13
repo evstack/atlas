@@ -12,10 +12,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::env::consts::{ARCH, OS};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
 
 use crate::api::error::ApiResult;
 use crate::api::AppState;
@@ -72,6 +72,13 @@ struct VerificationSettings {
     optimization_enabled: bool,
     optimization_runs: Option<i32>,
     evm_version: Option<String>,
+}
+
+#[derive(Debug)]
+struct StoredContractSources {
+    source_code: Option<String>,
+    is_multi_file: bool,
+    source_files: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -236,10 +243,7 @@ pub async fn verify_contract(
     let constructor_bytes = parse_constructor_args(req.constructor_args.as_deref())?;
     let abi = compiled_contract.abi;
     let verification_settings = extract_verification_settings(&req, input_kind)?;
-    let source_code_to_store = match input_kind {
-        VerifyInputKind::SingleFile => req.source_code.clone(),
-        VerifyInputKind::StandardJson => req.standard_json_input.clone(),
-    };
+    let stored_sources = extract_stored_contract_sources(&req, input_kind)?;
 
     // Upsert into contract_abis
     let constructor_args_bytes: Option<Vec<u8>> = if constructor_bytes.is_empty() {
@@ -270,7 +274,7 @@ pub async fn verify_contract(
     )
     .bind(&address)
     .bind(&abi)
-    .bind(&source_code_to_store)
+    .bind(&stored_sources.source_code)
     .bind(&req.compiler_version)
     .bind(verification_settings.optimization_enabled)
     .bind(verification_settings.optimization_runs)
@@ -278,8 +282,8 @@ pub async fn verify_contract(
     .bind(constructor_args_bytes)
     .bind(&verification_settings.evm_version)
     .bind(&req.license_type)
-    .bind(false)
-    .bind(Option::<serde_json::Value>::None)
+    .bind(stored_sources.is_multi_file)
+    .bind(&stored_sources.source_files)
     .execute(&state.pool)
     .await?;
 
@@ -364,14 +368,19 @@ async fn get_solc_binary(version: &str, cache_dir: &str) -> Result<PathBuf, Atla
         .await
         .map_err(|e| AtlasError::Internal(format!("failed to read solc response: {e}")))?;
 
-    // Write to a temp file first, then atomically rename
-    let tmp_path = PathBuf::from(cache_dir).join(format!("{filename}.tmp"));
-    let mut file = fs::File::create(&tmp_path)
-        .await
+    // Write to a uniquely named temp file first so concurrent requests for the
+    // same version don't contend on a shared `.tmp` path.
+    let tmp_file = tempfile::Builder::new()
+        .prefix(&format!("{filename}."))
+        .suffix(".tmp")
+        .tempfile_in(cache_dir)
         .map_err(|e| AtlasError::Internal(format!("failed to create temp solc file: {e}")))?;
+    let tmp_path = tmp_file.path().to_path_buf();
+    let mut file = tmp_file.into_file();
     file.write_all(&bytes)
-        .await
         .map_err(|e| AtlasError::Internal(format!("failed to write solc binary: {e}")))?;
+    file.flush()
+        .map_err(|e| AtlasError::Internal(format!("failed to flush solc binary: {e}")))?;
     drop(file);
 
     // Make executable
@@ -630,6 +639,63 @@ fn extract_verification_settings(
                     .map(String::from),
             })
         }
+    }
+}
+
+fn extract_stored_contract_sources(
+    req: &VerifyRequest,
+    input_kind: VerifyInputKind,
+) -> Result<StoredContractSources, AtlasError> {
+    match input_kind {
+        VerifyInputKind::SingleFile => Ok(StoredContractSources {
+            source_code: req.source_code.clone(),
+            is_multi_file: false,
+            source_files: None,
+        }),
+        VerifyInputKind::StandardJson => {
+            let input = parse_standard_json_input(req)?;
+            let source_files = extract_source_files(&input)?;
+            let is_multi_file = source_files
+                .as_ref()
+                .and_then(|value| value.as_object())
+                .map(|files| files.len() > 1)
+                .unwrap_or(false);
+
+            Ok(StoredContractSources {
+                source_code: req.standard_json_input.clone(),
+                is_multi_file,
+                source_files,
+            })
+        }
+    }
+}
+
+fn extract_source_files(input: &serde_json::Value) -> Result<Option<serde_json::Value>, AtlasError> {
+    let Some(sources) = input.get("sources") else {
+        return Ok(None);
+    };
+    let Some(sources) = sources.as_object() else {
+        return Err(AtlasError::InvalidInput(
+            "standard_json_input.sources must be a JSON object".to_string(),
+        ));
+    };
+
+    let mut source_files = serde_json::Map::new();
+    for (path, entry) in sources {
+        let Some(entry) = entry.as_object() else {
+            return Err(AtlasError::InvalidInput(format!(
+                "standard_json_input.sources[{path}] must be a JSON object"
+            )));
+        };
+        if let Some(content) = entry.get("content").and_then(|value| value.as_str()) {
+            source_files.insert(path.clone(), serde_json::Value::String(content.to_string()));
+        }
+    }
+
+    if source_files.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(serde_json::Value::Object(source_files)))
     }
 }
 
@@ -1030,5 +1096,78 @@ mod tests {
                 serde_json::json!("evm.deployedBytecode"),
             ]
         );
+    }
+
+    #[test]
+    fn extract_stored_contract_sources_marks_standard_json_multi_file_contracts() {
+        let req = VerifyRequest {
+            source_code: None,
+            standard_json_input: Some(
+                serde_json::json!({
+                    "language": "Solidity",
+                    "sources": {
+                        "src/A.sol": { "content": "contract A {}" },
+                        "src/B.sol": { "content": "contract B {}" }
+                    }
+                })
+                .to_string(),
+            ),
+            compiler_version: "v0.8.20+commit.a1b79de6".to_string(),
+            optimization_enabled: None,
+            optimization_runs: None,
+            contract_name: "A".to_string(),
+            constructor_args: None,
+            evm_version: None,
+            license_type: None,
+        };
+
+        let stored =
+            extract_stored_contract_sources(&req, VerifyInputKind::StandardJson).unwrap();
+
+        assert!(stored.is_multi_file);
+        let files = stored
+            .source_files
+            .as_ref()
+            .and_then(|value| value.as_object())
+            .expect("source_files object");
+        assert_eq!(files["src/A.sol"], "contract A {}");
+        assert_eq!(files["src/B.sol"], "contract B {}");
+        assert_eq!(stored.source_code, req.standard_json_input);
+    }
+
+    #[test]
+    fn extract_stored_contract_sources_ignores_standard_json_entries_without_content() {
+        let req = VerifyRequest {
+            source_code: None,
+            standard_json_input: Some(
+                serde_json::json!({
+                    "language": "Solidity",
+                    "sources": {
+                        "src/A.sol": { "content": "contract A {}" },
+                        "src/B.sol": { "urls": ["ipfs://cid"] }
+                    }
+                })
+                .to_string(),
+            ),
+            compiler_version: "v0.8.20+commit.a1b79de6".to_string(),
+            optimization_enabled: None,
+            optimization_runs: None,
+            contract_name: "A".to_string(),
+            constructor_args: None,
+            evm_version: None,
+            license_type: None,
+        };
+
+        let stored =
+            extract_stored_contract_sources(&req, VerifyInputKind::StandardJson).unwrap();
+
+        assert!(!stored.is_multi_file);
+        let files = stored
+            .source_files
+            .as_ref()
+            .and_then(|value| value.as_object())
+            .expect("source_files object");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files["src/A.sol"], "contract A {}");
     }
 }
