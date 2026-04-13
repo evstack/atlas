@@ -11,7 +11,6 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::env::consts::{ARCH, OS};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -26,13 +25,13 @@ use atlas_common::{AtlasError, FullContractAbi};
 
 #[derive(Debug, Deserialize)]
 pub struct VerifyRequest {
-    /// Single-file Solidity source (mutually exclusive with `source_files`)
+    /// Single-file Solidity source (mutually exclusive with `standard_json_input`)
     pub source_code: Option<String>,
-    /// Multi-file source map: filename → content (mutually exclusive with `source_code`)
-    pub source_files: Option<HashMap<String, String>>,
+    /// Exact solc standard-json payload (mutually exclusive with `source_code`)
+    pub standard_json_input: Option<String>,
     /// Exact compiler version, e.g. "v0.8.20+commit.a1b79de6"
     pub compiler_version: String,
-    pub optimization_enabled: bool,
+    pub optimization_enabled: Option<bool>,
     /// Optimizer runs (default 200)
     pub optimization_runs: Option<i32>,
     pub contract_name: String,
@@ -60,6 +59,19 @@ struct CompiledContract {
     bytecode: Vec<u8>,
     abi: serde_json::Value,
     immutable_references: Vec<ImmutableReference>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerifyInputKind {
+    SingleFile,
+    StandardJson,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerificationSettings {
+    optimization_enabled: bool,
+    optimization_runs: Option<i32>,
+    evm_version: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -155,17 +167,8 @@ pub async fn verify_contract(
     // Validate compiler version format: v<major>.<minor>.<patch>+commit.<hex>
     validate_compiler_version(&req.compiler_version)?;
 
-    // Validate that exactly one source input is provided
-    let is_multi_file = match (&req.source_code, &req.source_files) {
-        (Some(_), None) => false,
-        (None, Some(_)) => true,
-        _ => {
-            return Err(AtlasError::InvalidInput(
-                "provide either source_code or source_files, not both".to_string(),
-            )
-            .into())
-        }
-    };
+    // Validate that exactly one supported source input is provided
+    let input_kind = detect_input_kind(&req)?;
 
     // Ensure the address is a known contract
     let is_contract: Option<(bool,)> =
@@ -232,6 +235,11 @@ pub async fn verify_contract(
 
     let constructor_bytes = parse_constructor_args(req.constructor_args.as_deref())?;
     let abi = compiled_contract.abi;
+    let verification_settings = extract_verification_settings(&req, input_kind)?;
+    let source_code_to_store = match input_kind {
+        VerifyInputKind::SingleFile => req.source_code.clone(),
+        VerifyInputKind::StandardJson => req.standard_json_input.clone(),
+    };
 
     // Upsert into contract_abis
     let constructor_args_bytes: Option<Vec<u8>> = if constructor_bytes.is_empty() {
@@ -239,15 +247,6 @@ pub async fn verify_contract(
     } else {
         Some(constructor_bytes)
     };
-    let optimization_runs = if req.optimization_enabled {
-        req.optimization_runs.or(Some(200))
-    } else {
-        None
-    };
-    let source_files_json: Option<serde_json::Value> = req
-        .source_files
-        .as_ref()
-        .map(|m| serde_json::to_value(m).unwrap_or(serde_json::Value::Null));
 
     sqlx::query(
         "INSERT INTO contract_abis
@@ -271,16 +270,16 @@ pub async fn verify_contract(
     )
     .bind(&address)
     .bind(&abi)
-    .bind(&req.source_code)
+    .bind(&source_code_to_store)
     .bind(&req.compiler_version)
-    .bind(req.optimization_enabled)
-    .bind(optimization_runs)
+    .bind(verification_settings.optimization_enabled)
+    .bind(verification_settings.optimization_runs)
     .bind(&req.contract_name)
     .bind(constructor_args_bytes)
-    .bind(&req.evm_version)
+    .bind(&verification_settings.evm_version)
     .bind(&req.license_type)
-    .bind(is_multi_file)
-    .bind(source_files_json)
+    .bind(false)
+    .bind(Option::<serde_json::Value>::None)
     .execute(&state.pool)
     .await?;
 
@@ -413,7 +412,7 @@ async fn compile_standard_json(
     req: &VerifyRequest,
     dir: tempfile::TempDir,
 ) -> Result<serde_json::Value, AtlasError> {
-    let input = build_standard_json_input(req, true)?;
+    let input = build_solc_input(req, true)?;
     let input_str = serde_json::to_string(&input)
         .map_err(|e| AtlasError::Internal(format!("failed to serialize solc input: {e}")))?;
 
@@ -468,12 +467,30 @@ async fn compile_source(
     extract_compiled_contract(&json, &req.contract_name)
 }
 
-fn build_standard_json_input(
+fn build_solc_input(
     req: &VerifyRequest,
     include_deployed_bytecode: bool,
 ) -> Result<serde_json::Value, AtlasError> {
-    let sources = build_sources_json(req)?;
+    match detect_input_kind(req)? {
+        VerifyInputKind::SingleFile => {
+            build_single_file_standard_json_input(req, include_deployed_bytecode)
+        }
+        VerifyInputKind::StandardJson => {
+            build_provided_standard_json_input(req, include_deployed_bytecode)
+        }
+    }
+}
+
+fn build_single_file_standard_json_input(
+    req: &VerifyRequest,
+    include_deployed_bytecode: bool,
+) -> Result<serde_json::Value, AtlasError> {
+    let source_code = req
+        .source_code
+        .as_deref()
+        .ok_or_else(|| AtlasError::InvalidInput("source_code is required".to_string()))?;
     let runs = req.optimization_runs.unwrap_or(200);
+    let optimization_enabled = req.optimization_enabled.unwrap_or(false);
     let mut contract_outputs = vec![serde_json::json!("abi")];
     if include_deployed_bytecode {
         contract_outputs.push(serde_json::json!("evm.deployedBytecode"));
@@ -483,7 +500,7 @@ fn build_standard_json_input(
         (
             "optimizer".to_string(),
             serde_json::json!({
-                "enabled": req.optimization_enabled,
+                "enabled": optimization_enabled,
                 "runs": runs,
             }),
         ),
@@ -503,27 +520,117 @@ fn build_standard_json_input(
 
     Ok(serde_json::json!({
         "language": "Solidity",
-        "sources": sources,
+        "sources": {
+            "contract.sol": {
+                "content": source_code,
+            }
+        },
         "settings": settings,
     }))
 }
 
-fn build_sources_json(req: &VerifyRequest) -> Result<serde_json::Value, AtlasError> {
-    let files: HashMap<String, String> = match (&req.source_code, &req.source_files) {
-        (Some(source), None) => HashMap::from([("contract.sol".to_string(), source.clone())]),
-        (None, Some(files)) => files.clone(),
-        _ => {
-            return Err(AtlasError::InvalidInput(
-                "provide either source_code or source_files, not both".to_string(),
-            ))
-        }
-    };
+fn build_provided_standard_json_input(
+    req: &VerifyRequest,
+    include_deployed_bytecode: bool,
+) -> Result<serde_json::Value, AtlasError> {
+    let mut input = parse_standard_json_input(req)?;
+    let root = input.as_object_mut().ok_or_else(|| {
+        AtlasError::InvalidInput("standard_json_input must be a JSON object".to_string())
+    })?;
 
-    let sources = files
-        .into_iter()
-        .map(|(path, content)| (path, serde_json::json!({ "content": content })))
-        .collect::<serde_json::Map<String, serde_json::Value>>();
-    Ok(serde_json::Value::Object(sources))
+    let settings = root
+        .entry("settings")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let settings_obj = settings.as_object_mut().ok_or_else(|| {
+        AtlasError::InvalidInput("standard_json_input.settings must be a JSON object".to_string())
+    })?;
+    settings_obj.insert(
+        "outputSelection".to_string(),
+        build_output_selection(include_deployed_bytecode),
+    );
+
+    Ok(input)
+}
+
+fn build_output_selection(include_deployed_bytecode: bool) -> serde_json::Value {
+    let mut contract_outputs = vec![serde_json::json!("abi")];
+    if include_deployed_bytecode {
+        contract_outputs.push(serde_json::json!("evm.deployedBytecode"));
+    }
+
+    serde_json::json!({
+        "*": { "*": contract_outputs }
+    })
+}
+
+fn parse_standard_json_input(req: &VerifyRequest) -> Result<serde_json::Value, AtlasError> {
+    let raw_input = req
+        .standard_json_input
+        .as_deref()
+        .ok_or_else(|| AtlasError::InvalidInput("standard_json_input is required".to_string()))?;
+
+    serde_json::from_str(raw_input).map_err(|e| {
+        AtlasError::InvalidInput(format!("standard_json_input is not valid JSON: {e}"))
+    })
+}
+
+fn detect_input_kind(req: &VerifyRequest) -> Result<VerifyInputKind, AtlasError> {
+    match (&req.source_code, &req.standard_json_input) {
+        (Some(_), None) => Ok(VerifyInputKind::SingleFile),
+        (None, Some(_)) => Ok(VerifyInputKind::StandardJson),
+        _ => Err(AtlasError::InvalidInput(
+            "provide either source_code or standard_json_input, not both".to_string(),
+        )),
+    }
+}
+
+fn extract_verification_settings(
+    req: &VerifyRequest,
+    input_kind: VerifyInputKind,
+) -> Result<VerificationSettings, AtlasError> {
+    match input_kind {
+        VerifyInputKind::SingleFile => {
+            let optimization_enabled = req.optimization_enabled.unwrap_or(false);
+            Ok(VerificationSettings {
+                optimization_enabled,
+                optimization_runs: if optimization_enabled {
+                    req.optimization_runs.or(Some(200))
+                } else {
+                    None
+                },
+                evm_version: req.evm_version.clone(),
+            })
+        }
+        VerifyInputKind::StandardJson => {
+            let input = parse_standard_json_input(req)?;
+            let settings = input.get("settings").and_then(|value| value.as_object());
+            let optimizer = settings
+                .and_then(|settings| settings.get("optimizer"))
+                .and_then(|value| value.as_object());
+            let optimization_enabled = optimizer
+                .and_then(|optimizer| optimizer.get("enabled"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let optimization_runs = if optimization_enabled {
+                optimizer
+                    .and_then(|optimizer| optimizer.get("runs"))
+                    .and_then(|value| value.as_i64())
+                    .and_then(|value| i32::try_from(value).ok())
+                    .or(Some(200))
+            } else {
+                None
+            };
+
+            Ok(VerificationSettings {
+                optimization_enabled,
+                optimization_runs,
+                evm_version: settings
+                    .and_then(|settings| settings.get("evmVersion"))
+                    .and_then(|value| value.as_str())
+                    .map(String::from),
+            })
+        }
+    }
 }
 
 fn collect_fatal_solc_errors(json: &serde_json::Value) -> Result<(), AtlasError> {
@@ -858,9 +965,9 @@ mod tests {
     fn build_standard_json_input_omits_evm_version_when_not_provided() {
         let req = VerifyRequest {
             source_code: Some("pragma solidity ^0.8.20; contract C {}".to_string()),
-            source_files: None,
+            standard_json_input: None,
             compiler_version: "v0.8.20+commit.a1b79de6".to_string(),
-            optimization_enabled: false,
+            optimization_enabled: Some(false),
             optimization_runs: None,
             contract_name: "C".to_string(),
             constructor_args: None,
@@ -868,9 +975,60 @@ mod tests {
             license_type: None,
         };
 
-        let input = build_standard_json_input(&req, true).unwrap();
+        let input = build_single_file_standard_json_input(&req, true).unwrap();
         let settings = input.get("settings").and_then(|v| v.as_object()).unwrap();
 
         assert!(!settings.contains_key("evmVersion"));
+    }
+
+    #[test]
+    fn build_provided_standard_json_input_overrides_output_selection() {
+        let req = VerifyRequest {
+            source_code: None,
+            standard_json_input: Some(
+                serde_json::json!({
+                    "language": "Solidity",
+                    "sources": {
+                        "A.sol": { "content": "pragma solidity ^0.8.20; contract A {}" }
+                    },
+                    "settings": {
+                        "optimizer": { "enabled": true, "runs": 999 },
+                        "outputSelection": {
+                            "*": { "*": ["metadata"] }
+                        },
+                        "evmVersion": "paris"
+                    }
+                })
+                .to_string(),
+            ),
+            compiler_version: "v0.8.20+commit.a1b79de6".to_string(),
+            optimization_enabled: None,
+            optimization_runs: None,
+            contract_name: "A".to_string(),
+            constructor_args: None,
+            evm_version: None,
+            license_type: None,
+        };
+
+        let input = build_provided_standard_json_input(&req, true).unwrap();
+        let settings = input.get("settings").and_then(|v| v.as_object()).unwrap();
+        let output_selection = settings
+            .get("outputSelection")
+            .and_then(|v| v.get("*"))
+            .and_then(|v| v.get("*"))
+            .and_then(|v| v.as_array())
+            .unwrap();
+
+        assert_eq!(
+            settings.get("evmVersion").and_then(|v| v.as_str()),
+            Some("paris")
+        );
+        assert_eq!(
+            output_selection,
+            &vec![
+                serde_json::json!("abi"),
+                serde_json::json!("evm.deployedBytecode"),
+            ]
+        );
     }
 }

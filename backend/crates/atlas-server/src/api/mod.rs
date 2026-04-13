@@ -1,7 +1,7 @@
 pub mod error;
 pub mod handlers;
 
-use axum::{middleware, routing::get, Router};
+use axum::{extract::DefaultBodyLimit, middleware, routing::get, Router};
 use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -57,6 +57,8 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
             "/api/contracts/{address}/verify",
             axum::routing::post(handlers::contracts::verify_contract),
         )
+        // Verification payloads can include full standard-json compiler inputs.
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state.clone());
 
     let mut router = Router::new()

@@ -352,9 +352,9 @@ export interface ContractDetail {
 
 export interface VerifyContractRequest {
   source_code?: string;
-  source_files?: Record<string, string>;
+  standard_json_input?: string;
   compiler_version: string;
-  optimization_enabled: boolean;
+  optimization_enabled?: boolean;
   optimization_runs?: number;
   contract_name: string;
   constructor_args?: string;

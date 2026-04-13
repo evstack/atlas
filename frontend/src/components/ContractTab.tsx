@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ChangeEvent, FormEvent, InputHTMLAttributes } from 'react';
+import type { ChangeEvent, DragEvent, FormEvent, RefObject } from 'react';
 import type { ContractDetail, AbiItem, VerifyContractRequest } from '../types';
 import { verifyContract } from '../api/contracts';
 import {
@@ -14,7 +14,6 @@ const themedInputClassName =
   'w-full bg-dark-700/80 backdrop-blur border border-dark-500 px-3 py-2 text-sm text-fg placeholder-gray-500 rounded-xl shadow-md shadow-black/20 focus:outline-none focus:border-accent-primary focus:ring-2 focus:ring-accent-primary/40 transition';
 
 const themedMonoInputClassName = `${themedInputClassName} font-mono`;
-const themedTextareaClassName = `${themedMonoInputClassName} resize-y min-h-[22rem]`;
 
 interface Props {
   address: string;
@@ -42,32 +41,14 @@ interface VerifyFormProps {
   onVerified: () => void;
 }
 
-interface SourceFileEntry {
-  path: string;
-  name: string;
-  content: string;
-}
-
-type DirectoryInputAttributes = InputHTMLAttributes<HTMLInputElement> & {
-  directory?: string;
-  mozdirectory?: string;
-  webkitdirectory?: string;
-};
-
-const directoryInputAttributes: DirectoryInputAttributes = {
-  directory: '',
-  mozdirectory: '',
-  webkitdirectory: '',
-};
-
 function VerifyForm({ address, onVerified }: VerifyFormProps) {
   const [compilerVersion, setCompilerVersion] = useState('');
   const [contractName, setContractName] = useState('');
-  const [mode, setMode] = useState<'single' | 'multi'>('single');
+  const [mode, setMode] = useState<'single' | 'standard-json'>('single');
   const [sourceCode, setSourceCode] = useState('');
-  const [sourceFiles, setSourceFiles] = useState<SourceFileEntry[]>([]);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const directoryInputRef = useRef<HTMLInputElement | null>(null);
+  const [sourceFilename, setSourceFilename] = useState('');
+  const [standardJsonInput, setStandardJsonInput] = useState('');
+  const [standardJsonFilename, setStandardJsonFilename] = useState('');
   const [optimizationEnabled, setOptimizationEnabled] = useState(false);
   const [optimizationRunsPreset, setOptimizationRunsPreset] = useState<string>('200');
   const [customOptimizationRuns, setCustomOptimizationRuns] = useState('');
@@ -77,57 +58,60 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const singleFileInputRef = useRef<HTMLInputElement | null>(null);
+  const standardJsonFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  function switchMode(next: 'single' | 'multi') {
+  function switchMode(next: 'single' | 'standard-json') {
     setMode(next);
     setError(null);
-    if (next === 'multi') {
+    if (next === 'standard-json') {
       setSourceCode('');
-      setSourceFiles([]);
+      setSourceFilename('');
     } else {
-      setSourceFiles([]);
+      setStandardJsonInput('');
+      setStandardJsonFilename('');
     }
   }
 
-  function removeFile(index: number) {
-    setSourceFiles(prev => prev.filter((_, i) => i !== index));
-  }
-
-  function sourcePathForFile(file: File): string {
-    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-    return (relativePath && relativePath.trim()) || file.name;
-  }
-
-  async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
-    const picked = Array.from(e.target.files ?? []).filter(file => file.name.endsWith('.sol'));
-    if (picked.length === 0) {
-      setError('No Solidity source files were found in the selected upload.');
-      e.target.value = '';
-      return;
+  async function loadTextFile(
+    file: File,
+    onLoad: (content: string, filename: string) => void,
+  ) {
+    try {
+      const text = await file.text();
+      onLoad(text, file.name);
+      setError(null);
+    } catch {
+      setError(`Unable to read ${file.name}.`);
     }
-    const loaded = await Promise.all(
-      picked.map(file =>
-        new Promise<SourceFileEntry>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () =>
-            resolve({
-              path: sourcePathForFile(file),
-              name: file.name,
-              content: reader.result as string,
-            });
-          reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
-          reader.readAsText(file);
-        }),
-      ),
-    );
-    setSourceFiles(prev => {
-      const existing = new Map(prev.map(f => [f.path, f]));
-      for (const f of loaded) existing.set(f.path, f);
-      return Array.from(existing.values());
+  }
+
+  async function handleSingleFileSelection(file: File) {
+    await loadTextFile(file, (text, filename) => {
+      setSourceCode(text);
+      setSourceFilename(filename);
     });
-    setError(null);
-    // Reset input so the same files can be re-added after removal
+  }
+
+  async function handleSingleFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
     e.target.value = '';
+    if (!file) return;
+    await handleSingleFileSelection(file);
+  }
+
+  async function handleStandardJsonFileSelection(file: File) {
+    await loadTextFile(file, (text, filename) => {
+      setStandardJsonInput(text);
+      setStandardJsonFilename(filename);
+    });
+  }
+
+  async function handleStandardJsonFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    await handleStandardJsonFileSelection(file);
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -137,11 +121,14 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
       return;
     }
 
-    if (mode === 'multi') {
-      if (sourceFiles.length === 0) {
-        setError('Add at least one .sol file.');
-        return;
-      }
+    if (mode === 'single' && !sourceCode.trim()) {
+      setError('Select a flattened Solidity source file.');
+      return;
+    }
+
+    if (mode === 'standard-json' && !standardJsonInput.trim()) {
+      setError('Select a standard JSON compiler input file.');
+      return;
     }
 
     setSubmitting(true);
@@ -154,7 +141,7 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
 
     const req: VerifyContractRequest = mode === 'single'
       ? {
-          source_code: sourceCode,
+          source_code: sourceCode.trim(),
           compiler_version: compilerVersion.trim(),
           optimization_enabled: optimizationEnabled,
           optimization_runs: optimizationEnabled ? parseInt(optimizationRunsValue, 10) || 200 : undefined,
@@ -164,14 +151,10 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
           license_type: licenseType.trim() || undefined,
         }
       : {
-          source_files: Object.fromEntries(sourceFiles.map(f => [f.path.trim(), f.content])),
+          standard_json_input: standardJsonInput.trim(),
           compiler_version: compilerVersion.trim(),
-          optimization_enabled: optimizationEnabled,
-          optimization_runs: optimizationEnabled ? parseInt(optimizationRunsValue, 10) || 200 : undefined,
           contract_name: contractName.trim(),
           constructor_args: constructorArgs.trim() || undefined,
-          evm_version: evmVersion.trim() || undefined,
-          license_type: licenseType.trim() || undefined,
         };
 
     try {
@@ -188,8 +171,8 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
   return (
     <div className="py-4">
       <p className="text-gray-400 text-sm mb-6">
-        Submit the Solidity source code and compiler settings to verify this contract. The backend
-        will compile and compare the bytecode against what is deployed on-chain.
+        Submit either a flattened Solidity file or an exact solc standard JSON input. Atlas will
+        compile it and compare the deployed runtime bytecode against what is on-chain.
       </p>
 
       {error && (
@@ -240,141 +223,41 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
             </button>
             <button
               type="button"
-              onClick={() => switchMode('multi')}
+              onClick={() => switchMode('standard-json')}
               className={`px-3 py-1 text-sm border rounded-r-lg ${
-                mode === 'multi'
+                mode === 'standard-json'
                   ? 'border-accent-primary text-accent-primary bg-accent-primary/10'
                   : 'border-dark-500 text-gray-400 hover:border-gray-400'
               }`}
             >
-              Multi-file
+              Standard JSON
             </button>
           </div>
 
           {mode === 'single' ? (
-            <label className="flex flex-col gap-1">
-              <span className="text-sm text-gray-400">Solidity Source Code <span className="text-red-400">*</span></span>
-              <textarea
-                className={themedTextareaClassName}
-                rows={14}
-                placeholder="// SPDX-License-Identifier: MIT&#10;pragma solidity ^0.8.0;&#10;&#10;contract MyToken { ... }"
-                value={sourceCode}
-                onChange={e => setSourceCode(e.target.value)}
-                required
-              />
-              <span className="text-xs text-gray-500">Paste a flattened Solidity file (all imports merged).</span>
-            </label>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <span className="text-sm text-gray-400">Source Files <span className="text-red-400">*</span></span>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".sol"
-                multiple
-                className="hidden"
-                onChange={handleFileChange}
-              />
-              <input
-                ref={directoryInputRef}
-                type="file"
-                accept=".sol"
-                multiple
-                className="hidden"
-                onChange={handleFileChange}
-                {...directoryInputAttributes}
-              />
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => directoryInputRef.current?.click()}
-                  className="flex items-center gap-2 self-start px-4 py-2 text-sm border border-accent-primary/40 rounded-xl text-accent-primary hover:border-accent-primary hover:text-fg bg-accent-primary/10 backdrop-blur shadow-md shadow-black/20"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h5l2 2h11v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                  </svg>
-                  {sourceFiles.length === 0 ? 'Select project folder' : 'Replace or add folder'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 self-start px-4 py-2 text-sm border border-dark-500 rounded-xl text-gray-300 hover:border-gray-400 hover:text-fg bg-dark-700/80 backdrop-blur shadow-md shadow-black/20"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  {sourceFiles.length === 0 ? 'Add flat files' : 'Add more flat files'}
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSourceFiles([])}
-                className="text-xs text-gray-500 hover:text-gray-300 self-start"
-              >
-                Clear file list
-              </button>
-              {sourceFiles.length > 0 && (
-                <ul className="flex flex-col gap-1">
-                  {sourceFiles.map((file, index) => (
-                    <li key={file.path} className="flex items-center justify-between px-3 py-2 bg-dark-700/60 border border-dark-500 rounded-lg text-sm font-mono text-gray-300 gap-4">
-                      <span className="break-all">{file.path}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeFile(index)}
-                        className="text-gray-500 hover:text-red-400 ml-4 shrink-0"
-                      >
-                        Remove
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <span className="text-xs text-gray-500">Use the project folder picker to preserve import paths. Flat file upload only works when imports do not rely on directories.</span>
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={optimizationEnabled}
-              onChange={e => setOptimizationEnabled(e.target.checked)}
-              className="accent-accent"
+            <UploadDropzone
+              label="Solidity Source File"
+              accept=".sol,text/plain"
+              buttonLabel={sourceFilename ? 'Replace Solidity file' : 'Choose Solidity file'}
+              filename={sourceFilename}
+              emptyText="Drop a flattened `.sol` file here or click to choose one."
+              helperText="Atlas reads the selected flattened Solidity file locally in your browser and uses its contents for verification."
+              inputRef={singleFileInputRef}
+              onChange={handleSingleFileChange}
+              onFileSelected={handleSingleFileSelection}
             />
-            <span className="text-sm text-gray-300">Optimization enabled</span>
-          </label>
-          {optimizationEnabled && (
-            <div className="flex items-center gap-3 flex-wrap">
-              <label className="flex items-center gap-2">
-                <span className="text-sm text-gray-400">Runs</span>
-                <select
-                  className="bg-dark-700 text-fg border border-dark-500 px-2 py-1 text-sm min-w-32 focus:outline-none focus:border-accent"
-                  value={optimizationRunsPreset}
-                  onChange={e => setOptimizationRunsPreset(e.target.value)}
-                >
-                  {OPTIMIZER_RUN_PRESETS.map(runs => (
-                    <option key={runs} value={runs}>
-                      {runs}
-                    </option>
-                  ))}
-                  <option value={CUSTOM_OPTIMIZER_RUN_PRESET}>Custom</option>
-                </select>
-              </label>
-              {optimizationRunsPreset === CUSTOM_OPTIMIZER_RUN_PRESET && (
-                <label className="flex items-center gap-2">
-                  <span className="text-sm text-gray-400">Custom</span>
-                  <input
-                    className={`${themedInputClassName} w-24 px-2 py-1`}
-                    type="number"
-                    min={1}
-                    value={customOptimizationRuns}
-                    onChange={e => setCustomOptimizationRuns(e.target.value)}
-                    placeholder="200"
-                  />
-                </label>
-              )}
-            </div>
+          ) : (
+            <UploadDropzone
+              label="Standard JSON Input"
+              accept=".json,application/json,text/plain"
+              buttonLabel={standardJsonFilename ? 'Replace JSON file' : 'Choose JSON file'}
+              filename={standardJsonFilename}
+              emptyText="Drop a standard-json compiler input file here or click to choose one."
+              helperText="Atlas reads the selected JSON file locally in your browser and injects the output selection needed for verification."
+              inputRef={standardJsonFileInputRef}
+              onChange={handleStandardJsonFileChange}
+              onFileSelected={handleStandardJsonFileSelection}
+            />
           )}
         </div>
 
@@ -388,30 +271,80 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
               onChange={e => setConstructorArgs(e.target.value)}
             />
           </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-sm text-gray-400">EVM Version <span className="text-gray-500">(optional)</span></span>
-            <SearchableOptionSelect
-              options={EVM_VERSION_OPTIONS.map(version => ({ value: version, label: version }))}
-              value={evmVersion}
-              onChange={setEvmVersion}
-              placeholder="Compiler default or search EVM version"
-              emptyMessage="No EVM versions found"
-              emptyLabel="Compiler default"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-sm text-gray-400">License <span className="text-gray-500">(optional)</span></span>
-            <SearchableOptionSelect
-              options={LICENSE_OPTIONS.map(license => ({ value: license, label: license }))}
-              value={licenseType}
-              onChange={setLicenseType}
-              placeholder="Search license"
-              emptyMessage="No licenses found"
-            />
-          </label>
         </div>
+
+        {mode === 'single' && (
+          <>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={optimizationEnabled}
+                  onChange={e => setOptimizationEnabled(e.target.checked)}
+                  className="accent-accent"
+                />
+                <span className="text-sm text-gray-300">Optimization enabled</span>
+              </label>
+              {optimizationEnabled && (
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className="flex items-center gap-2">
+                    <span className="text-sm text-gray-400">Runs</span>
+                    <select
+                      className="bg-dark-700 text-fg border border-dark-500 px-2 py-1 text-sm min-w-32 focus:outline-none focus:border-accent"
+                      value={optimizationRunsPreset}
+                      onChange={e => setOptimizationRunsPreset(e.target.value)}
+                    >
+                      {OPTIMIZER_RUN_PRESETS.map(runs => (
+                        <option key={runs} value={runs}>
+                          {runs}
+                        </option>
+                      ))}
+                      <option value={CUSTOM_OPTIMIZER_RUN_PRESET}>Custom</option>
+                    </select>
+                  </label>
+                  {optimizationRunsPreset === CUSTOM_OPTIMIZER_RUN_PRESET && (
+                    <label className="flex items-center gap-2">
+                      <span className="text-sm text-gray-400">Custom</span>
+                      <input
+                        className={`${themedInputClassName} w-24 px-2 py-1`}
+                        type="number"
+                        min={1}
+                        value={customOptimizationRuns}
+                        onChange={e => setCustomOptimizationRuns(e.target.value)}
+                        placeholder="200"
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="flex flex-col gap-1">
+                <span className="text-sm text-gray-400">EVM Version <span className="text-gray-500">(optional)</span></span>
+                <SearchableOptionSelect
+                  options={EVM_VERSION_OPTIONS.map(version => ({ value: version, label: version }))}
+                  value={evmVersion}
+                  onChange={setEvmVersion}
+                  placeholder="Compiler default or search EVM version"
+                  emptyMessage="No EVM versions found"
+                  emptyLabel="Compiler default"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-sm text-gray-400">License <span className="text-gray-500">(optional)</span></span>
+                <SearchableOptionSelect
+                  options={LICENSE_OPTIONS.map(license => ({ value: license, label: license }))}
+                  value={licenseType}
+                  onChange={setLicenseType}
+                  placeholder="Search license"
+                  emptyMessage="No licenses found"
+                />
+              </label>
+            </div>
+          </>
+        )}
 
         <div className="pt-2">
           <button
@@ -423,6 +356,119 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+interface UploadDropzoneProps {
+  label: string;
+  accept: string;
+  buttonLabel: string;
+  filename: string;
+  emptyText: string;
+  helperText: string;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onChange: (e: ChangeEvent<HTMLInputElement>) => void | Promise<void>;
+  onFileSelected: (file: File) => void | Promise<void>;
+}
+
+function UploadDropzone({
+  label,
+  accept,
+  buttonLabel,
+  filename,
+  emptyText,
+  helperText,
+  inputRef,
+  onChange,
+  onFileSelected,
+}: UploadDropzoneProps) {
+  const [dragActive, setDragActive] = useState(false);
+
+  function openFilePicker() {
+    inputRef.current?.click();
+  }
+
+  async function handleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragActive(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    await onFileSelected(file);
+  }
+
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragActive(true);
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setDragActive(false);
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-sm text-gray-400">{label} <span className="text-red-400">*</span></span>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        className="hidden"
+        onChange={onChange}
+      />
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={openFilePicker}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openFilePicker();
+          }
+        }}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        className={`rounded-2xl border border-dashed px-4 py-6 transition cursor-pointer ${
+          dragActive
+            ? 'border-accent-primary bg-accent-primary/10'
+            : 'border-dark-500 bg-dark-700/40 hover:border-gray-400'
+        }`}
+      >
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-dark-800 text-accent-primary">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M12 11v8m0 0l-3-3m3 3l3-3" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm text-fg">{filename || emptyText}</p>
+              <p className="text-xs text-gray-500">{helperText}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                openFilePicker();
+              }}
+              className="flex items-center gap-2 self-start px-4 py-2 text-sm border border-dark-500 rounded-xl text-gray-300 hover:border-gray-400 hover:text-fg bg-dark-700/80 backdrop-blur shadow-md shadow-black/20"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              {buttonLabel}
+            </button>
+            <span className="text-xs text-gray-500">
+              {filename ? 'File loaded into the verifier.' : 'You can also drag a file here from Finder.'}
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
