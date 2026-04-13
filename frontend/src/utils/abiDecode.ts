@@ -88,8 +88,20 @@ function decodeType(
   const wordHex = bytesToHex(word);
 
   // uint/int (fixed size)
-  if (/^u?int(\d*)$/.test(type)) {
-    return { value: BigInt('0x' + wordHex).toString(10), size: 32 };
+  const intMatch = type.match(/^(u)?int(\d*)$/);
+  if (intMatch) {
+    const isUnsigned = intMatch[1] === 'u';
+    const bits = intMatch[2] ? Number.parseInt(intMatch[2], 10) : 256;
+    let value = BigInt('0x' + wordHex);
+
+    if (!isUnsigned) {
+      const signBit = 1n << BigInt(bits - 1);
+      if ((value & signBit) !== 0n) {
+        value -= 1n << BigInt(bits);
+      }
+    }
+
+    return { value: value.toString(10), size: 32 };
   }
 
   // address

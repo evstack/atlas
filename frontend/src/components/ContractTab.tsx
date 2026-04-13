@@ -131,20 +131,32 @@ function VerifyForm({ address, onVerified }: VerifyFormProps) {
       return;
     }
 
-    setSubmitting(true);
-    setError(null);
-
     const optimizationRunsValue =
       optimizationRunsPreset === CUSTOM_OPTIMIZER_RUN_PRESET
         ? customOptimizationRuns
         : optimizationRunsPreset;
+    const parsedOptimizationRuns = optimizationEnabled
+      ? (
+          optimizationRunsValue.trim() === ''
+            ? 200
+            : Number.parseInt(optimizationRunsValue, 10)
+        )
+      : undefined;
+
+    if (optimizationEnabled && parsedOptimizationRuns !== undefined && Number.isNaN(parsedOptimizationRuns)) {
+      setError('Optimizer runs must be a valid integer.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
 
     const req: VerifyContractRequest = mode === 'single'
       ? {
           source_code: sourceCode.trim(),
           compiler_version: compilerVersion.trim(),
           optimization_enabled: optimizationEnabled,
-          optimization_runs: optimizationEnabled ? parseInt(optimizationRunsValue, 10) || 200 : undefined,
+          optimization_runs: parsedOptimizationRuns,
           contract_name: contractName.trim(),
           constructor_args: constructorArgs.trim() || undefined,
           evm_version: evmVersion.trim() || undefined,

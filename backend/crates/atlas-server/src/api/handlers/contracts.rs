@@ -15,6 +15,7 @@ use std::env::consts::{ARCH, OS};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs;
 
 use crate::api::error::ApiResult;
@@ -194,7 +195,8 @@ pub async fn verify_contract(
         None => return Err(AtlasError::NotFound(format!("address {address} not found")).into()),
     }
 
-    // Reject if already verified
+    // Fast-path already verified contracts; the insert conflict guard below is
+    // still kept to handle races between concurrent verification requests.
     let already_verified: Option<(String,)> =
         sqlx::query_as("SELECT address FROM contract_abis WHERE address = $1")
             .bind(&address)
@@ -245,32 +247,21 @@ pub async fn verify_contract(
     let verification_settings = extract_verification_settings(&req, input_kind)?;
     let stored_sources = extract_stored_contract_sources(&req, input_kind)?;
 
-    // Upsert into contract_abis
+    // Store verification metadata, but keep existing rows immutable so
+    // re-verification is rejected consistently.
     let constructor_args_bytes: Option<Vec<u8>> = if constructor_bytes.is_empty() {
         None
     } else {
         Some(constructor_bytes)
     };
 
-    sqlx::query(
+    let insert_result = sqlx::query(
         "INSERT INTO contract_abis
             (address, abi, source_code, compiler_version, optimization_used, runs,
              contract_name, constructor_args, evm_version, license_type,
              is_multi_file, source_files, verified_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
-         ON CONFLICT (address) DO UPDATE SET
-            abi = EXCLUDED.abi,
-            source_code = EXCLUDED.source_code,
-            compiler_version = EXCLUDED.compiler_version,
-            optimization_used = EXCLUDED.optimization_used,
-            runs = EXCLUDED.runs,
-            contract_name = EXCLUDED.contract_name,
-            constructor_args = EXCLUDED.constructor_args,
-            evm_version = EXCLUDED.evm_version,
-            license_type = EXCLUDED.license_type,
-            is_multi_file = EXCLUDED.is_multi_file,
-            source_files = EXCLUDED.source_files,
-            verified_at = NOW()",
+         ON CONFLICT (address) DO NOTHING",
     )
     .bind(&address)
     .bind(&abi)
@@ -286,6 +277,10 @@ pub async fn verify_contract(
     .bind(&stored_sources.source_files)
     .execute(&state.pool)
     .await?;
+
+    if insert_result.rows_affected() == 0 {
+        return Err(AtlasError::Verification(format!("{address} is already verified")).into());
+    }
 
     Ok((
         StatusCode::OK,
@@ -442,10 +437,7 @@ async fn compile_standard_json(
             .map_err(|e| AtlasError::Internal(format!("failed to write solc stdin: {e}")))?;
     }
 
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| AtlasError::Internal(format!("failed to wait for solc: {e}")))?;
+    let output = wait_for_solc_output(child).await?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -474,6 +466,62 @@ async fn compile_source(
         .map_err(|e| AtlasError::Internal(format!("failed to create temp dir: {e}")))?;
     let json = compile_standard_json(solc_path, req, dir).await?;
     extract_compiled_contract(&json, &req.contract_name)
+}
+
+async fn wait_for_solc_output(
+    mut child: tokio::process::Child,
+) -> Result<std::process::Output, AtlasError> {
+    use tokio::io::AsyncReadExt as _;
+
+    const SOLC_TIMEOUT: Duration = Duration::from_secs(120);
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AtlasError::Internal("failed to capture solc stdout".to_string()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AtlasError::Internal("failed to capture solc stderr".to_string()))?;
+
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).await.map(|_| buf)
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stderr.read_to_end(&mut buf).await.map(|_| buf)
+    });
+
+    let status = match tokio::time::timeout(SOLC_TIMEOUT, child.wait()).await {
+        Ok(result) => {
+            result.map_err(|e| AtlasError::Internal(format!("failed to wait for solc: {e}")))?
+        }
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            return Err(AtlasError::Verification(
+                "solc compilation timed out after 120s".to_string(),
+            ));
+        }
+    };
+
+    let stdout = stdout_task
+        .await
+        .map_err(|e| AtlasError::Internal(format!("failed to read solc stdout: {e}")))?
+        .map_err(|e| AtlasError::Internal(format!("failed to read solc stdout: {e}")))?;
+    let stderr = stderr_task
+        .await
+        .map_err(|e| AtlasError::Internal(format!("failed to read solc stderr: {e}")))?
+        .map_err(|e| AtlasError::Internal(format!("failed to read solc stderr: {e}")))?;
+
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 fn build_solc_input(
