@@ -79,8 +79,29 @@ async fn resolve_proxy(
     .fetch_optional(&state.pool)
     .await?;
 
-    if cached.is_some() {
-        return Ok(cached);
+    if let Some(mut cached_proxy) = cached {
+        // Re-read the implementation slot to detect upgrades.
+        let current_impl = match cached_proxy.proxy_type.as_str() {
+            "eip1967" => read_address_slot(&state.rpc_url, address, EIP1967_IMPL_SLOT).await?,
+            "eip1822" => read_address_slot(&state.rpc_url, address, EIP1822_IMPL_SLOT).await?,
+            _ => None,
+        };
+
+        if let Some(current_addr) = current_impl {
+            if current_addr != cached_proxy.implementation_address {
+                sqlx::query(
+                    "UPDATE proxy_contracts SET implementation_address = $1, updated_at = NOW()
+                     WHERE proxy_address = $2",
+                )
+                .bind(&current_addr)
+                .bind(address)
+                .execute(&state.pool)
+                .await?;
+                cached_proxy.implementation_address = current_addr;
+            }
+        }
+
+        return Ok(Some(cached_proxy));
     }
 
     // 2. Not in DB — try RPC detection.
