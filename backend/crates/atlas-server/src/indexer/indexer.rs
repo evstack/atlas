@@ -70,7 +70,7 @@ impl Indexer {
 
     /// Open a tokio-postgres connection for binary COPY, using TLS when sslmode
     /// requires it (require / verify-ca / verify-full) and plain TCP otherwise.
-    async fn connect_copy_client(database_url: &str) -> Result<Client> {
+    pub(crate) async fn connect_copy_client(database_url: &str) -> Result<Client> {
         let needs_tls = database_url.contains("sslmode=require")
             || database_url.contains("sslmode=verify-ca")
             || database_url.contains("sslmode=verify-full");
@@ -333,7 +333,7 @@ impl Indexer {
 
             // One DB transaction for the entire batch
             let db_write_start = std::time::Instant::now();
-            self.write_batch(&mut copy_client, batch, true).await?;
+            Self::write_batch(&mut copy_client, batch, true).await?;
             self.metrics
                 .record_db_write_duration(db_write_start.elapsed().as_secs_f64());
             self.metrics
@@ -398,7 +398,7 @@ impl Indexer {
                                 // Don't update the watermark — the main batch already wrote
                                 // a higher last_indexed_block; overwriting it with this
                                 // block's lower number would cause a regression on restart.
-                                self.write_batch(&mut copy_client, mini_batch, false)
+                                Self::write_batch(&mut copy_client, mini_batch, false)
                                     .await?;
                                 known_erc20.extend(new_erc20);
                                 known_nft.extend(new_nft);
@@ -495,7 +495,7 @@ impl Indexer {
     // Accumulates all block data into the batch for later bulk insert.
     // -----------------------------------------------------------------------
 
-    fn collect_block(
+    pub(crate) fn collect_block(
         batch: &mut BlockBatch,
         known_erc20: &HashSet<String>,
         known_nft: &HashSet<String>,
@@ -731,11 +731,27 @@ impl Indexer {
     // For a batch of N blocks this is ~11 round-trips regardless of N.
     // -----------------------------------------------------------------------
 
-    async fn write_batch(
-        &self,
+    pub(crate) async fn write_batch(
         copy_client: &mut Client,
         batch: BlockBatch,
         update_watermark: bool,
+    ) -> Result<()> {
+        Self::write_batch_internal(copy_client, batch, update_watermark, None).await
+    }
+
+    pub(crate) async fn write_batch_and_clear_failed_block(
+        copy_client: &mut Client,
+        batch: BlockBatch,
+        failed_block_number: i64,
+    ) -> Result<()> {
+        Self::write_batch_internal(copy_client, batch, false, Some(failed_block_number)).await
+    }
+
+    async fn write_batch_internal(
+        copy_client: &mut Client,
+        batch: BlockBatch,
+        update_watermark: bool,
+        clear_failed_block_number: Option<i64>,
     ) -> Result<()> {
         if batch.b_numbers.is_empty() {
             return Ok(());
@@ -920,6 +936,19 @@ impl Indexer {
                 .await?;
         }
 
+        if let Some(block_number) = clear_failed_block_number {
+            let deleted = pg_tx
+                .execute(
+                    "DELETE FROM failed_blocks WHERE block_number = $1",
+                    &[&block_number],
+                )
+                .await?;
+            anyhow::ensure!(
+                deleted == 1,
+                "expected to clear exactly one failed_blocks row for recovered block {block_number}, deleted {deleted}"
+            );
+        }
+
         pg_tx.commit().await?;
 
         Ok(())
@@ -965,78 +994,7 @@ impl Indexer {
     }
 
     async fn ensure_partitions_exist(&self, block_number: u64) -> Result<()> {
-        use std::sync::atomic::Ordering;
-
-        let partition_num = block_number / PARTITION_SIZE;
-        let current_max = self.current_max_partition.load(Ordering::Relaxed);
-
-        // Fast path: partition already exists (most common case)
-        if partition_num <= current_max {
-            return Ok(());
-        }
-
-        // First run or crossing boundary - need to check/create partitions
-        // Create all partitions from current_max+1 to partition_num
-        let start_partition = if current_max == 0 {
-            // First run - check what partitions exist
-            let existing: Option<(i64,)> = sqlx::query_as(
-                "SELECT MAX(CAST(SUBSTRING(relname FROM 'blocks_p(\\d+)') AS BIGINT))
-                 FROM pg_class WHERE relname ~ '^blocks_p\\d+$'",
-            )
-            .fetch_optional(&self.pool)
-            .await?;
-
-            match existing {
-                Some((max,)) => {
-                    self.current_max_partition
-                        .store(max as u64, Ordering::Relaxed);
-                    if partition_num <= max as u64 {
-                        return Ok(());
-                    }
-                    max as u64 + 1
-                }
-                None => 0, // No partitions exist, start from 0
-            }
-        } else {
-            current_max + 1
-        };
-
-        // Create any missing partitions
-        for p in start_partition..=partition_num {
-            let partition_start = p * PARTITION_SIZE;
-            let partition_end = partition_start + PARTITION_SIZE;
-
-            tracing::info!(
-                partition = p,
-                range_start = partition_start,
-                range_end = partition_end,
-                "creating partitions"
-            );
-
-            // Create partitions for all partitioned tables
-            let tables = [
-                "blocks",
-                "transactions",
-                "event_logs",
-                "nft_transfers",
-                "erc20_transfers",
-            ];
-
-            for table in tables {
-                let create_sql = format!(
-                    "CREATE TABLE IF NOT EXISTS {}_p{} PARTITION OF {} FOR VALUES FROM ({}) TO ({})",
-                    table, p, table, partition_start, partition_end
-                );
-
-                sqlx::query(&create_sql).execute(&self.pool).await?;
-            }
-        }
-
-        // Update our tracked max
-        self.current_max_partition
-            .store(partition_num, Ordering::Relaxed);
-        tracing::info!(max_partition = partition_num, "partitions ready");
-        Ok(())
+        ensure_partitions_exist(&self.pool, &self.current_max_partition, block_number).await
     }
 
     async fn truncate_tables(&self) -> Result<()> {
@@ -1073,6 +1031,79 @@ impl Indexer {
 
         Ok(())
     }
+}
+
+pub(crate) async fn ensure_partitions_exist(
+    pool: &sqlx::PgPool,
+    current_max: &std::sync::atomic::AtomicU64,
+    block_number: u64,
+) -> Result<()> {
+    use std::sync::atomic::Ordering;
+
+    let partition_num = block_number / PARTITION_SIZE;
+    let current_max_val = current_max.load(Ordering::Relaxed);
+
+    // Fast path: partition already exists (most common case)
+    if partition_num <= current_max_val {
+        return Ok(());
+    }
+
+    // First run or crossing boundary - need to check/create partitions
+    let start_partition = if current_max_val == 0 {
+        // First run - check what partitions exist
+        let existing: Option<(i64,)> = sqlx::query_as(
+            "SELECT MAX(CAST(SUBSTRING(relname FROM 'blocks_p(\\d+)') AS BIGINT))
+             FROM pg_class WHERE relname ~ '^blocks_p\\d+$'",
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        match existing {
+            Some((max,)) => {
+                current_max.store(max as u64, Ordering::Relaxed);
+                if partition_num <= max as u64 {
+                    return Ok(());
+                }
+                max as u64 + 1
+            }
+            None => 0, // No partitions exist, start from 0
+        }
+    } else {
+        current_max_val + 1
+    };
+
+    // Create any missing partitions
+    for p in start_partition..=partition_num {
+        let partition_start = p * PARTITION_SIZE;
+        let partition_end = partition_start + PARTITION_SIZE;
+
+        tracing::info!(
+            partition = p,
+            range_start = partition_start,
+            range_end = partition_end,
+            "creating partitions"
+        );
+
+        let tables = [
+            "blocks",
+            "transactions",
+            "event_logs",
+            "nft_transfers",
+            "erc20_transfers",
+        ];
+
+        for table in tables {
+            let create_sql = format!(
+                "CREATE TABLE IF NOT EXISTS {}_p{} PARTITION OF {} FOR VALUES FROM ({}) TO ({})",
+                table, p, table, partition_start, partition_end
+            );
+            sqlx::query(&create_sql).execute(pool).await?;
+        }
+    }
+
+    current_max.store(partition_num, Ordering::Relaxed);
+    tracing::info!(max_partition = partition_num, "partitions ready");
+    Ok(())
 }
 
 fn lag_blocks(chain_head: u64, indexed_head: Option<u64>, start_block: u64) -> u64 {
