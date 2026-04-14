@@ -398,8 +398,7 @@ impl Indexer {
                                 // Don't update the watermark — the main batch already wrote
                                 // a higher last_indexed_block; overwriting it with this
                                 // block's lower number would cause a regression on restart.
-                                Self::write_batch(&mut copy_client, mini_batch, false)
-                                    .await?;
+                                Self::write_batch(&mut copy_client, mini_batch, false).await?;
                                 known_erc20.extend(new_erc20);
                                 known_nft.extend(new_nft);
                                 tracing::info!(block = block_num, "block retry succeeded");

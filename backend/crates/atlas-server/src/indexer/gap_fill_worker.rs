@@ -17,14 +17,14 @@ use governor::{Quota, RateLimiter};
 use sqlx::PgPool;
 use std::collections::HashSet;
 use std::num::NonZeroU32;
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
 use super::batch::BlockBatch;
-use super::fetcher::{FetchResult, SharedRateLimiter, fetch_blocks_batch};
-use super::indexer::{Indexer, ensure_partitions_exist};
+use super::fetcher::{fetch_blocks_batch, FetchResult, SharedRateLimiter};
+use super::indexer::{ensure_partitions_exist, Indexer};
 use crate::metrics::Metrics;
 
 /// Maximum blocks processed per cycle.
@@ -101,8 +101,7 @@ impl GapFillWorker {
         }
 
         let rps = NonZeroU32::new(self.rpc_requests_per_second).unwrap();
-        let rate_limiter: SharedRateLimiter =
-            Arc::new(RateLimiter::direct(Quota::per_second(rps)));
+        let rate_limiter: SharedRateLimiter = Arc::new(RateLimiter::direct(Quota::per_second(rps)));
         let http_client = reqwest::Client::new();
         // Empty sets: re-discovered contracts are re-inserted with ON CONFLICT DO NOTHING.
         let known_erc20: HashSet<String> = HashSet::new();
@@ -228,7 +227,9 @@ mod tests {
         .err()
         .expect("zero rps should fail");
 
-        assert!(err.to_string().contains("rpc_requests_per_second must be greater than 0"));
+        assert!(err
+            .to_string()
+            .contains("rpc_requests_per_second must be greater than 0"));
     }
 
     #[test]
