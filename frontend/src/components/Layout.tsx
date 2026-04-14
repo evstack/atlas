@@ -211,7 +211,7 @@ export default function Layout() {
       {!isHome && (
         <div className="bg-dark-800/40">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-center">
-            <div className="w-full md:w-96">
+            <div className="w-full md:w-[560px]">
               <SearchBar />
             </div>
           </div>

@@ -66,6 +66,12 @@
   :root:not([data-theme='light']) .text-gray-700 {
     color: rgb(248 250 252 / var(--tw-text-opacity, 1));
   }
+
+  /* Match form input placeholder brightness to search bar in dark mode. */
+  :root:not([data-theme='light']) input::placeholder,
+  :root:not([data-theme='light']) textarea::placeholder {
+    color: rgb(255 255 255 / 0.72);
+  }
 }
 
 @layer components {
