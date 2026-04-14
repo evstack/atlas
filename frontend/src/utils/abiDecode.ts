@@ -36,11 +36,14 @@ export function decodeInputData(input: string | undefined | null, abi?: AbiItem[
       // Matched selector but decode failed — still return the function name
       return {
         name: item.name,
-        args: inputs.map((inp, i) => ({
-          name: inp.name || `arg${i}`,
-          type: inp.type,
-          value: `0x${calldata.slice(i * 64, (i + 1) * 64)}`,
-        })),
+        args: inputs.map((inp, i) => {
+          const chunk = calldata.slice(i * 64, (i + 1) * 64).padEnd(64, '0');
+          return {
+            name: inp.name || `arg${i}`,
+            type: inp.type,
+            value: `0x${chunk}`,
+          };
+        }),
       };
     }
 
@@ -95,6 +98,8 @@ function decodeType(
     let value = BigInt('0x' + wordHex);
 
     if (!isUnsigned) {
+      const mask = (1n << BigInt(bits)) - 1n;
+      value &= mask;
       const signBit = 1n << BigInt(bits - 1);
       if ((value & signBit) !== 0n) {
         value -= 1n << BigInt(bits);
