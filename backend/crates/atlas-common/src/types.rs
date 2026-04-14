@@ -239,6 +239,24 @@ pub struct ContractAbi {
     pub verified_at: DateTime<Utc>,
 }
 
+/// Full contract ABI including all verification metadata columns
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct FullContractAbi {
+    pub address: String,
+    pub abi: serde_json::Value,
+    pub source_code: Option<String>,
+    pub compiler_version: Option<String>,
+    pub optimization_used: Option<bool>,
+    pub runs: Option<i32>,
+    pub verified_at: DateTime<Utc>,
+    pub contract_name: Option<String>,
+    pub constructor_args: Option<Vec<u8>>,
+    pub evm_version: Option<String>,
+    pub license_type: Option<String>,
+    pub is_multi_file: bool,
+    pub source_files: Option<serde_json::Value>,
+}
+
 /// SQL column list for the `blocks` table, matching the field order in [`Block`].
 pub const BLOCK_COLUMNS: &str =
     "number, hash, parent_hash, timestamp, gas_used, gas_limit, base_fee_per_gas::text AS base_fee_per_gas, transaction_count, indexed_at";

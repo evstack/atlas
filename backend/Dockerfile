@@ -11,7 +11,7 @@ RUN cargo build --release
 # Server image
 FROM alpine:3.21 AS server
 
-RUN apk add --no-cache ca-certificates postgresql16-client
+RUN apk add --no-cache ca-certificates gcompat postgresql16-client
 
 COPY --from=builder /app/target/release/atlas-server /usr/local/bin/
 

@@ -331,3 +331,33 @@ export interface AbiOutput {
   type: string;
   components?: AbiOutput[];
 }
+
+// Contract verification types
+
+export interface ContractDetail {
+  verified: boolean;
+  address?: string;
+  abi?: AbiItem[];
+  source_code?: string;
+  compiler_version?: string;
+  optimization_used?: boolean;
+  runs?: number;
+  contract_name?: string;
+  evm_version?: string;
+  license_type?: string;
+  is_multi_file?: boolean;
+  source_files?: Record<string, string>;
+  verified_at?: string;
+}
+
+export interface VerifyContractRequest {
+  source_code?: string;
+  standard_json_input?: string;
+  compiler_version: string;
+  optimization_enabled?: boolean;
+  optimization_runs?: number;
+  contract_name: string;
+  constructor_args?: string;
+  evm_version?: string;
+  license_type?: string;
+}
