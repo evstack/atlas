@@ -191,8 +191,8 @@ export default function SearchBar() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={onKeyDown}
-        placeholder="Search Address / Tx Hash / Block / Token / NFT"
-        className="search-input w-full bg-dark-700/80 backdrop-blur border border-dark-500 px-4 py-2 pl-10 text-sm rounded-full shadow-md shadow-black/20 focus:outline-none focus:border-accent-primary focus:ring-2 focus:ring-accent-primary/40 transition"
+        placeholder="Search Address/Tx Hash/Block/Token/NFT"
+        className="search-input w-full bg-dark-700/80 backdrop-blur border border-dark-500 px-4 py-2 pl-10 text-sm rounded-full shadow-md shadow-black/20 focus:outline-none focus:border-accent-primary focus:ring-2 focus:ring-accent-primary/40 transition font-mono"
       />
       <svg
         className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500"

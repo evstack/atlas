@@ -11,9 +11,9 @@ import {
 } from '../constants/contractVerification';
 
 const themedInputClassName =
-  'w-full bg-dark-700/80 backdrop-blur border border-dark-500 px-3 py-2 text-sm text-fg placeholder-gray-500 rounded-xl shadow-md shadow-black/20 focus:outline-none focus:border-accent-primary focus:ring-2 focus:ring-accent-primary/40 transition';
+  'w-full bg-dark-700/80 backdrop-blur border border-dark-500 px-3 py-2 text-sm text-fg placeholder-gray-500 rounded-xl shadow-md shadow-black/20 focus:outline-none focus:border-accent-primary focus:ring-2 focus:ring-accent-primary/40 transition font-mono';
 
-const themedMonoInputClassName = `${themedInputClassName} font-mono`;
+const themedMonoInputClassName = themedInputClassName;
 
 interface Props {
   address: string;
