@@ -117,11 +117,10 @@ pub(crate) fn postgres_connection_config(db_url: &str) -> Result<PostgresConnect
 
     for (key, value) in url.query_pairs() {
         match key.as_ref() {
-            "dbname" => {
-                if !value.is_empty() {
-                    database_name = value.into_owned();
-                }
+            "dbname" if !value.is_empty() => {
+                database_name = value.into_owned();
             }
+            "dbname" => {}
             "host" => {
                 set_pg_env(&mut env_vars, "PGHOST", value.as_ref());
             }
