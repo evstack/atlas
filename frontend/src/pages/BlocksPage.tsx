@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useBlocks, useFeatures } from '../hooks';
-import { CopyButton, Loading } from '../components';
+import { CopyButton, EntityHeroVisual, Loading, PageHero } from '../components';
 import { formatNumber, formatTimeAgo, formatGas, truncateHash } from '../utils';
 import { BlockStatsContext } from '../context/BlockStatsContext';
 import type { BlockDaStatus } from '../types';
@@ -40,6 +40,8 @@ export default function BlocksPage() {
   const ssePrependRafRef = useRef<number | null>(null);
   const pendingSseBlocksRef = useRef<typeof fetchedBlocks>([]);
   const sseFilterRafRef = useRef<number | null>(null);
+  const [freshBlocks, setFreshBlocks] = useState<Set<number>>(new Set());
+  const freshBlockTimeoutsRef = useRef<Map<number, number>>(new Map());
 
   const cancelDaOverridesSync = () => {
     if (daOverridesSyncRafRef.current !== null) {
@@ -68,6 +70,7 @@ export default function BlocksPage() {
     ssePrependRafRef.current = window.requestAnimationFrame(() => {
       const pending = pendingSseBlocksRef.current;
       pendingSseBlocksRef.current = [];
+      const newlyPrepended: number[] = [];
       setSseBlocks((prev) => {
         const seen = new Set(prev.map((b) => b.number));
         const prepend: typeof prev = [];
@@ -75,10 +78,33 @@ export default function BlocksPage() {
           if (seen.has(b.number)) continue;
           seen.add(b.number);
           prepend.push(b);
+          newlyPrepended.push(b.number);
         }
         prepend.reverse();
         return [...prepend, ...prev].slice(0, BLOCKS_PER_PAGE);
       });
+      if (newlyPrepended.length > 0) {
+        setFreshBlocks((prev) => {
+          const next = new Set(prev);
+          for (const blockNumber of newlyPrepended) {
+            next.add(blockNumber);
+          }
+          return next;
+        });
+        for (const blockNumber of newlyPrepended) {
+          const existing = freshBlockTimeoutsRef.current.get(blockNumber);
+          if (existing !== undefined) clearTimeout(existing);
+          const timeoutId = window.setTimeout(() => {
+            setFreshBlocks((prev) => {
+              const next = new Set(prev);
+              next.delete(blockNumber);
+              return next;
+            });
+            freshBlockTimeoutsRef.current.delete(blockNumber);
+          }, 1400);
+          freshBlockTimeoutsRef.current.set(blockNumber, timeoutId);
+        }
+      }
       ssePrependRafRef.current = null;
     });
   }, [latestBlockEvent, page, autoRefresh]);
@@ -86,6 +112,9 @@ export default function BlocksPage() {
   useEffect(() => {
     if (page !== 1 || !autoRefresh) {
       bufferedDaBlocksRef.current = new Set();
+      setFreshBlocks(new Set());
+      for (const [, timeoutId] of freshBlockTimeoutsRef.current) clearTimeout(timeoutId);
+      freshBlockTimeoutsRef.current.clear();
       return;
     }
 
@@ -249,11 +278,6 @@ export default function BlocksPage() {
 
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used' | null; direction: 'asc' | 'desc'; }>({ key: null, direction: 'desc' });
-  const seenBlocksRef = useRef<Set<number>>(new Set());
-  const initializedRef = useRef(false);
-  const [highlightBlocks, setHighlightBlocks] = useState<Set<number>>(new Set());
-  const timeoutsRef = useRef<Map<number, number>>(new Map());
-  const highlightRafRef = useRef<number | null>(null);
 
   const handleSort = (key: 'number' | 'hash' | 'timestamp' | 'transaction_count' | 'gas_used') => {
     setSort((prev) => {
@@ -323,60 +347,11 @@ export default function BlocksPage() {
     }
   }, [autoRefresh]);
 
-  // Detect newly seen blocks and flash highlight
-  useEffect(() => {
-    if (!blocks.length) return;
-
-    // On first load, mark current blocks as seen but do not highlight
-    if (!initializedRef.current) {
-      for (const b of blocks) {
-        seenBlocksRef.current.add(b.number);
-      }
-      initializedRef.current = true;
-      return;
-    }
-
-    // Subsequent updates: only highlight blocks not previously seen
-    const newlyAdded: number[] = [];
-    for (const b of blocks) {
-      if (!seenBlocksRef.current.has(b.number)) {
-        newlyAdded.push(b.number);
-      }
-    }
-    if (newlyAdded.length) {
-      if (highlightRafRef.current !== null) {
-        window.cancelAnimationFrame(highlightRafRef.current);
-      }
-      for (const n of newlyAdded) {
-        seenBlocksRef.current.add(n);
-      }
-      highlightRafRef.current = window.requestAnimationFrame(() => {
-        setHighlightBlocks((prev) => new Set([...prev, ...newlyAdded]));
-        for (const n of newlyAdded) {
-          const t = window.setTimeout(() => {
-            setHighlightBlocks((prev) => {
-              const next = new Set(prev);
-              next.delete(n);
-              return next;
-            });
-            timeoutsRef.current.delete(n);
-          }, 1600);
-          timeoutsRef.current.set(n, t);
-        }
-        highlightRafRef.current = null;
-      });
-    }
-  }, [blocks]);
-
   // Cleanup on unmount
   useEffect(() => {
-    const activeTimeouts = timeoutsRef.current;
     const activeDaTimeouts = daHighlightTimeoutsRef.current;
+    const activeFreshTimeouts = freshBlockTimeoutsRef.current;
     return () => {
-      if (highlightRafRef.current !== null) {
-        window.cancelAnimationFrame(highlightRafRef.current);
-        highlightRafRef.current = null;
-      }
       if (daOverridesSyncRafRef.current !== null) {
         cancelAnimationFrame(daOverridesSyncRafRef.current);
         daOverridesSyncRafRef.current = null;
@@ -390,38 +365,32 @@ export default function BlocksPage() {
         cancelAnimationFrame(sseFilterRafRef.current);
         sseFilterRafRef.current = null;
       }
-      for (const [, t] of activeTimeouts) clearTimeout(t);
-      activeTimeouts.clear();
       for (const [, t] of activeDaTimeouts) clearTimeout(t);
       activeDaTimeouts.clear();
+      for (const [, t] of activeFreshTimeouts) clearTimeout(t);
+      activeFreshTimeouts.clear();
     };
   }, []);
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-fg">Blocks</h1>
-        <div className="flex items-center gap-3">
+    <div className="space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title="Blocks"
+        actions={
           <button
             onClick={() => setAutoRefresh((v) => !v)}
             className={`btn ${autoRefresh ? 'btn-primary' : 'btn-secondary'} flex items-center justify-center`}
             aria-pressed={autoRefresh}
             title={autoRefresh ? 'Pause live updates' : 'Start live updates'}
           >
-            {autoRefresh ? (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6M14 9v6" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7-11-7z" />
-              </svg>
-            )}
+            {autoRefresh ? 'Live On' : 'Live Off'}
           </button>
-        </div>
-      </div>
+        }
+        visual={<EntityHeroVisual kind="blocks" />}
+      />
 
-      <div className="card overflow-hidden">
+      <div className="table-shell">
         {loading && !hasLoaded ? (
           <div className="py-10"><Loading size="sm" /></div>
         ) : (
@@ -514,7 +483,7 @@ export default function BlocksPage() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') navigate(`/blocks/${block.number}`);
                   }}
-                  className={`hover:bg-dark-600/70 transition-colors cursor-pointer ${highlightBlocks.has(block.number) ? 'row-highlight' : ''}`}
+                  className={`hover:bg-dark-600/70 transition-colors cursor-pointer ${freshBlocks.has(block.number) ? 'fresh-block' : ''}`}
                 >
                   <td className="table-cell">
                     <Link
@@ -534,9 +503,9 @@ export default function BlocksPage() {
                     {formatTimeAgo(block.timestamp)}
                   </td>
                   <td className="table-cell">
-                    <span className="text-gray-200 text-xs">{block.transaction_count}</span>
+                    <span className="text-gray-300 text-xs">{block.transaction_count}</span>
                   </td>
-                  <td className="table-cell text-gray-400 font-mono text-xs">
+                  <td className="table-cell text-gray-300 text-xs">
                     {formatGas(block.gas_used.toString())}
                   </td>
                   {features.da_tracking && (() => {

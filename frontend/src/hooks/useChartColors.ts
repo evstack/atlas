@@ -2,7 +2,7 @@ import { useContext, useMemo } from 'react';
 import { BrandingContext } from '../context/branding-context';
 import { ThemeContext } from '../context/theme-context';
 
-const DEFAULT_ACCENT = '#dc2626';
+const DEFAULT_ACCENT = '#000000';
 
 function cssVar(name: string): string {
   return `rgb(${getComputedStyle(document.documentElement).getPropertyValue(name).trim()})`;

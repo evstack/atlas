@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTransaction, useTransactionDecodedLogs } from '../hooks';
-import { AddressLink, BlockLink, StatusBadge, CopyButton, EventLogs, Loading } from '../components';
+import { AddressLink, BlockLink, StatusBadge, CopyButton, EntityHeroVisual, EventLogs, Loading, EmptyState, PageHero } from '../components';
 import { formatTimestamp, formatEtherExact, formatGas, formatGasPrice, formatNumber, truncateHash, formatTokenAmountExact } from '../utils';
 import { getTxErc20Transfers, getTxNftTransfers } from '../api/transactions';
 import { getToken } from '../api/tokens';
@@ -125,16 +125,18 @@ export default function TransactionDetailPage() {
   ];
 
   return (
-    <div>
+    <div className="space-y-6 fade-in-up">
       {!txLoading && !transaction && (
-        <div className="card p-4 mb-6">
-          <p className="text-gray-200 font-medium">This transaction does not exist.</p>
-          {txError?.error && <p className="text-gray-500 text-sm mt-1">{txError.error}</p>}
-        </div>
+        <EmptyState
+          title="Transaction not found"
+          description={txError?.error ?? 'This transaction does not exist.'}
+        />
       )}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-fg">Transaction</h1>
-      </div>
+      <PageHero
+        compact
+        title="Transaction"
+        visual={<EntityHeroVisual kind="transaction" />}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <aside className="lg:col-span-3">
@@ -154,14 +156,14 @@ export default function TransactionDetailPage() {
         <section className="lg:col-span-9 space-y-6">
           <div className="card p-3">
             <div className="flex items-center justify-between mb-3">
-              <div className="flex gap-2">
-                <button className={`px-3 py-1.5 rounded-full text-sm ${subTab === 'tokens' ? 'bg-dark-700/70 text-fg' : 'text-gray-400 hover:text-fg hover:bg-dark-700/40'}`} onClick={() => setSubTab('tokens')}>
+              <div className="section-tabs">
+                <button data-active={subTab === 'tokens'} className="section-tab" onClick={() => setSubTab('tokens')}>
                   Tokens <span className="text-gray-400">({formatNumber(tokensCount)})</span>
                 </button>
-                <button className={`px-3 py-1.5 rounded-full text-sm ${subTab === 'nfts' ? 'bg-dark-700/70 text-fg' : 'text-gray-400 hover:text-fg hover:bg-dark-700/40'}`} onClick={() => setSubTab('nfts')}>
+                <button data-active={subTab === 'nfts'} className="section-tab" onClick={() => setSubTab('nfts')}>
                   NFTs <span className="text-gray-400">({formatNumber(nftsCount)})</span>
                 </button>
-                <button className={`px-3 py-1.5 rounded-full text-sm ${subTab === 'logs' ? 'bg-dark-700/70 text-fg' : 'text-gray-400 hover:text-fg hover:bg-dark-700/40'}`} onClick={() => setSubTab('logs')}>
+                <button data-active={subTab === 'logs'} className="section-tab" onClick={() => setSubTab('logs')}>
                   Logs <span className="text-gray-400">({formatNumber(logsCount)})</span>
                 </button>
               </div>

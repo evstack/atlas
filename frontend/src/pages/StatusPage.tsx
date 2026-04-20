@@ -14,7 +14,7 @@ import {
 import { getChainStatus, type ChainStatusResponse } from '../api/status';
 import { type ChartWindow } from '../api/chartData';
 import { formatNumber } from '../utils';
-import Loading from '../components/Loading';
+import { EntityHeroVisual, Loading, PageHero, SectionPanel, StatCard } from '../components';
 import { BlockStatsContext } from '../context/BlockStatsContext';
 import { useChartData } from '../hooks/useChartData';
 import { useChartColors } from '../hooks/useChartColors';
@@ -82,12 +82,14 @@ export default function StatusPage() {
     : '—';
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-fg">Status</h1>
-      </div>
+    <div className="space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title="Status"
+        visual={<EntityHeroVisual kind="status" />}
+      />
 
-      <div className="card">
+      <SectionPanel>
         {loading && !status ? (
           <div className="py-10">
             <Loading text="Fetching status" />
@@ -106,9 +108,8 @@ export default function StatusPage() {
             <StatusStat label="Last Indexed" value={lastIndexed} />
           </div>
         )}
-      </div>
+      </SectionPanel>
 
-      {/* Chain Activity Charts */}
       <div className="mt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-fg">Chain Activity</h2>
@@ -262,10 +263,7 @@ interface StatusStatProps {
 
 function StatusStat({ label, value }: StatusStatProps) {
   return (
-    <div className="bg-dark-700/60 border border-dark-600 rounded-xl p-4">
-      <p className="text-fg-subtle text-xs uppercase tracking-wide mb-1">{label}</p>
-      <p className="text-fg text-lg font-semibold break-words">{value}</p>
-    </div>
+    <StatCard label={label} value={value} />
   );
 }
 
@@ -281,11 +279,11 @@ function ChartCard({
   error?: string | null;
 }) {
   return (
-    <div className="bg-dark-700/60 border border-dark-600 rounded-xl p-4">
-      <p className="text-fg-subtle text-xs uppercase tracking-wide mb-3">{title}</p>
+    <div className="card p-4">
+      <p className="kicker mb-3">{title}</p>
       {loading ? (
         <div className="h-[200px] flex items-center justify-center">
-          <div className="w-5 h-5 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />
+          <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
         </div>
       ) : error ? (
         <div className="h-[200px] flex items-center justify-center text-center">
@@ -300,16 +298,13 @@ function ChartCard({
 
 function WindowToggle({ value, onChange }: { value: ChartWindow; onChange: (w: ChartWindow) => void }) {
   return (
-    <div className="flex gap-1 bg-dark-700/60 border border-dark-600 rounded-lg p-1">
+    <div className="section-tabs">
       {WINDOWS.map(({ label, value: w }) => (
         <button
           key={w}
           onClick={() => onChange(w)}
-          className={`px-3 py-1 text-xs rounded-md transition-colors ${
-            value === w
-              ? 'bg-accent-primary text-white'
-              : 'text-fg-subtle hover:text-fg'
-          }`}
+          data-active={value === w}
+          className="section-tab"
         >
           {label}
         </button>

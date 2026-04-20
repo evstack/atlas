@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useNftContracts } from '../hooks';
-import { Pagination, Loading } from '../components';
+import { EntityHeroVisual, Pagination, Loading, PageHero } from '../components';
 import { formatNumber, truncateHash } from '../utils';
 
 export default function NFTsPage() {
@@ -10,15 +10,12 @@ export default function NFTsPage() {
   const hasLoaded = !loading || pagination !== null;
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-fg">NFT Collections</h1>
-        {pagination && pagination.total > 0 && (
-          <p className="text-gray-400 text-sm">
-            Total: {formatNumber(pagination.total)} collections
-          </p>
-        )}
-      </div>
+    <div className="space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title="NFT Collections"
+        visual={<EntityHeroVisual kind="nfts" />}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 min-h-[200px]">
           {loading && !hasLoaded ? (
@@ -27,7 +24,7 @@ export default function NFTsPage() {
             <Link
               key={contract.address}
               to={`/nfts/${contract.address}`}
-              className="card hover:border-white/30 transition-colors group"
+              className="card transition-colors group"
             >
               <div className="flex items-start justify-between mb-3">
                 <div>
