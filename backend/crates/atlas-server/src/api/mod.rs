@@ -1,7 +1,7 @@
 pub mod error;
 pub mod handlers;
 
-use axum::{middleware, routing::get, Router};
+use axum::{extract::DefaultBodyLimit, middleware, routing::get, Router};
 use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -38,6 +38,7 @@ pub struct AppState {
     pub error_color: Option<String>,
     pub metrics: Metrics,
     pub prometheus_handle: PrometheusHandle,
+    pub solc_cache_dir: String,
 }
 
 /// Build the Axum router.
@@ -48,6 +49,16 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
     // SSE route — excluded from TimeoutLayer so connections stay alive
     let sse_routes = Router::new()
         .route("/api/events", get(handlers::sse::block_events))
+        .with_state(state.clone());
+
+    // Verify route — excluded from 10s TimeoutLayer; solc compilation can take longer
+    let verify_routes = Router::new()
+        .route(
+            "/api/contracts/{address}/verify",
+            axum::routing::post(handlers::contracts::verify_contract),
+        )
+        // Verification payloads can include full standard-json compiler inputs.
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state.clone());
 
     let mut router = Router::new()
@@ -159,6 +170,11 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
             "/api/contracts/{address}/combined-abi",
             get(handlers::proxy::get_combined_abi),
         )
+        // Contract verification
+        .route(
+            "/api/contracts/{address}",
+            get(handlers::contracts::get_contract),
+        )
         // Etherscan-compatible API
         .route("/api", get(handlers::etherscan::etherscan_api))
         // Search
@@ -203,6 +219,8 @@ pub fn build_router(state: Arc<AppState>, cors_origin: Option<String>) -> Router
         .layer(middleware::from_fn(crate::metrics::http_metrics_middleware))
         // Merge SSE routes without TimeoutLayer so connections stay alive
         .merge(sse_routes)
+        // Merge verify route without TimeoutLayer so solc compilation is not cut off
+        .merge(verify_routes)
         // Shared layers applied to all routes
         .layer(build_cors_layer(cors_origin))
         .layer(TraceLayer::new_for_http())
@@ -301,6 +319,7 @@ mod tests {
             error_color: None,
             metrics: Metrics::new(),
             prometheus_handle,
+            solc_cache_dir: "/tmp/solc-cache".to_string(),
         })
     }
 

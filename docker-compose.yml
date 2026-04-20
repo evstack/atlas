@@ -1,6 +1,8 @@
 services:
   postgres:
     image: postgres:16-alpine
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: atlas
       POSTGRES_USER: ${POSTGRES_USER:-atlas}
@@ -14,6 +16,9 @@ services:
       retries: 5
 
   atlas-server:
+    # Contract verification downloads Solidity's official linux-amd64 binary.
+    # Keep atlas-server on amd64 locally so verification works on Apple Silicon.
+    platform: linux/amd64
     build:
       context: ./backend
       dockerfile: Dockerfile

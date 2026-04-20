@@ -374,6 +374,7 @@ async fn run(args: cli::RunArgs) -> Result<()> {
         error_color: config.error_color.clone(),
         metrics: metrics.clone(),
         prometheus_handle,
+        solc_cache_dir: config.solc_cache_dir.clone(),
     });
 
     let da_pool = indexer_pool.clone();

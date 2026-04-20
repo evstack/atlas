@@ -11,9 +11,15 @@ export async function getProxies(params: GetProxiesParams = {}): Promise<Paginat
   return client.get<PaginatedResponse<ProxyInfo>>('/proxies', { params: { page, limit } });
 }
 
+interface ProxyInfoResponse {
+  is_proxy: boolean;
+  proxy: ProxyInfo | null;
+}
+
 export async function getContractProxy(address: string): Promise<ProxyInfo | null> {
   try {
-    return await client.get<ProxyInfo>(`/contracts/${address}/proxy`);
+    const resp = await client.get<ProxyInfoResponse>(`/contracts/${address}/proxy`);
+    return resp.proxy;
   } catch {
     return null;
   }

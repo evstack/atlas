@@ -29,6 +29,7 @@ dotenvy = { workspace = true }
 bigdecimal = { workspace = true }
 hex = { workspace = true }
 chrono = { workspace = true }
+tempfile = { workspace = true }
 tokio-stream = { workspace = true }
 futures = { workspace = true }
 async-stream = { workspace = true }
@@ -48,4 +49,4 @@ tokio = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
-tempfile = "3"
+tempfile = { workspace = true }

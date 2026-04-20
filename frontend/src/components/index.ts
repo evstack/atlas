@@ -11,3 +11,4 @@ export { default as CopyButton } from './CopyButton';
 export { default as EventLogs } from './EventLogs';
 export { default as ContractTypeBadge } from './ContractTypeBadge';
 export { PageHero, StatCard, SectionPanel, EmptyState, BrandOrnament, EntityHeroVisual } from './BrandPrimitives';
+export { default as ContractTab } from './ContractTab';

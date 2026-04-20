@@ -157,6 +157,12 @@
   :root[data-theme='dark'] textarea::placeholder {
     color: rgb(255 255 255 / 0.72);
   }
+
+  /* Match form input placeholder brightness to search bar in dark mode. */
+  :root:not([data-theme='light']) input::placeholder,
+  :root:not([data-theme='light']) textarea::placeholder {
+    color: rgb(255 255 255 / 0.72);
+  }
 }
 
 @layer components {
@@ -493,6 +499,15 @@
 
   .empty-state__action {
     @apply pt-1;
+  }
+
+  .search-input {
+    color: #fff;
+    caret-color: #fff;
+  }
+
+  .search-input::placeholder {
+    color: rgb(255 255 255 / 0.72);
   }
 
   .btn {
