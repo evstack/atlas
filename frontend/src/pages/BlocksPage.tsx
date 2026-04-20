@@ -40,6 +40,7 @@ export default function BlocksPage() {
   const ssePrependRafRef = useRef<number | null>(null);
   const pendingSseBlocksRef = useRef<typeof fetchedBlocks>([]);
   const sseFilterRafRef = useRef<number | null>(null);
+  const freshBlocksResetRafRef = useRef<number | null>(null);
   const [freshBlocks, setFreshBlocks] = useState<Set<number>>(new Set());
   const freshBlockTimeoutsRef = useRef<Map<number, number>>(new Map());
 
@@ -110,11 +111,19 @@ export default function BlocksPage() {
   }, [latestBlockEvent, page, autoRefresh]);
 
   useEffect(() => {
+    if (freshBlocksResetRafRef.current !== null) {
+      cancelAnimationFrame(freshBlocksResetRafRef.current);
+      freshBlocksResetRafRef.current = null;
+    }
+
     if (page !== 1 || !autoRefresh) {
       bufferedDaBlocksRef.current = new Set();
-      setFreshBlocks(new Set());
       for (const [, timeoutId] of freshBlockTimeoutsRef.current) clearTimeout(timeoutId);
       freshBlockTimeoutsRef.current.clear();
+      freshBlocksResetRafRef.current = window.requestAnimationFrame(() => {
+        setFreshBlocks((prev) => (prev.size === 0 ? prev : new Set()));
+        freshBlocksResetRafRef.current = null;
+      });
       return;
     }
 
@@ -364,6 +373,10 @@ export default function BlocksPage() {
       if (sseFilterRafRef.current !== null) {
         cancelAnimationFrame(sseFilterRafRef.current);
         sseFilterRafRef.current = null;
+      }
+      if (freshBlocksResetRafRef.current !== null) {
+        cancelAnimationFrame(freshBlocksResetRafRef.current);
+        freshBlocksResetRafRef.current = null;
       }
       for (const [, t] of activeDaTimeouts) clearTimeout(t);
       activeDaTimeouts.clear();

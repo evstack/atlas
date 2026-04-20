@@ -399,13 +399,14 @@ async fn get_solc_binary(version: &str, cache_dir: &str) -> Result<PathBuf, Atla
 fn solc_binary_target(os: &str, arch: &str) -> Result<&'static str, AtlasError> {
     match (os, arch) {
         ("linux", "x86_64") => Ok("linux-amd64"),
+        ("linux", "aarch64") => Ok("linux-arm64"),
         // Solidity's official static macOS binaries are currently published under
         // macosx-amd64. Apple Silicon can execute them natively via Rosetta.
         ("macos", "x86_64") | ("macos", "aarch64") => Ok("macosx-amd64"),
         _ => Err(AtlasError::Verification(format!(
             "unsupported platform for native solc download: {os}/{arch}. \
-             Official Solidity static binaries are currently available for linux/x86_64 \
-             and macOS. For Docker on Apple Silicon, run atlas-server as linux/amd64."
+             Official Solidity static binaries are currently available for \
+             linux/x86_64, linux/aarch64, and macOS."
         ))),
     }
 }
@@ -1010,17 +1011,19 @@ mod tests {
     }
 
     #[test]
+    fn solc_binary_target_supports_linux_arm64() {
+        assert_eq!(
+            solc_binary_target("linux", "aarch64").unwrap(),
+            "linux-arm64"
+        );
+    }
+
+    #[test]
     fn solc_binary_target_supports_macos_arm64_via_rosetta() {
         assert_eq!(
             solc_binary_target("macos", "aarch64").unwrap(),
             "macosx-amd64"
         );
-    }
-
-    #[test]
-    fn solc_binary_target_rejects_linux_arm64() {
-        let err = solc_binary_target("linux", "aarch64").unwrap_err();
-        assert!(matches!(err, AtlasError::Verification(_)));
     }
 
     #[test]

@@ -248,7 +248,6 @@ export function deriveBrandTokens(
   const background = hexToRgb(backgroundHex);
   const accent = hexToRgb(accentHex);
   const white = hexToRgb('#ffffff');
-  const black = hexToRgb('#000000');
 
   const brandAqua = mode === 'dark'
     ? shiftLightness(mixRgb(background, accent, 0.48), 12)
