@@ -1059,10 +1059,11 @@ mod tests {
 
     #[test]
     fn solc_binary_target_rejects_old_linux_arm64_versions() {
-        let err =
-            solc_binary_target("linux", "aarch64", "v0.8.30+commit.73712a01").unwrap_err();
+        let err = solc_binary_target("linux", "aarch64", "v0.8.30+commit.73712a01").unwrap_err();
 
-        assert!(matches!(err, AtlasError::Verification(message) if message.contains("not available for linux-arm64")));
+        assert!(
+            matches!(err, AtlasError::Verification(message) if message.contains("not available for linux-arm64"))
+        );
     }
 
     #[test]
