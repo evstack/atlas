@@ -7,10 +7,10 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        mono: ['JetBrains Mono', 'Geist Mono', 'SFMono-Regular', 'Menlo', 'monospace'],
-        sans: ['Inter', 'Helvetica Neue', 'Helvetica', 'Arial', 'sans-serif'],
-        display: ['Inter', 'Helvetica Neue', 'Helvetica', 'Arial', 'sans-serif'],
-        brandmono: ['Geist Mono', 'JetBrains Mono', 'monospace'],
+        mono: ['Geist Mono', 'JetBrains Mono', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+        sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        display: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        brandmono: ['Geist Mono', 'JetBrains Mono', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
       },
       colors: {
         brand: {

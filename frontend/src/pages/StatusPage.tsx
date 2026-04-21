@@ -282,8 +282,8 @@ function ChartCard({
     <div className="card p-4">
       <p className="kicker mb-3">{title}</p>
       {loading ? (
-        <div className="h-[200px] flex items-center justify-center">
-          <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+        <div className="h-[200px] flex items-center justify-center text-fg-subtle">
+          <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
         </div>
       ) : error ? (
         <div className="h-[200px] flex items-center justify-center text-center">

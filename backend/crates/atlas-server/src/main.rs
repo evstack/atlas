@@ -751,6 +751,29 @@ mod tests {
     }
 
     #[test]
+    fn postgres_connection_config_ignores_empty_dbname_query_without_path() {
+        let err = match postgres_connection_config("postgres://user:secret@localhost:5432/?dbname=")
+        {
+            Ok(_) => panic!("expected empty dbname query without path database to fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("must include a database name"));
+    }
+
+    #[test]
+    fn postgres_connection_config_ignores_empty_dbname_query_with_path_database() {
+        let config = postgres_connection_config(
+            "postgres://user:secret@localhost:5432/base_db?dbname=&host=query-host",
+        )
+        .unwrap();
+
+        assert_eq!(config.database_name, "base_db");
+        assert_eq!(env_value(&config, "PGHOST"), Some("query-host"));
+        assert_eq!(env_value(&config, "PGDATABASE"), Some("base_db"));
+    }
+
+    #[test]
     fn portable_pg_dump_flags_omit_source_ownership_and_acls() {
         assert_eq!(
             PORTABLE_PG_DUMP_FLAGS,

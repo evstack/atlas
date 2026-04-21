@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -32,6 +30,8 @@
     --color-gray-500: 132 132 132;
     --color-gray-600: 170 170 170;
     --color-gray-700: 208 212 214;
+    --font-sans-stack: 'Inter', system-ui, -apple-system, 'BlinkMacSystemFont', 'Segoe UI', sans-serif;
+    --font-mono-stack: 'Geist Mono', 'JetBrains Mono', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', monospace;
     --page-gradient:
       radial-gradient(circle at 8% 78%, rgb(var(--color-brand-lavender) / 0.22), transparent 28%),
       radial-gradient(circle at 80% 18%, rgb(var(--color-brand-lemon) / 0.24), transparent 24%),
@@ -86,7 +86,7 @@
     min-height: 100vh;
     background: var(--page-gradient);
     color: var(--color-body-text);
-    font-family: 'Inter', sans-serif;
+    font-family: var(--font-sans-stack);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -150,7 +150,7 @@
 
   input,
   textarea {
-    font-family: 'Geist Mono', monospace;
+    font-family: var(--font-mono-stack);
   }
 
   :root[data-theme='dark'] input::placeholder,
@@ -215,7 +215,7 @@
   }
 
   .kicker {
-    font-family: 'Geist Mono', monospace;
+    font-family: var(--font-mono-stack);
     @apply text-[11px] uppercase tracking-[0.24em] text-fg-subtle;
   }
 
@@ -420,7 +420,7 @@
 
   .brand-ornament__label {
     @apply absolute left-5 top-5 flex flex-col gap-1 text-black;
-    font-family: 'Geist Mono', monospace;
+    font-family: var(--font-mono-stack);
     font-size: 0.7rem;
     letter-spacing: 0.18em;
     text-transform: uppercase;
@@ -465,7 +465,7 @@
   }
 
   .metric-card__label {
-    font-family: 'Geist Mono', monospace;
+    font-family: var(--font-mono-stack);
     @apply text-[11px] uppercase tracking-[0.22em] text-fg-subtle;
   }
 
@@ -512,7 +512,7 @@
 
   .btn {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-[11px] uppercase tracking-[0.22em] font-medium;
-    font-family: 'Geist Mono', monospace;
+    font-family: var(--font-mono-stack);
     border: 1px solid rgb(var(--color-border) / 0.9);
   }
 
@@ -558,14 +558,14 @@
 
   .badge-chip {
     @apply inline-flex items-center rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-fg-subtle;
-    font-family: 'Geist Mono', monospace;
+    font-family: var(--font-mono-stack);
     border: 1px solid rgb(var(--color-border) / 0.8);
     background: rgb(var(--color-surface-700) / 0.9);
   }
 
   .status-badge {
     @apply inline-flex items-center rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em];
-    font-family: 'Geist Mono', monospace;
+    font-family: var(--font-mono-stack);
   }
 
   .status-badge--success {
@@ -585,7 +585,7 @@
   }
 
   .table-header {
-    font-family: 'Geist Mono', monospace;
+    font-family: var(--font-mono-stack);
     @apply text-[11px] uppercase tracking-[0.18em] text-fg-subtle font-medium;
   }
 
@@ -611,7 +611,7 @@
 
   .section-tab {
     @apply rounded-full px-4 py-2 text-[11px] uppercase tracking-[0.2em] text-fg-subtle border border-transparent;
-    font-family: 'Geist Mono', monospace;
+    font-family: var(--font-mono-stack);
   }
 
   .section-tab[data-active='true'] {
@@ -682,11 +682,11 @@
   }
 
   .live-dot {
-    animation: livePulse 1.6s ease-in-out infinite;
+    animation: live-pulse 1.6s ease-in-out infinite;
   }
 
   .row-highlight {
-    animation: highlightFade 1.1s ease-out forwards;
+    animation: highlight-fade 1.1s ease-out forwards;
   }
 
   .fresh-block {
@@ -698,11 +698,11 @@
   }
 
   .fade-in-up {
-    animation: fadeInUp 340ms cubic-bezier(0.22, 1, 0.36, 1);
+    animation: fade-in-up 340ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 }
 
-@keyframes highlightFade {
+@keyframes highlight-fade {
   0% {
     background: color-mix(in srgb, rgb(var(--color-brand-aqua)) 28%, rgb(var(--color-surface-700)));
   }
@@ -712,13 +712,13 @@
   }
 }
 
-@keyframes livePulse {
+@keyframes live-pulse {
   0% { opacity: 0.45; }
   50% { opacity: 1; }
   100% { opacity: 0.45; }
 }
 
-@keyframes fadeInUp {
+@keyframes fade-in-up {
   from {
     opacity: 0;
     transform: translateY(10px);

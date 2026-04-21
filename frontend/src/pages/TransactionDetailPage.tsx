@@ -129,17 +129,17 @@ export default function TransactionDetailPage() {
 
   return (
     <div className="space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title="Transaction"
+        visual={<EntityHeroVisual kind="transaction" />}
+      />
       {!txLoading && !transaction && (
         <EmptyState
           title="Transaction not found"
           description={txError?.error ?? 'This transaction does not exist.'}
         />
       )}
-      <PageHero
-        compact
-        title="Transaction"
-        visual={<EntityHeroVisual kind="transaction" />}
-      />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <aside className="lg:col-span-3">

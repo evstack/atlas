@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useBranding } from '../hooks/useBranding';
 
 type EntityKind =
   | 'search'
@@ -126,7 +127,17 @@ export function EmptyState({
   );
 }
 
-export function BrandOrnament({ compact = false }: { compact?: boolean }) {
+interface BrandOrnamentProps {
+  compact?: boolean;
+  secondaryLabel?: string;
+}
+
+export function BrandOrnament({
+  compact = false,
+  secondaryLabel = 'Explorer',
+}: BrandOrnamentProps) {
+  const { chainName } = useBranding();
+
   return (
     <div className={`brand-ornament ${compact ? 'brand-ornament--compact' : ''}`}>
       <div className="brand-ornament__field" />
@@ -134,8 +145,8 @@ export function BrandOrnament({ compact = false }: { compact?: boolean }) {
       <div className="brand-ornament__arc brand-ornament__arc--middle" />
       <div className="brand-ornament__arc brand-ornament__arc--inner" />
       <div className="brand-ornament__label">
-        <span>Atlas</span>
-        <span>Explorer</span>
+        <span>{chainName}</span>
+        <span>{secondaryLabel}</span>
       </div>
     </div>
   );
