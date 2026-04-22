@@ -82,7 +82,7 @@ export default function NFTContractPage() {
           <div className="card">
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 min-h-[200px]">
               {tokens.map((token) => {
-                const imageUrl = token.image_url || token.token_uri || null;
+                const imageUrl = token.image_url || null;
                 const displayName = token.name || `${contract?.name || contract?.symbol || 'NFT'} #${token.token_id}`;
                 return (
                   <Link
