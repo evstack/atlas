@@ -120,6 +120,7 @@ pub(crate) fn postgres_connection_config(db_url: &str) -> Result<PostgresConnect
             "dbname" if !value.is_empty() => {
                 database_name = value.into_owned();
             }
+            "dbname" => {}
             "host" => {
                 set_pg_env(&mut env_vars, "PGHOST", value.as_ref());
             }
@@ -747,6 +748,29 @@ mod tests {
         assert_eq!(env_value(&config, "PGUSER"), Some("query-user"));
         assert_eq!(env_value(&config, "PGPASSWORD"), Some("query-pass"));
         assert_eq!(env_value(&config, "PGDATABASE"), Some("query_db"));
+    }
+
+    #[test]
+    fn postgres_connection_config_ignores_empty_dbname_query_without_path() {
+        let err = match postgres_connection_config("postgres://user:secret@localhost:5432/?dbname=")
+        {
+            Ok(_) => panic!("expected empty dbname query without path database to fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("must include a database name"));
+    }
+
+    #[test]
+    fn postgres_connection_config_ignores_empty_dbname_query_with_path_database() {
+        let config = postgres_connection_config(
+            "postgres://user:secret@localhost:5432/base_db?dbname=&host=query-host",
+        )
+        .unwrap();
+
+        assert_eq!(config.database_name, "base_db");
+        assert_eq!(env_value(&config, "PGHOST"), Some("query-host"));
+        assert_eq!(env_value(&config, "PGDATABASE"), Some("base_db"));
     }
 
     #[test]

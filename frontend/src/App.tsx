@@ -24,8 +24,8 @@ const StatusPage = lazy(() => import('./pages/StatusPage'));
 
 function PageLoader() {
   return (
-    <div className="flex items-center justify-center h-64">
-      <span className="text-gray-500 text-sm">Loading...</span>
+    <div className="card flex h-64 items-center justify-center">
+      <span className="kicker">Loading route</span>
     </div>
   );
 }

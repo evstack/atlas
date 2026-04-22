@@ -1,13 +1,23 @@
 import { Link } from 'react-router-dom';
+import { EmptyState, EntityHeroVisual, PageHero } from '../components';
 
 export default function NotFoundPage() {
   return (
-    <div className="flex flex-col items-center justify-center py-20">
-      <h1 className="text-6xl font-bold text-fg mb-4">404</h1>
-      <p className="text-fg-subtle text-lg mb-8">Page not found</p>
-      <Link to="/" className="btn btn-primary">
-        Go Home
-      </Link>
+    <div className="space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title="404"
+        visual={<EntityHeroVisual kind="notfound" />}
+      />
+      <EmptyState
+        title="Page not found"
+        description="Return to the homepage and continue from search, or navigate directly into the explorer sections."
+        action={
+          <Link to="/" className="btn btn-primary">
+            Go home
+          </Link>
+        }
+      />
     </div>
   );
 }

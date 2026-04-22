@@ -324,7 +324,7 @@ fn validate_compiler_version(version: &str) -> Result<(), AtlasError> {
 /// Uses an atomic write (temp → rename) so concurrent requests for the same
 /// version don't corrupt the cached binary.
 async fn get_solc_binary(version: &str, cache_dir: &str) -> Result<PathBuf, AtlasError> {
-    let target = solc_binary_target(OS, ARCH)?;
+    let target = solc_binary_target(OS, ARCH, version)?;
     let filename = format!("solc-{target}-{version}");
     let cache_path = PathBuf::from(cache_dir).join(&filename);
 
@@ -396,16 +396,48 @@ async fn get_solc_binary(version: &str, cache_dir: &str) -> Result<PathBuf, Atla
     Ok(cache_path)
 }
 
-fn solc_binary_target(os: &str, arch: &str) -> Result<&'static str, AtlasError> {
+fn solc_version_triplet(version: &str) -> Option<(u64, u64, u64)> {
+    let version = version.strip_prefix('v')?;
+    let version = version.split_once("+commit.")?.0;
+    let mut parts = version.split('.');
+
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+
+    if parts.next().is_some() {
+        return None;
+    }
+
+    Some((major, minor, patch))
+}
+
+fn solc_binary_target(os: &str, arch: &str, version: &str) -> Result<&'static str, AtlasError> {
     match (os, arch) {
         ("linux", "x86_64") => Ok("linux-amd64"),
+        ("linux", "aarch64") => {
+            let Some(version_triplet) = solc_version_triplet(version) else {
+                return Err(AtlasError::Verification(format!(
+                    "failed to determine native solc target for compiler version {version}"
+                )));
+            };
+
+            if version_triplet >= (0, 8, 31) {
+                Ok("linux-arm64")
+            } else {
+                Err(AtlasError::Verification(format!(
+                    "compiler version {version} is not available for linux-arm64; \
+                     official Solidity linux-arm64 binaries start at v0.8.31"
+                )))
+            }
+        }
         // Solidity's official static macOS binaries are currently published under
         // macosx-amd64. Apple Silicon can execute them natively via Rosetta.
         ("macos", "x86_64") | ("macos", "aarch64") => Ok("macosx-amd64"),
         _ => Err(AtlasError::Verification(format!(
             "unsupported platform for native solc download: {os}/{arch}. \
-             Official Solidity static binaries are currently available for linux/x86_64 \
-             and macOS. For Docker on Apple Silicon, run atlas-server as linux/amd64."
+             Official Solidity static binaries are currently available for \
+             linux/x86_64, linux/aarch64, and macOS."
         ))),
     }
 }
@@ -1004,23 +1036,34 @@ mod tests {
     #[test]
     fn solc_binary_target_supports_linux_amd64() {
         assert_eq!(
-            solc_binary_target("linux", "x86_64").unwrap(),
+            solc_binary_target("linux", "x86_64", "v0.8.20+commit.a1b79de6").unwrap(),
             "linux-amd64"
+        );
+    }
+
+    #[test]
+    fn solc_binary_target_supports_linux_arm64() {
+        assert_eq!(
+            solc_binary_target("linux", "aarch64", "v0.8.31+commit.2d38a763").unwrap(),
+            "linux-arm64"
         );
     }
 
     #[test]
     fn solc_binary_target_supports_macos_arm64_via_rosetta() {
         assert_eq!(
-            solc_binary_target("macos", "aarch64").unwrap(),
+            solc_binary_target("macos", "aarch64", "v0.8.20+commit.a1b79de6").unwrap(),
             "macosx-amd64"
         );
     }
 
     #[test]
-    fn solc_binary_target_rejects_linux_arm64() {
-        let err = solc_binary_target("linux", "aarch64").unwrap_err();
-        assert!(matches!(err, AtlasError::Verification(_)));
+    fn solc_binary_target_rejects_old_linux_arm64_versions() {
+        let err = solc_binary_target("linux", "aarch64", "v0.8.30+commit.73712a01").unwrap_err();
+
+        assert!(
+            matches!(err, AtlasError::Verification(message) if message.contains("not available for linux-arm64"))
+        );
     }
 
     #[test]

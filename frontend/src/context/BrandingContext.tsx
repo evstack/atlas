@@ -7,12 +7,15 @@ import {
 import {
   deriveSurfaceShades,
   applyPalette,
+  applyBrandTokens,
+  clearBrandTokens,
+  deriveBrandTokens,
   hexToRgbTriplet,
 } from "../utils/color";
+import { getDefaultLogo } from "../assets/defaultLogos";
 import { ThemeContext } from "./theme-context";
 import { BrandingContext, brandingDefaults } from "./branding-context";
 import { resolveBrandingValue, resolveLogoUrl } from "./branding";
-import defaultLogoImg from "../assets/logo.png";
 
 const CACHE_KEY = "branding_config";
 
@@ -68,7 +71,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
 
     setBranding(resolveBrandingValue(config, theme));
     document.title = `${config.chain_name} - Block Explorer`;
-    setFavicon(resolveLogoUrl(config, theme) ?? defaultLogoImg);
+    setFavicon(resolveLogoUrl(config, theme) ?? getDefaultLogo(theme));
   }, [config, theme]);
 
   // Apply accent + semantic colors (theme-independent)
@@ -102,6 +105,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
         const palette = deriveSurfaceShades(
           config.background_color_dark,
           "dark",
+          config.accent_color ?? undefined,
         );
         applyPalette(palette);
       } catch {
@@ -112,6 +116,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
         const palette = deriveSurfaceShades(
           config.background_color_light,
           "light",
+          config.accent_color ?? undefined,
         );
         applyPalette(palette);
       } catch {
@@ -141,6 +146,25 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     }
   }, [config, theme]);
 
+  useEffect(() => {
+    if (!config) return;
+
+    const backgroundHex = theme === "dark"
+      ? config.background_color_dark ?? "#090b0c"
+      : config.background_color_light ?? "#f3f4f4";
+
+    if (!config.accent_color) {
+      clearBrandTokens();
+      return;
+    }
+
+    try {
+      applyBrandTokens(deriveBrandTokens(backgroundHex, config.accent_color, theme));
+    } catch {
+      clearBrandTokens();
+    }
+  }, [config, theme]);
+
   if (!branding.loaded) {
     return (
       <div
@@ -150,7 +174,10 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          backgroundColor: theme === "dark" ? "#0f172a" : "#f8fafc",
+          background:
+            theme === "dark"
+              ? "linear-gradient(180deg, #090b0c 0%, #0e1113 100%)"
+              : "linear-gradient(180deg, #f6f7f7 0%, #f0f2f2 100%)",
         }}
       >
         <div
@@ -158,8 +185,8 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
             width: "2rem",
             height: "2rem",
             borderRadius: "50%",
-            border: `3px solid ${theme === "dark" ? "#334155" : "#cbd5e1"}`,
-            borderTopColor: theme === "dark" ? "#94a3b8" : "#64748b",
+            border: `3px solid ${theme === "dark" ? "#2c3236" : "#d4d8da"}`,
+            borderTopColor: theme === "dark" ? "#f4f5f4" : "#000000",
             animation: "spin 0.8s linear infinite",
           }}
         />
