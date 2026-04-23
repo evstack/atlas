@@ -155,6 +155,15 @@ pub struct ApiArgs {
         help = "Number of recent blocks kept in the SSE replay buffer [1–100000]"
     )]
     pub sse_replay_buffer_blocks: usize,
+
+    #[arg(
+        long = "atlas.api.solc-cache-dir",
+        env = "SOLC_CACHE_DIR",
+        default_value = "/tmp/solc-cache",
+        value_name = "DIR",
+        help = "Directory to cache downloaded solc compiler binaries"
+    )]
+    pub solc_cache_dir: String,
 }
 
 #[derive(Args, Clone)]

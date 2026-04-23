@@ -46,6 +46,7 @@ impl MetadataFetcher {
     pub fn new(pool: PgPool, config: Config, metrics: Metrics) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
+            .user_agent("atlas-server/0.1.0")
             .build()
             .expect("Failed to create HTTP client");
 

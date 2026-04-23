@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useAddress, useAddressTransactions, useEthBalance, useAddressTokens, useAddressNfts, useAddressTransfers } from '../hooks';
-import { Pagination, TxHashLink, BlockLink, StatusBadge, AddressLink, CopyButton, ContractTypeBadge } from '../components';
+import { useAddress, useAddressTransactions, useEthBalance, useAddressTokens, useAddressNfts, useAddressTransfers, useContract, useContractProxy } from '../hooks';
+import { Pagination, TxHashLink, BlockLink, StatusBadge, AddressLink, CopyButton, ContractTypeBadge, ContractTab } from '../components';
 import ImageIpfs from '../components/ImageIpfs';
 import { formatNumber, formatTimeAgo, formatEtherExact, formatTokenAmount, formatUsd, formatTokenAmountExact } from '../utils';
 import { useEthPrice } from '../hooks';
 import { getToken } from '../api/tokens';
 
-type TabType = 'transactions' | 'tokens' | 'nfts' | 'transfers';
+type TabType = 'transactions' | 'tokens' | 'nfts' | 'transfers' | 'contract';
 
 export default function AddressPage() {
   const { address: addressParam } = useParams<{ address: string }>();
@@ -29,11 +29,18 @@ export default function AddressPage() {
   const { transfers, pagination: transfersPagination, loading: transfersLoading } = useAddressTransfers(addressParam, { page: transfersPage, limit: 20 });
   const [tokenMeta, setTokenMeta] = useState<Record<string, { decimals: number }>>({});
 
+  const isContract = address && address.address_type !== 'eoa';
+  const { contract, loading: contractLoading, refetch: refetchContract } = useContract(
+    isContract ? addressParam : undefined
+  );
+  const { proxyInfo } = useContractProxy(isContract ? addressParam : undefined);
+
   const tabs: { id: TabType; label: string; count?: number }[] = [
     { id: 'transactions', label: 'Transactions', count: pagination?.total },
     { id: 'transfers', label: 'Transfers', count: transfersPagination?.total },
     { id: 'tokens', label: 'Tokens', count: tokensPagination?.total },
     { id: 'nfts', label: 'NFTs', count: nftsPagination?.total },
+    ...(isContract ? [{ id: 'contract' as TabType, label: contract?.verified ? 'Contract ✓' : 'Contract' }] : []),
   ];
 
   // Fetch ERC-20 decimals for transfers on this page
@@ -164,6 +171,20 @@ export default function AddressPage() {
           )}
         </div>
       </div>
+
+      {/* Proxy banner */}
+      {proxyInfo && (
+        <div className="flex items-center gap-3 px-4 py-3 mb-6 bg-accent-primary/10 border border-accent-primary/30 rounded text-sm">
+          <span className="text-accent-primary font-semibold">Proxy Contract</span>
+          <span className="text-gray-500">·</span>
+          <span className="text-gray-400">
+            This is a {proxyInfo.proxy_type === 'eip1967' ? 'EIP-1967' : proxyInfo.proxy_type === 'eip1822' ? 'EIP-1822 (UUPS)' : proxyInfo.proxy_type} proxy. Calls are forwarded to the implementation contract:
+          </span>
+          <Link to={`/address/${proxyInfo.implementation_address}`} className="font-mono text-accent-primary hover:underline">
+            {proxyInfo.implementation_address}
+          </Link>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="border-b border-dark-600 mb-4">
@@ -311,7 +332,7 @@ export default function AddressPage() {
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {nfts.map((t) => {
-                  const imageUrl = t.image_url || t.token_uri || null;
+                  const imageUrl = t.image_url || null;
                   const displayName = t.name || `#${t.token_id}`;
                   return (
                     <Link key={`${t.contract_address}-${t.token_id}`} to={`/nfts/${t.contract_address}/${t.token_id}`} className="block group">
@@ -407,6 +428,18 @@ export default function AddressPage() {
           {transfersPagination && transfersPagination.total_pages > 1 && (
             <Pagination currentPage={transfersPagination.page} totalPages={transfersPagination.total_pages} onPageChange={setTransfersPage} />
           )}
+        </div>
+      )}
+
+      {/* Contract Tab */}
+      {activeTab === 'contract' && addressParam && (
+        <div className="card p-4">
+          <ContractTab
+            address={addressParam}
+            contract={contract}
+            loading={contractLoading}
+            onVerified={refetchContract}
+          />
         </div>
       )}
 

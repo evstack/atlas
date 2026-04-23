@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
 import { useBlock, useBlockTransactions, useFeatures } from '../hooks';
-import { CopyButton, Loading, AddressLink, TxHashLink, StatusBadge } from '../components';
+import { CopyButton, EntityHeroVisual, Loading, AddressLink, TxHashLink, StatusBadge, EmptyState, PageHero } from '../components';
 import { formatNumber, formatTimestamp, formatGas, truncateHash, formatTimeAgo, formatEther } from '../utils';
 import { useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -117,32 +117,32 @@ export default function BlockDetailPage() {
   ];
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-fg">Block {blockNumber !== undefined ? `#${formatNumber(blockNumber)}` : ''}</h1>
-        <div className="flex space-x-2">
-          {blockNumber !== undefined && blockNumber > 0 && (
-            <Link to={`/blocks/${blockNumber - 1}`} className="btn btn-secondary text-sm" aria-label="Previous block" title="Previous block">
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </Link>
-          )}
-          {blockNumber !== undefined && (
-            <Link to={`/blocks/${blockNumber + 1}`} className="btn btn-secondary text-sm" aria-label="Next block" title="Next block">
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </Link>
-          )}
-        </div>
-      </div>
+    <div className="space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title={`Block ${blockNumber !== undefined ? `#${formatNumber(blockNumber)}` : ''}`}
+        actions={
+          <div className="flex gap-2">
+            {blockNumber !== undefined && blockNumber > 0 && (
+              <Link to={`/blocks/${blockNumber - 1}`} className="btn btn-secondary text-sm" aria-label="Previous block" title="Previous block">
+                Prev
+              </Link>
+            )}
+            {blockNumber !== undefined && (
+              <Link to={`/blocks/${blockNumber + 1}`} className="btn btn-secondary text-sm" aria-label="Next block" title="Next block">
+                Next
+              </Link>
+            )}
+          </div>
+        }
+        visual={<EntityHeroVisual kind="block" />}
+      />
 
       {!blockLoading && !block && (
-        <div className="card p-4 mb-6">
-          <p className="text-gray-200 font-medium">This block does not exist.</p>
-          {blockError?.error && <p className="text-gray-500 text-sm mt-1">{blockError.error}</p>}
-        </div>
+        <EmptyState
+          title="Block not found"
+          description={blockError?.error ?? 'This block does not exist.'}
+        />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -161,7 +161,7 @@ export default function BlockDetailPage() {
         </aside>
 
         <section className="lg:col-span-9">
-          <div className="card overflow-hidden">
+          <div className="table-shell">
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>

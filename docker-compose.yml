@@ -1,6 +1,8 @@
 services:
   postgres:
     image: postgres:16-alpine
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: atlas
       POSTGRES_USER: ${POSTGRES_USER:-atlas}
@@ -35,6 +37,8 @@ services:
       FAUCET_ENABLED: ${FAUCET_ENABLED:-false}
       CHAIN_NAME: ${CHAIN_NAME:-Unknown}
       CHAIN_LOGO_URL: ${CHAIN_LOGO_URL:-}
+      CHAIN_LOGO_URL_LIGHT: ${CHAIN_LOGO_URL_LIGHT:-}
+      CHAIN_LOGO_URL_DARK: ${CHAIN_LOGO_URL_DARK:-}
       ACCENT_COLOR: ${ACCENT_COLOR:-}
       BACKGROUND_COLOR_DARK: ${BACKGROUND_COLOR_DARK:-}
       BACKGROUND_COLOR_LIGHT: ${BACKGROUND_COLOR_LIGHT:-}

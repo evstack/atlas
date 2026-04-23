@@ -1,8 +1,8 @@
 import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTokens } from '../hooks';
-import { Pagination, Loading } from '../components';
-import { formatNumber, truncateHash } from '../utils';
+import { EntityHeroVisual, Pagination, Loading, PageHero } from '../components';
+import { truncateHash, formatNumber } from '../utils';
 
 export default function TokensPage() {
   const [page, setPage] = useState(1);
@@ -39,17 +39,14 @@ export default function TokensPage() {
   }, [tokens, sort]);
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-fg">ERC-20 Tokens</h1>
-        {pagination && pagination.total > 0 && (
-          <p className="text-gray-400 text-sm">
-            Total: {formatNumber(pagination.total)} tokens
-          </p>
-        )}
-      </div>
+    <div className="space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title="ERC-20 Tokens"
+        visual={<EntityHeroVisual kind="tokens" />}
+      />
 
-      <div className="card overflow-hidden">
+      <div className="table-shell">
           {loading && !hasLoaded ? (
             <div className="py-10"><Loading size="sm" /></div>
           ) : (

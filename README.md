@@ -31,7 +31,7 @@ just frontend-install
 Start the backend:
 
 ```bash
-just backend-server
+just backend-run
 ```
 
 Start frontend:
@@ -59,7 +59,7 @@ Copy `.env.example` to `.env` and set `RPC_URL`. Common options:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `RPC_URL` | Ethereum JSON-RPC endpoint | Required |
-| `DATABASE_URL` | PostgreSQL connection string | Set in docker-compose |
+| `DATABASE_URL` | PostgreSQL connection string | `postgres://atlas:atlas@localhost:5432/atlas` (local dev) |
 | `START_BLOCK` | Block to start indexing from | `0` |
 | `BATCH_SIZE` | Blocks per indexing batch | `100` |
 | `RPC_REQUESTS_PER_SECOND` | RPC rate limit | `100` |
