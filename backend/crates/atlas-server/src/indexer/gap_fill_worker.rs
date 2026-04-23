@@ -33,15 +33,27 @@ const BATCH_SIZE: i64 = 50;
 /// Sleep when there is no work ready to retry.
 const IDLE_SLEEP: Duration = Duration::from_secs(300);
 
-/// Select blocks whose backoff window has elapsed.
+/// Atomically claim a batch of blocks whose backoff window has elapsed.
 /// Backoff: 2 * 2^min(retry_count, 10) minutes.
 /// At retry_count=3 (minimum after inline retries): ~16 min.
 /// At retry_count=10+: ~34 h (capped).
+///
+/// The CTE uses `FOR UPDATE SKIP LOCKED` so concurrent workers never claim
+/// the same row. Setting `last_failed_at = NOW()` on the claimed rows means
+/// they fall outside the backoff window for any other worker that runs before
+/// this cycle finishes.
 const SELECT_READY_SQL: &str = "
-    SELECT block_number FROM failed_blocks
-    WHERE last_failed_at < NOW() - make_interval(mins => (2 * power(2, LEAST(retry_count, 10)))::int)
-    ORDER BY block_number ASC
-    LIMIT $1";
+    WITH candidates AS (
+        SELECT block_number FROM failed_blocks
+        WHERE last_failed_at < NOW() - make_interval(mins => (2 * power(2, LEAST(retry_count, 10)))::int)
+        ORDER BY block_number DESC
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED
+    )
+    UPDATE failed_blocks SET last_failed_at = NOW()
+    FROM candidates
+    WHERE failed_blocks.block_number = candidates.block_number
+    RETURNING failed_blocks.block_number";
 
 pub struct GapFillWorker {
     pool: PgPool,
@@ -79,25 +91,25 @@ impl GapFillWorker {
     pub async fn run(&self) -> Result<()> {
         tracing::info!("Gap-fill worker started");
         loop {
-            let processed = self.process_batch().await?;
-            if processed > 0 {
-                tracing::info!(processed, "gap-fill worker cycle complete");
+            let (attempted, succeeded) = self.process_batch().await?;
+            if attempted > 0 {
+                tracing::info!(attempted, succeeded, "gap-fill worker cycle complete");
             } else {
                 tokio::time::sleep(IDLE_SLEEP).await;
             }
         }
     }
 
-    /// Fetch one batch of eligible failed blocks, retry them, and return the
-    /// number successfully recovered.
-    pub async fn process_batch(&self) -> Result<usize> {
+    /// Fetch one batch of eligible failed blocks, retry them, and return
+    /// `(attempted, succeeded)`.
+    pub async fn process_batch(&self) -> Result<(usize, usize)> {
         let blocks: Vec<(i64,)> = sqlx::query_as(SELECT_READY_SQL)
             .bind(BATCH_SIZE)
             .fetch_all(&self.pool)
             .await?;
 
         if blocks.is_empty() {
-            return Ok(0);
+            return Ok((0, 0));
         }
 
         let rps = NonZeroU32::new(self.rpc_requests_per_second).unwrap();
@@ -109,6 +121,7 @@ impl GapFillWorker {
 
         let mut copy_client = Indexer::connect_copy_client(&self.database_url).await?;
 
+        let attempted = blocks.len();
         let mut succeeded = 0usize;
         let mut failed = 0usize;
 
@@ -134,7 +147,7 @@ impl GapFillWorker {
                             .await
                     {
                         tracing::warn!(block = block_num, error = %e, "gap-fill: partition check failed");
-                        self.increment_retry(block_number).await;
+                        self.increment_retry(block_number).await?;
                         failed += 1;
                         continue;
                     }
@@ -147,7 +160,7 @@ impl GapFillWorker {
                     .await
                     {
                         tracing::warn!(block = block_num, error = %e, "gap-fill: write failed");
-                        self.increment_retry(block_number).await;
+                        self.increment_retry(block_number).await?;
                         failed += 1;
                         continue;
                     }
@@ -158,12 +171,12 @@ impl GapFillWorker {
                 }
                 Some(FetchResult::Error { error, .. }) => {
                     tracing::warn!(block = block_num, error, "gap-fill: fetch failed");
-                    self.increment_retry(block_number).await;
+                    self.increment_retry(block_number).await?;
                     failed += 1;
                 }
                 None => {
                     tracing::warn!(block = block_num, "gap-fill: fetch returned no result");
-                    self.increment_retry(block_number).await;
+                    self.increment_retry(block_number).await?;
                     failed += 1;
                 }
             }
@@ -178,7 +191,7 @@ impl GapFillWorker {
                 .set_indexer_missing_blocks(self.get_missing_block_count().await?);
         }
 
-        Ok(succeeded)
+        Ok((attempted, succeeded))
     }
 
     async fn get_missing_block_count(&self) -> Result<u64> {
@@ -188,18 +201,23 @@ impl GapFillWorker {
         Ok(count.0.max(0) as u64)
     }
 
-    async fn increment_retry(&self, block_number: i64) {
+    async fn increment_retry(&self, block_number: i64) -> Result<()> {
         let result = sqlx::query(
             "UPDATE failed_blocks SET retry_count = retry_count + 1, last_failed_at = NOW()
              WHERE block_number = $1",
         )
         .bind(block_number)
         .execute(&self.pool)
-        .await;
+        .await?;
 
-        if let Err(e) = result {
-            tracing::warn!(block = block_number, error = %e, "gap-fill: failed to increment retry count");
-        }
+        anyhow::ensure!(
+            result.rows_affected() == 1,
+            "gap-fill: increment_retry affected {} rows for block {}",
+            result.rows_affected(),
+            block_number
+        );
+
+        Ok(())
     }
 }
 
@@ -238,7 +256,12 @@ mod tests {
     }
 
     #[test]
-    fn select_ready_sql_orders_asc() {
-        assert!(SELECT_READY_SQL.contains("ORDER BY block_number ASC"));
+    fn select_ready_sql_orders_desc() {
+        assert!(SELECT_READY_SQL.contains("ORDER BY block_number DESC"));
+    }
+
+    #[test]
+    fn select_ready_sql_uses_skip_locked() {
+        assert!(SELECT_READY_SQL.contains("FOR UPDATE SKIP LOCKED"));
     }
 }

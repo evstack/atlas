@@ -71,12 +71,12 @@ async fn reset_failed_blocks(pool: &sqlx::PgPool, block_number: u64) {
     sqlx::query("DELETE FROM failed_blocks")
         .execute(pool)
         .await
-        .ok();
+        .expect("delete failed_blocks");
     sqlx::query("DELETE FROM blocks WHERE number = $1")
         .bind(block_number as i64)
         .execute(pool)
         .await
-        .ok();
+        .expect("delete block");
 }
 
 fn make_worker(database_url: &str, rpc_url: &str) -> GapFillWorker {
@@ -127,7 +127,7 @@ fn gap_fill_retries_failed_block() {
         .expect("insert test row");
 
         let worker = make_worker(database_url, &mock_server.uri());
-        let recovered = worker.process_batch().await.expect("process_batch");
+        let (_, recovered) = worker.process_batch().await.expect("process_batch");
 
         assert_eq!(recovered, 1, "expected 1 block recovered");
 
@@ -179,7 +179,7 @@ fn gap_fill_updates_missing_blocks_metric_after_recovery() {
         .expect("insert test row");
 
         let worker = make_worker_with_metrics(database_url, &mock_server.uri(), metrics);
-        let recovered = worker.process_batch().await.expect("process_batch");
+        let (_, recovered) = worker.process_batch().await.expect("process_batch");
 
         assert_eq!(recovered, 1, "expected 1 block recovered");
 
@@ -223,7 +223,7 @@ fn gap_fill_increments_retry_count_on_rpc_error() {
         .expect("insert test row");
 
         let worker = make_worker(database_url, &mock_server.uri());
-        let recovered = worker.process_batch().await.expect("process_batch");
+        let (_, recovered) = worker.process_batch().await.expect("process_batch");
 
         assert_eq!(recovered, 0, "no block should be recovered on RPC error");
 
@@ -270,11 +270,11 @@ fn gap_fill_skips_recently_failed_block() {
         .expect("insert test row");
 
         let worker = make_worker(database_url, &mock_server.uri());
-        let recovered = worker.process_batch().await.expect("process_batch");
+        let (attempted, _) = worker.process_batch().await.expect("process_batch");
 
         assert_eq!(
-            recovered, 0,
-            "no block should be processed within backoff window"
+            attempted, 0,
+            "no block should be attempted within backoff window"
         );
         // mock_server Drop verifies expect(0) was satisfied
     });

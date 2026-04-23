@@ -1050,15 +1050,17 @@ pub(crate) async fn ensure_partitions_exist(
     // First run or crossing boundary - need to check/create partitions
     let start_partition = if current_max_val == 0 {
         // First run - check what partitions exist
-        let existing: Option<(i64,)> = sqlx::query_as(
+        let existing: Option<(Option<i64>,)> = sqlx::query_as(
             "SELECT MAX(CAST(SUBSTRING(relname FROM 'blocks_p(\\d+)') AS BIGINT))
              FROM pg_class WHERE relname ~ '^blocks_p\\d+$'",
         )
         .fetch_optional(pool)
         .await?;
 
-        match existing {
-            Some((max,)) => {
+        // MAX on an empty set returns a single NULL row (not zero rows), so
+        // fetch_optional gives Some((None,)) when no partitions exist yet.
+        match existing.and_then(|(max,)| max) {
+            Some(max) => {
                 current_max.store(max as u64, Ordering::Relaxed);
                 if partition_num <= max as u64 {
                     return Ok(());
