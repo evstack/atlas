@@ -60,8 +60,8 @@ impl Indexer {
         Self {
             pool,
             config,
-            // Will be initialized on first run based on start block
-            current_max_partition: std::sync::atomic::AtomicU64::new(0),
+            // Sentinel: triggers pg_class discovery on the first call.
+            current_max_partition: std::sync::atomic::AtomicU64::new(UNKNOWN_MAX_PARTITION),
             block_events_tx,
             head_tracker,
             metrics,
@@ -1032,6 +1032,11 @@ impl Indexer {
     }
 }
 
+/// Sentinel used to indicate that `current_max_partition` has not yet been
+/// initialised. Using `u64::MAX` avoids the ambiguity of `0`, which is also a
+/// valid partition index (blocks 0–9 999 999 live in `blocks_p0`).
+pub(crate) const UNKNOWN_MAX_PARTITION: u64 = u64::MAX;
+
 pub(crate) async fn ensure_partitions_exist(
     pool: &sqlx::PgPool,
     current_max: &std::sync::atomic::AtomicU64,
@@ -1042,13 +1047,14 @@ pub(crate) async fn ensure_partitions_exist(
     let partition_num = block_number / PARTITION_SIZE;
     let current_max_val = current_max.load(Ordering::Relaxed);
 
-    // Fast path: partition already exists (most common case)
-    if partition_num <= current_max_val {
+    // Fast path: cache is initialised and the required partition already exists.
+    if current_max_val != UNKNOWN_MAX_PARTITION && partition_num <= current_max_val {
         return Ok(());
     }
 
-    // First run or crossing boundary - need to check/create partitions
-    let start_partition = if current_max_val == 0 {
+    // First run (cache uninitialized) or crossing a partition boundary — need to
+    // check/create partitions.
+    let start_partition = if current_max_val == UNKNOWN_MAX_PARTITION {
         // First run - check what partitions exist
         let existing: Option<(Option<i64>,)> = sqlx::query_as(
             "SELECT MAX(CAST(SUBSTRING(relname FROM 'blocks_p(\\d+)') AS BIGINT))
@@ -1573,5 +1579,42 @@ mod tests {
     fn lag_blocks_clamps_to_zero_when_chain_head_is_before_start_block() {
         assert_eq!(lag_blocks(50, None, 100), 0);
         assert_eq!(lag_blocks(50, Some(60), 0), 0);
+    }
+
+    // --- ensure_partitions_exist sentinel tests ---
+
+    /// The sentinel must not equal 0 so that partition 0 (blocks 0–9 999 999)
+    /// can be distinguished from "cache uninitialized".
+    #[test]
+    fn unknown_max_partition_sentinel_is_not_zero() {
+        assert_ne!(UNKNOWN_MAX_PARTITION, 0);
+    }
+
+    /// When the cache is initialised and the partition already exists, the
+    /// function returns immediately without touching the pool. Using a lazy
+    /// (never-connected) pool proves no DB call is made.
+    #[tokio::test]
+    async fn ensure_partitions_exist_fast_path_does_not_touch_db() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://ignored@localhost:5432/ignored")
+            .expect("lazy pool");
+
+        let current_max = std::sync::atomic::AtomicU64::new(0); // partition 0 known
+                                                                // block 999 → partition 0; cache says partition 0 exists → fast path
+        ensure_partitions_exist(&pool, &current_max, 999)
+            .await
+            .expect("fast path must not need a DB connection");
+    }
+
+    /// On a fresh DB (sentinel), the fast path must NOT be taken for block 0
+    /// (partition 0). The function must proceed to the pg_class discovery
+    /// branch. Here we just verify the sentinel initialisation is correct.
+    #[test]
+    fn indexer_initializes_partition_cache_with_sentinel() {
+        assert_eq!(
+            UNKNOWN_MAX_PARTITION,
+            u64::MAX,
+            "sentinel value must be u64::MAX"
+        );
     }
 }

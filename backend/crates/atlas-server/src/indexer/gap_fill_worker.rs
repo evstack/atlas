@@ -84,7 +84,7 @@ impl GapFillWorker {
             rpc_requests_per_second,
             block_events_tx,
             metrics,
-            current_max_partition: AtomicU64::new(0),
+            current_max_partition: AtomicU64::new(super::indexer::UNKNOWN_MAX_PARTITION),
         })
     }
 
