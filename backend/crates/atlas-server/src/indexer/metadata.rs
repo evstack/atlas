@@ -12,7 +12,7 @@ use std::{str::FromStr, sync::Arc, time::Duration};
 use crate::config::Config;
 use crate::metrics::Metrics;
 use crate::nft_metadata::{
-    self, FetchErrorKind, FetchedMetadata, RetryDecision, NFT_METADATA_FETCHED,
+    self, FetchErrorKind, FetchedMetadata, RetryDecision, SsrfSafeResolver, NFT_METADATA_FETCHED,
     NFT_METADATA_PENDING, NFT_METADATA_PERMANENT_ERROR, NFT_METADATA_RETRYABLE_ERROR,
 };
 
@@ -212,7 +212,10 @@ impl MetadataFetcher {
              FROM nft_tokens
              WHERE metadata_status = $1
                 OR (metadata_status = $2 AND next_retry_at <= NOW())
-             ORDER BY next_retry_at ASC NULLS FIRST, last_transfer_block DESC
+             ORDER BY
+                CASE WHEN metadata_status = $2 THEN 0 ELSE 1 END ASC,
+                next_retry_at ASC NULLS LAST,
+                last_transfer_block DESC
              LIMIT $3",
         )
         .bind(NFT_METADATA_PENDING)
@@ -279,6 +282,7 @@ fn build_metadata_client() -> Result<reqwest::Client> {
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
         .user_agent("atlas-server/0.1.0")
+        .dns_resolver(Arc::new(SsrfSafeResolver))
         .build()?)
 }
 
@@ -361,6 +365,7 @@ async fn fetch_erc20_contract_metadata(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_and_store_token_metadata(
     pool: &PgPool,
     client: &reqwest::Client,

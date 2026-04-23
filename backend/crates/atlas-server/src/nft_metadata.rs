@@ -1,9 +1,15 @@
-use std::{net::IpAddr, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    time::Duration,
+};
 
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use percent_encoding::percent_decode_str;
 use reqwest::StatusCode;
+
+/// Maximum size of an NFT metadata payload (HTTP response body or data: URI).
+const MAX_METADATA_BYTES: usize = 2 * 1024 * 1024; // 2 MB
 
 pub const NFT_METADATA_PENDING: &str = "pending";
 pub const NFT_METADATA_FETCHED: &str = "fetched";
@@ -37,6 +43,38 @@ pub enum FetchedMetadata {
     DirectImage {
         image_url: String,
     },
+}
+
+/// Custom DNS resolver that rejects non-public IP addresses.
+///
+/// Plugged into the reqwest client so that validation and the actual TCP
+/// connection use the same resolved addresses, closing the DNS-rebinding
+/// window that exists when they are done in two separate lookups.
+pub struct SsrfSafeResolver;
+
+impl reqwest::dns::Resolve for SsrfSafeResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_owned();
+        Box::pin(async move {
+            type DynErr = Box<dyn std::error::Error + Send + Sync>;
+
+            let iter = tokio::net::lookup_host(format!("{}:0", host))
+                .await
+                .map_err(|e| Box::new(e) as DynErr)?;
+
+            let addrs: Vec<SocketAddr> =
+                iter.filter(|addr| !is_non_public_ip(&addr.ip())).collect();
+
+            if addrs.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "non_public_metadata_host",
+                )) as DynErr);
+            }
+
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
 }
 
 pub fn resolve_uri(uri: &str, ipfs_gateway: &str) -> String {
@@ -97,7 +135,7 @@ pub async fn fetch_metadata(
     }
 
     validate_metadata_url_scheme(&url)?;
-    validate_resolved_host(&url).await?;
+    // DNS rebinding protection is enforced by SsrfSafeResolver in the client.
 
     let response = client
         .get(&url)
@@ -119,10 +157,21 @@ pub async fn fetch_metadata(
         return Ok(FetchedMetadata::DirectImage { image_url: url });
     }
 
+    if response
+        .content_length()
+        .is_some_and(|len| len as usize > MAX_METADATA_BYTES)
+    {
+        return Err(permanent_error("response_too_large"));
+    }
+
     let bytes = response
         .bytes()
         .await
         .map_err(|_| retryable_error("response_read_error"))?;
+    if bytes.len() > MAX_METADATA_BYTES {
+        return Err(permanent_error("response_too_large"));
+    }
+
     let metadata: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|_| permanent_error("json_parse_error"))?;
     let extracted = extract_metadata_fields(&metadata, ipfs_gateway);
@@ -145,6 +194,10 @@ fn parse_data_json_uri(uri: &str) -> Result<serde_json::Value, FetchError> {
 
     if !is_json_media_type(media_type) {
         return Err(permanent_error("unsupported_data_uri_media_type"));
+    }
+
+    if payload.len() > MAX_METADATA_BYTES {
+        return Err(permanent_error("data_uri_too_large"));
     }
 
     let bytes = if is_base64 {
@@ -201,8 +254,8 @@ fn classify_status(status: StatusCode) -> FetchError {
         StatusCode::BAD_GATEWAY => retryable_error("http_502"),
         StatusCode::SERVICE_UNAVAILABLE => retryable_error("http_503"),
         StatusCode::GATEWAY_TIMEOUT => retryable_error("http_504"),
-        _ if status.is_server_error() => retryable_error(&format!("http_{}", status.as_u16())),
-        _ => permanent_error(&format!("http_{}", status.as_u16())),
+        _ if status.is_server_error() => retryable_error(format!("http_{}", status.as_u16())),
+        _ => permanent_error(format!("http_{}", status.as_u16())),
     }
 }
 
@@ -230,32 +283,6 @@ fn validate_metadata_url_scheme(url: &str) -> Result<(), FetchError> {
         "http" | "https" | "data" => Ok(()),
         _ => Err(permanent_error("disallowed_url_scheme")),
     }
-}
-
-async fn validate_resolved_host(url: &str) -> Result<(), FetchError> {
-    let parsed = reqwest::Url::parse(url).map_err(|_| permanent_error("invalid_metadata_url"))?;
-
-    if parsed.scheme() == "data" {
-        return Ok(());
-    }
-
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| permanent_error("missing_url_host"))?;
-    let port = parsed.port_or_known_default().unwrap_or(80);
-    let addr_str = format!("{}:{}", host, port);
-
-    let addrs = tokio::net::lookup_host(&addr_str)
-        .await
-        .map_err(|_| retryable_error("dns_lookup_failed"))?;
-
-    for addr in addrs {
-        if is_non_public_ip(&addr.ip()) {
-            return Err(permanent_error("non_public_metadata_host"));
-        }
-    }
-
-    Ok(())
 }
 
 fn is_non_public_ip(ip: &IpAddr) -> bool {
@@ -327,9 +354,8 @@ mod tests {
     #[tokio::test]
     async fn parses_base64_json_data_uri_metadata() {
         let client = reqwest::Client::new();
-        let payload = base64::engine::general_purpose::STANDARD.encode(
-            r#"{"name":"Onchain NFT","image":"ipfs://QmImage123"}"#,
-        );
+        let payload = base64::engine::general_purpose::STANDARD
+            .encode(r#"{"name":"Onchain NFT","image":"ipfs://QmImage123"}"#);
 
         let fetched = fetch_metadata(
             &client,
