@@ -1,20 +1,43 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useNftToken, useNftContract, useNftTokenTransfers } from '../hooks';
 import { AddressLink, CopyButton, Pagination } from '../components';
 import ImageIpfs from '../components/ImageIpfs';
-import { truncateHash, formatNumber, formatTimeAgo } from '../utils';
+import {
+  formatNumber,
+  formatTimeAgo,
+  getNftAttributes,
+  getNftDescription,
+  getNftImageUrl,
+  isNftMetadataPending,
+  isNftMetadataUnavailable,
+  truncateHash,
+} from '../utils';
 
 export default function NFTTokenPage() {
   const { contract: contractAddress, tokenId } = useParams<{ contract: string; tokenId: string }>();
 
   const { contract } = useNftContract(contractAddress);
-  const { token } = useNftToken(contractAddress, tokenId);
+  const { token, refetch } = useNftToken(contractAddress, tokenId);
   const [txPage, setTxPage] = useState(1);
   const { transfers, pagination, loading } = useNftTokenTransfers(contractAddress, tokenId, { page: txPage, limit: 20 });
 
-  const imageUrl = token?.image_url || null;
+  const imageUrl = getNftImageUrl(token);
+  const description = getNftDescription(token);
+  const attributes = getNftAttributes(token);
+  const metadataPending = isNftMetadataPending(token);
+  const metadataUnavailable = isNftMetadataUnavailable(token);
   const displayName = token?.name || `${contract?.name || contract?.symbol || 'NFT'} #${token?.token_id || tokenId || ''}`;
+
+  useEffect(() => {
+    if (!metadataPending) return undefined;
+
+    const id = window.setInterval(() => {
+      void refetch();
+    }, 10_000);
+
+    return () => window.clearInterval(id);
+  }, [metadataPending, refetch]);
 
   return (
     <div>
@@ -40,15 +63,20 @@ export default function NFTTokenPage() {
                   alt={displayName}
                   className="w-full h-full object-contain"
                 />
-              ) : token && token.metadata_fetched === false ? (
+              ) : metadataPending ? (
                 <div className="text-center text-sm">
                   <div className="inline-flex items-center px-3 py-2 rounded-md border border-dark-500 bg-dark-800 text-fg-muted">
                     <svg className="w-4 h-4 mr-2 text-fg-subtle" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M12 5a7 7 0 100 14 7 7 0 000-14z" />
                     </svg>
-                    Metadata has not been fetched yet.
+                    Metadata is being fetched.
                   </div>
                   <p className="text-fg-faint mt-2">Please check back shortly.</p>
+                </div>
+              ) : metadataUnavailable ? (
+                <div className="text-center">
+                  <span className="text-fg-faint text-8xl">#</span>
+                  <p className="text-fg-faint mt-4">Metadata unavailable</p>
                 </div>
               ) : (
                 <div className="text-center">
@@ -60,11 +88,11 @@ export default function NFTTokenPage() {
           </div>
 
           {/* Attributes */}
-          {token?.metadata?.attributes && token.metadata.attributes.length > 0 && (
+          {attributes.length > 0 && (
             <div className="card mt-4">
               <h3 className="text-lg font-semibold text-fg mb-4">Attributes</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {token.metadata.attributes.map((attr, index) => (
+                {attributes.map((attr, index) => (
                   <div key={index} className="bg-dark-700 p-3 text-center">
                     <p className="text-fg-faint text-xs uppercase tracking-wider">
                       {attr.trait_type}
@@ -91,18 +119,20 @@ export default function NFTTokenPage() {
 
             <h1 className="text-2xl font-bold text-fg mb-2">{displayName}</h1>
 
-            {token && token.metadata_fetched === false && !imageUrl ? (
+            {metadataPending && !imageUrl ? (
               <div className="mt-2">
                 <div className="inline-flex items-center px-2.5 py-1 rounded-md border border-dark-500 bg-dark-700 text-fg-muted text-xs">
                   <svg className="w-4 h-4 mr-1 text-fg-subtle" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M12 5a7 7 0 100 14 7 7 0 000-14z" />
                   </svg>
-                  Metadata has not been fetched yet.
+                  Metadata is being fetched.
                 </div>
               </div>
-            ) : token?.metadata?.description && (
-              <p className="text-fg-subtle mt-4">{token.metadata.description}</p>
-            )}
+            ) : metadataUnavailable && !imageUrl ? (
+              <p className="text-fg-subtle mt-4">Metadata unavailable.</p>
+            ) : description ? (
+              <p className="text-fg-subtle mt-4">{description}</p>
+            ) : null}
           </div>
 
           <div className="card mt-4">

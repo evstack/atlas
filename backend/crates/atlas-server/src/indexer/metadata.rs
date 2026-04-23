@@ -5,11 +5,16 @@ use alloy::{
     sol,
 };
 use anyhow::Result;
+use chrono::Utc;
 use sqlx::PgPool;
 use std::{str::FromStr, sync::Arc, time::Duration};
 
 use crate::config::Config;
 use crate::metrics::Metrics;
+use crate::nft_metadata::{
+    self, FetchErrorKind, FetchedMetadata, RetryDecision, NFT_METADATA_FETCHED,
+    NFT_METADATA_PENDING, NFT_METADATA_PERMANENT_ERROR, NFT_METADATA_RETRYABLE_ERROR,
+};
 
 // ERC-721 interface
 sol! {
@@ -44,11 +49,7 @@ pub struct MetadataFetcher {
 
 impl MetadataFetcher {
     pub fn new(pool: PgPool, config: Config, metrics: Metrics) -> Result<Self> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .user_agent("atlas-server/0.1.0")
-            .build()
-            .expect("Failed to create HTTP client");
+        let client = build_metadata_client()?;
 
         let provider = Arc::new(RootProvider::new_http(config.rpc_url.parse()?));
 
@@ -206,12 +207,16 @@ impl MetadataFetcher {
 
     /// Fetch metadata for individual NFT tokens
     async fn fetch_nft_token_metadata(&self) -> Result<bool> {
-        let tokens: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT contract_address, token_id::text, token_uri
+        let tokens: Vec<(String, String, Option<String>, i32)> = sqlx::query_as(
+            "SELECT contract_address, token_id::text, token_uri, metadata_retry_count
              FROM nft_tokens
-             WHERE metadata_fetched = false
-             LIMIT $1",
+             WHERE metadata_status = $1
+                OR (metadata_status = $2 AND next_retry_at <= NOW())
+             ORDER BY next_retry_at ASC NULLS FIRST, last_transfer_block DESC
+             LIMIT $3",
         )
+        .bind(NFT_METADATA_PENDING)
+        .bind(NFT_METADATA_RETRYABLE_ERROR)
         .bind(self.config.metadata_fetch_workers as i32 * 10)
         .fetch_all(&self.pool)
         .await?;
@@ -223,7 +228,7 @@ impl MetadataFetcher {
         tracing::debug!(count = tokens.len(), "fetching NFT token metadata");
 
         let mut handles = Vec::new();
-        for (contract_address, token_id, token_uri) in tokens {
+        for (contract_address, token_id, token_uri, retry_count) in tokens {
             let pool = self.pool.clone();
             let client = self.client.clone();
             let provider = self.provider.clone();
@@ -239,14 +244,15 @@ impl MetadataFetcher {
                     &ipfs_gateway,
                     (&contract_address, &token_id),
                     token_uri.as_deref(),
+                    retry_count,
                     retry_attempts,
                 )
                 .await
                 {
-                    Ok(()) => {
+                    Ok(true) => {
                         m.record_metadata_token_fetched();
                     }
-                    Err(_) => {
+                    Ok(false) | Err(_) => {
                         m.record_metadata_error("token");
                         m.error("metadata", "metadata_fetch");
                     }
@@ -266,6 +272,14 @@ impl MetadataFetcher {
 
         Ok(true)
     }
+}
+
+fn build_metadata_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent("atlas-server/0.1.0")
+        .build()?)
 }
 
 /// Fetch NFT contract metadata (name, symbol, totalSupply)
@@ -354,174 +368,160 @@ async fn fetch_and_store_token_metadata(
     ipfs_gateway: &str,
     token_key: (&str, &str),
     token_uri: Option<&str>,
+    metadata_retry_count: i32,
     retry_attempts: u32,
-) -> Result<()> {
+) -> Result<bool> {
     let (contract_address, token_id) = token_key;
+    let now = Utc::now();
 
-    // If no token_uri, fetch it from the contract
-    let uri = match token_uri {
-        Some(uri) if !uri.is_empty() => uri.to_string(),
-        _ => {
-            // Call tokenURI on the contract
-            match fetch_token_uri(provider, contract_address, token_id).await {
-                Ok(uri) => {
-                    // Store the URI in the database for future reference
-                    sqlx::query(
-                        "UPDATE nft_tokens SET token_uri = $3
-                         WHERE contract_address = $1 AND token_id = $2::numeric",
-                    )
-                    .bind(contract_address)
-                    .bind(token_id)
-                    .bind(&uri)
-                    .execute(pool)
-                    .await?;
-                    uri
-                }
-                Err(e) => {
-                    tracing::debug!(
-                        contract = %contract_address,
-                        token_id = %token_id,
-                        error = %e,
-                        "failed to fetch tokenURI"
-                    );
-                    // Mark as fetched to avoid retrying forever
-                    sqlx::query(
-                        "UPDATE nft_tokens SET metadata_fetched = true
-                         WHERE contract_address = $1 AND token_id = $2::numeric",
-                    )
-                    .bind(contract_address)
-                    .bind(token_id)
-                    .execute(pool)
-                    .await?;
-                    return Ok(());
-                }
-            }
-        }
-    };
-
-    // Skip empty URIs
-    if uri.is_empty() {
-        sqlx::query(
-            "UPDATE nft_tokens SET metadata_fetched = true
-             WHERE contract_address = $1 AND token_id = $2::numeric",
-        )
-        .bind(contract_address)
-        .bind(token_id)
-        .execute(pool)
-        .await?;
-        return Ok(());
-    }
-
-    // Resolve IPFS/Arweave URIs to HTTP
-    let fetch_url = resolve_uri(&uri, ipfs_gateway);
-
-    // Fetch metadata with retries
-    let mut last_error = None;
-    for attempt in 0..retry_attempts {
-        match client.get(&fetch_url).send().await {
-            Ok(response) => {
-                if response.status().is_success() {
-                    // Check content-type to handle direct image URIs
-                    let content_type = response
-                        .headers()
-                        .get("content-type")
-                        .and_then(|v| v.to_str().ok())
-                        .unwrap_or("");
-
-                    // If it's an image, use the URI directly as image_url
-                    if content_type.starts_with("image/") {
-                        sqlx::query(
-                            "UPDATE nft_tokens SET
-                                metadata_fetched = true,
-                                image_url = $3
-                             WHERE contract_address = $1 AND token_id = $2::numeric",
-                        )
-                        .bind(contract_address)
-                        .bind(token_id)
-                        .bind(&fetch_url)
-                        .execute(pool)
-                        .await?;
-
-                        tracing::debug!(
-                            contract = %contract_address,
-                            token_id = %token_id,
-                            content_type,
-                            "NFT has direct image URI"
-                        );
-                        return Ok(());
-                    }
-
-                    // Try to parse as JSON metadata
-                    match response.json::<serde_json::Value>().await {
-                        Ok(metadata) => {
-                            // Extract common fields
-                            let name = metadata.get("name").and_then(|v| v.as_str());
-                            let image = metadata
-                                .get("image")
-                                .or_else(|| metadata.get("image_url"))
-                                .and_then(|v| v.as_str());
-
-                            // Resolve IPFS image URLs
-                            let image_url = image.map(|img| resolve_uri(img, ipfs_gateway));
-
-                            sqlx::query(
-                                "UPDATE nft_tokens SET
-                                    metadata_fetched = true,
-                                    metadata = $3,
-                                    name = $4,
-                                    image_url = $5
-                                 WHERE contract_address = $1 AND token_id = $2::numeric",
-                            )
-                            .bind(contract_address)
-                            .bind(token_id)
-                            .bind(&metadata)
-                            .bind(name)
-                            .bind(image_url)
-                            .execute(pool)
-                            .await?;
-
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            last_error = Some(format!("JSON parse error: {}", e));
-                        }
-                    }
-                } else {
-                    last_error = Some(format!("HTTP {}", response.status()));
-                }
-            }
-            Err(e) => {
-                last_error = Some(format!("Request error: {}", e));
-            }
-        }
-
-        // Exponential backoff
-        if attempt < retry_attempts - 1 {
-            tokio::time::sleep(Duration::from_millis(1000 * 2u64.pow(attempt))).await;
-        }
-    }
-
-    // Mark as fetched even on failure (to avoid infinite retries)
     sqlx::query(
-        "UPDATE nft_tokens SET metadata_fetched = true
+        "UPDATE nft_tokens
+         SET last_metadata_attempted_at = $3
          WHERE contract_address = $1 AND token_id = $2::numeric",
     )
     .bind(contract_address)
     .bind(token_id)
+    .bind(now)
     .execute(pool)
     .await?;
 
-    // Log at debug level since this is often expected (non-standard NFTs)
-    tracing::debug!(
-        contract = %contract_address,
-        token_id = %token_id,
-        error = last_error.as_deref().unwrap_or("Unknown error"),
-        "failed to fetch token metadata"
-    );
+    let uri = match token_uri {
+        Some(uri) if !uri.is_empty() => uri.to_string(),
+        _ => match fetch_token_uri(provider, contract_address, token_id).await {
+            Ok(uri) => {
+                sqlx::query(
+                    "UPDATE nft_tokens SET token_uri = $3
+                         WHERE contract_address = $1 AND token_id = $2::numeric",
+                )
+                .bind(contract_address)
+                .bind(token_id)
+                .bind(&uri)
+                .execute(pool)
+                .await?;
+                uri
+            }
+            Err(_) => {
+                tracing::debug!(
+                    contract = %contract_address,
+                    token_id = %token_id,
+                    "failed to fetch tokenURI"
+                );
+                persist_retryable_failure(
+                    pool,
+                    contract_address,
+                    token_id,
+                    metadata_retry_count + 1,
+                    retry_attempts,
+                    "token_uri_fetch_error",
+                    now,
+                )
+                .await?;
+                return Ok(false);
+            }
+        },
+    };
 
-    Err(anyhow::anyhow!(
-        last_error.unwrap_or_else(|| "Unknown error".to_string())
-    ))
+    if uri.is_empty() {
+        persist_permanent_failure(
+            pool,
+            contract_address,
+            token_id,
+            metadata_retry_count,
+            "missing_token_uri",
+            now,
+        )
+        .await?;
+        return Ok(false);
+    }
+
+    match nft_metadata::fetch_metadata(client, &uri, ipfs_gateway).await {
+        Ok(FetchedMetadata::DirectImage { image_url }) => {
+            sqlx::query(
+                "UPDATE nft_tokens SET
+                    metadata_status = $3,
+                    metadata_retry_count = 0,
+                    next_retry_at = NULL,
+                    last_metadata_error = NULL,
+                    metadata = NULL,
+                    image_url = $4,
+                    metadata_updated_at = $5
+                 WHERE contract_address = $1 AND token_id = $2::numeric",
+            )
+            .bind(contract_address)
+            .bind(token_id)
+            .bind(NFT_METADATA_FETCHED)
+            .bind(image_url)
+            .bind(now)
+            .execute(pool)
+            .await?;
+
+            Ok(true)
+        }
+        Ok(FetchedMetadata::Json {
+            metadata,
+            extracted,
+        }) => {
+            sqlx::query(
+                "UPDATE nft_tokens SET
+                    metadata_status = $3,
+                    metadata_retry_count = 0,
+                    next_retry_at = NULL,
+                    last_metadata_error = NULL,
+                    metadata = $4,
+                    name = $5,
+                    image_url = $6,
+                    metadata_updated_at = $7
+                 WHERE contract_address = $1 AND token_id = $2::numeric",
+            )
+            .bind(contract_address)
+            .bind(token_id)
+            .bind(NFT_METADATA_FETCHED)
+            .bind(&metadata)
+            .bind(extracted.name)
+            .bind(extracted.image_url)
+            .bind(now)
+            .execute(pool)
+            .await?;
+
+            Ok(true)
+        }
+        Err(error) => {
+            tracing::debug!(
+                contract = %contract_address,
+                token_id = %token_id,
+                error = %error.code,
+                "failed to fetch token metadata"
+            );
+
+            match error.kind {
+                FetchErrorKind::Retryable => {
+                    persist_retryable_failure(
+                        pool,
+                        contract_address,
+                        token_id,
+                        metadata_retry_count + 1,
+                        retry_attempts,
+                        &error.code,
+                        now,
+                    )
+                    .await?;
+                }
+                FetchErrorKind::Permanent => {
+                    persist_permanent_failure(
+                        pool,
+                        contract_address,
+                        token_id,
+                        metadata_retry_count,
+                        &error.code,
+                        now,
+                    )
+                    .await?;
+                }
+            }
+
+            Ok(false)
+        }
+    }
 }
 
 /// Call tokenURI on an NFT contract
@@ -539,49 +539,118 @@ async fn fetch_token_uri(
     Ok(uri)
 }
 
-/// Resolve IPFS, Arweave, and other URI schemes to HTTP URLs
-fn resolve_uri(uri: &str, ipfs_gateway: &str) -> String {
-    if let Some(stripped) = uri.strip_prefix("ipfs://") {
-        format!("{}{}", ipfs_gateway, stripped)
-    } else if let Some(stripped) = uri.strip_prefix("ar://") {
-        format!("https://arweave.net/{}", stripped)
-    } else if uri.starts_with("data:") {
-        // Data URIs are already complete
-        uri.to_string()
-    } else {
-        uri.to_string()
+async fn persist_retryable_failure(
+    pool: &PgPool,
+    contract_address: &str,
+    token_id: &str,
+    retry_count: i32,
+    retry_attempts: u32,
+    error_code: &str,
+    now: chrono::DateTime<Utc>,
+) -> Result<()> {
+    match nft_metadata::schedule_retry(retry_count, retry_attempts, now) {
+        RetryDecision::RetryAt(next_retry_at) => {
+            sqlx::query(
+                "UPDATE nft_tokens SET
+                    metadata_status = $3,
+                    metadata_retry_count = $4,
+                    next_retry_at = $5,
+                    last_metadata_error = $6
+                 WHERE contract_address = $1 AND token_id = $2::numeric",
+            )
+            .bind(contract_address)
+            .bind(token_id)
+            .bind(NFT_METADATA_RETRYABLE_ERROR)
+            .bind(retry_count)
+            .bind(next_retry_at)
+            .bind(error_code)
+            .execute(pool)
+            .await?;
+        }
+        RetryDecision::PermanentError => {
+            persist_permanent_failure(
+                pool,
+                contract_address,
+                token_id,
+                retry_count,
+                error_code,
+                now,
+            )
+            .await?;
+        }
     }
+
+    Ok(())
+}
+
+async fn persist_permanent_failure(
+    pool: &PgPool,
+    contract_address: &str,
+    token_id: &str,
+    retry_count: i32,
+    error_code: &str,
+    now: chrono::DateTime<Utc>,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE nft_tokens SET
+            metadata_status = $3,
+            metadata_retry_count = $4,
+            next_retry_at = NULL,
+            last_metadata_error = $5,
+            metadata_updated_at = $6
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(contract_address)
+    .bind(token_id)
+    .bind(NFT_METADATA_PERMANENT_ERROR)
+    .bind(retry_count)
+    .bind(error_code)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::build_metadata_client;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
-    const GATEWAY: &str = "https://ipfs.io/ipfs/";
+    #[tokio::test]
+    async fn metadata_client_does_not_follow_redirects() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let addr = listener.local_addr().expect("listener addr");
 
-    #[test]
-    fn resolve_ipfs_uri_prefixes_gateway() {
-        assert_eq!(
-            resolve_uri("ipfs://QmXxx123", GATEWAY),
-            "https://ipfs.io/ipfs/QmXxx123"
-        );
-    }
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.expect("accept connection");
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf).await.expect("read request");
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 302 Found\r\nLocation: http://{addr}/followed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("write redirect response");
+            }
+        });
 
-    #[test]
-    fn resolve_arweave_uri() {
-        assert_eq!(
-            resolve_uri("ar://txid123", GATEWAY),
-            "https://arweave.net/txid123"
-        );
-    }
+        let client = build_metadata_client().expect("build metadata client");
+        let response = client
+            .get(format!("http://{addr}/initial"))
+            .send()
+            .await
+            .expect("send request");
 
-    #[test]
-    fn non_rewritten_schemes_are_unchanged() {
-        for url in [
-            "data:image/png;base64,abc123==",
-            "https://example.com/metadata/1.json",
-        ] {
-            assert_eq!(resolve_uri(url, GATEWAY), url);
-        }
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+
+        server.abort();
     }
 }

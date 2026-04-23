@@ -15,6 +15,7 @@ mod faucet;
 mod head;
 mod indexer;
 mod metrics;
+mod nft_metadata;
 mod snapshot;
 mod state_keys;
 

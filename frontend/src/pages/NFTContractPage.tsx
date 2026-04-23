@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useNftContract, useNftTokens, useNftCollectionTransfers } from '../hooks';
 import { Pagination, CopyButton, AddressLink, TxHashLink, Loading } from '../components';
 import ImageIpfs from '../components/ImageIpfs';
-import { formatNumber, truncateHash, formatTimeAgo } from '../utils';
+import { formatNumber, getNftImageUrl, truncateHash, formatTimeAgo } from '../utils';
 
 export default function NFTContractPage() {
   const { contract: contractAddress } = useParams<{ contract: string }>();
@@ -82,7 +82,7 @@ export default function NFTContractPage() {
           <div className="card">
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 min-h-[200px]">
               {tokens.map((token) => {
-                const imageUrl = token.image_url || null;
+                const imageUrl = getNftImageUrl(token);
                 const displayName = token.name || `${contract?.name || contract?.symbol || 'NFT'} #${token.token_id}`;
                 return (
                   <Link
