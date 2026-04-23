@@ -274,15 +274,25 @@ fn classify_request_error(error: reqwest::Error) -> FetchError {
 }
 
 fn validate_metadata_url_scheme(url: &str) -> Result<(), FetchError> {
-    let scheme_end = url
-        .find("://")
-        .ok_or_else(|| permanent_error("missing_url_scheme"))?;
-    let scheme = &url[..scheme_end];
+    let parsed = reqwest::Url::parse(url).map_err(|_| permanent_error("invalid_metadata_url"))?;
 
-    match scheme {
-        "http" | "https" | "data" => Ok(()),
-        _ => Err(permanent_error("disallowed_url_scheme")),
+    match parsed.scheme() {
+        "http" | "https" => {}
+        _ => return Err(permanent_error("disallowed_url_scheme")),
     }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| permanent_error("missing_metadata_host"))?;
+
+    // reqwest 0.13 bypasses SsrfSafeResolver for IP-literal hosts; block them explicitly.
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_non_public_ip(&ip) {
+            return Err(permanent_error("non_public_metadata_host"));
+        }
+    }
+
+    Ok(())
 }
 
 fn is_non_public_ip(ip: &IpAddr) -> bool {
@@ -296,6 +306,9 @@ fn is_non_public_ip(ip: &IpAddr) -> bool {
                 || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
         }
         IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_non_public_ip(&IpAddr::V4(v4));
+            }
             v6.is_loopback()
                 || v6.is_unspecified()
                 || (v6.segments()[0] & 0xFFC0) == 0xFE80
