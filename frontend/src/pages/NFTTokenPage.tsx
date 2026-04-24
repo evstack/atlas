@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useNftToken, useNftContract, useNftTokenTransfers } from '../hooks';
-import { AddressLink, CopyButton, Pagination } from '../components';
+import { AddressLink, CopyButton, Pagination, EmptyState } from '../components';
 import ImageIpfs from '../components/ImageIpfs';
 import {
   formatNumber,
@@ -18,16 +18,12 @@ export default function NFTTokenPage() {
   const { contract: contractAddress, tokenId } = useParams<{ contract: string; tokenId: string }>();
 
   const { contract } = useNftContract(contractAddress);
-  const { token, refetch } = useNftToken(contractAddress, tokenId);
+  const { token, loading: tokenLoading, error: tokenError, refetch } = useNftToken(contractAddress, tokenId);
   const [txPage, setTxPage] = useState(1);
   const { transfers, pagination, loading } = useNftTokenTransfers(contractAddress, tokenId, { page: txPage, limit: 20 });
 
-  const imageUrl = getNftImageUrl(token);
-  const description = getNftDescription(token);
-  const attributes = getNftAttributes(token);
   const metadataPending = isNftMetadataPending(token);
   const metadataUnavailable = isNftMetadataUnavailable(token);
-  const displayName = token?.name || `${contract?.name || contract?.symbol || 'NFT'} #${token?.token_id || tokenId || ''}`;
 
   useEffect(() => {
     if (!metadataPending) return undefined;
@@ -38,6 +34,20 @@ export default function NFTTokenPage() {
 
     return () => window.clearInterval(id);
   }, [metadataPending, refetch]);
+
+  if (!tokenLoading && !token) {
+    return (
+      <EmptyState
+        title="NFT not found"
+        description={tokenError?.error ?? 'This token does not exist or has not been indexed.'}
+      />
+    );
+  }
+
+  const imageUrl = getNftImageUrl(token);
+  const description = getNftDescription(token);
+  const attributes = getNftAttributes(token);
+  const displayName = token?.name || `${contract?.name || contract?.symbol || 'NFT'} #${token?.token_id || tokenId || ''}`;
 
   return (
     <div>
