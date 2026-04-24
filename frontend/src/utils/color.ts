@@ -31,6 +31,15 @@ interface DerivedPalette {
   textFaint: string;
 }
 
+interface DerivedBrandTokens {
+  brandAqua: string;
+  brandLavender: string;
+  brandLemon: string;
+  brandBlush: string;
+  pageGradient: string;
+  spectralGradient: string;
+}
+
 export function hexToRgbTriplet(hex: string): string {
   const { r, g, b } = hexToRgb(hex);
   return `${r} ${g} ${b}`;
@@ -108,8 +117,28 @@ function rgbTriplet(rgb: RGB): string {
   return `${rgb.r} ${rgb.g} ${rgb.b}`;
 }
 
+function rgbToHex({ r, g, b }: RGB): string {
+  return `#${[r, g, b]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function mixRgb(a: RGB, b: RGB, weightToB: number): RGB {
+  const clamped = Math.max(0, Math.min(1, weightToB));
+  const weightToA = 1 - clamped;
+  return {
+    r: Math.round(a.r * weightToA + b.r * clamped),
+    g: Math.round(a.g * weightToA + b.g * clamped),
+    b: Math.round(a.b * weightToA + b.b * clamped),
+  };
+}
+
 function adjustLightness(hsl: HSL, delta: number): RGB {
   return hslToRgb({ ...hsl, l: Math.min(100, Math.max(0, hsl.l + delta)) });
+}
+
+function shiftLightness(rgb: RGB, delta: number): RGB {
+  return adjustLightness(rgbToHsl(rgb), delta);
 }
 
 /**
@@ -117,17 +146,37 @@ function adjustLightness(hsl: HSL, delta: number): RGB {
  * For dark mode, surfaces are lighter than the base.
  * For light mode, surfaces are darker than the base.
  */
-export function deriveSurfaceShades(baseHex: string, mode: 'dark' | 'light'): DerivedPalette {
+export function deriveSurfaceShades(baseHex: string, mode: 'dark' | 'light', accentHex?: string): DerivedPalette {
   const baseRgb = hexToRgb(baseHex);
   const baseHsl = rgbToHsl(baseRgb);
   const dir = mode === 'dark' ? 1 : -1;
 
-  const surface900 = adjustLightness(baseHsl, dir * 1);
-  const surface800 = adjustLightness(baseHsl, dir * 3);
-  const surface700 = adjustLightness(baseHsl, dir * 6);
-  const surface600 = adjustLightness(baseHsl, dir * 11);
-  const surface500 = adjustLightness(baseHsl, dir * 17);
-  const border = adjustLightness(baseHsl, dir * 14);
+  let surface900 = adjustLightness(baseHsl, dir * 1);
+  let surface800 = adjustLightness(baseHsl, dir * 3);
+  let surface700 = adjustLightness(baseHsl, dir * 6);
+  let surface600 = adjustLightness(baseHsl, dir * 11);
+  let surface500 = adjustLightness(baseHsl, dir * 17);
+  let border = adjustLightness(baseHsl, dir * 14);
+
+  // Tint surfaces with accent to avoid icy/gray look
+  if (accentHex) {
+    const accent = hexToRgb(accentHex);
+    if (mode === 'light') {
+      surface900 = mixRgb(surface900, accent, 0.09);
+      surface800 = mixRgb(surface800, accent, 0.13);
+      surface700 = mixRgb(surface700, accent, 0.16);
+      surface600 = mixRgb(surface600, accent, 0.18);
+      surface500 = mixRgb(surface500, accent, 0.20);
+      border = mixRgb(border, accent, 0.22);
+    } else {
+      surface900 = mixRgb(surface900, accent, 0.06);
+      surface800 = mixRgb(surface800, accent, 0.09);
+      surface700 = mixRgb(surface700, accent, 0.11);
+      surface600 = mixRgb(surface600, accent, 0.13);
+      surface500 = mixRgb(surface500, accent, 0.15);
+      border = mixRgb(border, accent, 0.16);
+    }
+  }
 
   // Text colors: neutral grays with good contrast
   if (mode === 'dark') {
@@ -189,4 +238,72 @@ export function applyPalette(palette: DerivedPalette) {
   setVar('--color-text-muted', palette.textMuted);
   setVar('--color-text-subtle', palette.textSubtle);
   setVar('--color-text-faint', palette.textFaint);
+}
+
+export function deriveBrandTokens(
+  backgroundHex: string,
+  accentHex: string,
+  mode: 'dark' | 'light',
+): DerivedBrandTokens {
+  const background = hexToRgb(backgroundHex);
+  const accent = hexToRgb(accentHex);
+  const white = hexToRgb('#ffffff');
+
+  const brandAqua = mode === 'dark'
+    ? shiftLightness(mixRgb(background, accent, 0.48), 12)
+    : shiftLightness(mixRgb(background, accent, 0.52), -2);
+  const brandLavender = mode === 'dark'
+    ? shiftLightness(mixRgb(background, accent, 0.26), 8)
+    : shiftLightness(mixRgb(background, accent, 0.22), -4);
+  const brandLemon = mode === 'dark'
+    ? shiftLightness(mixRgb(accent, white, 0.12), 6)
+    : shiftLightness(mixRgb(accent, white, 0.28), 2);
+  const brandBlush = mode === 'dark'
+    ? shiftLightness(mixRgb(accent, background, 0.46), 10)
+    : shiftLightness(mixRgb(background, accent, 0.18), 6);
+
+  const pageStart = mode === 'dark'
+    ? rgbToHex(shiftLightness(background, -2))
+    : backgroundHex;
+  const pageEnd = mode === 'dark'
+    ? rgbToHex(shiftLightness(background, 4))
+    : rgbToHex(shiftLightness(background, -4));
+  const pageGradient = mode === 'dark'
+    ? `radial-gradient(circle at 18% 85%, rgb(${rgbTriplet(brandLavender)} / 0.26), transparent 30%), radial-gradient(circle at 82% 20%, rgb(${rgbTriplet(brandLemon)} / 0.20), transparent 26%), radial-gradient(circle at 30% 14%, rgb(${rgbTriplet(brandAqua)} / 0.28), transparent 28%), linear-gradient(180deg, ${pageStart} 0%, ${pageEnd} 100%)`
+    : `radial-gradient(circle at 8% 78%, rgb(${rgbTriplet(brandLavender)} / 0.28), transparent 28%), radial-gradient(circle at 80% 18%, rgb(${rgbTriplet(brandLemon)} / 0.24), transparent 24%), radial-gradient(circle at 32% 18%, rgb(${rgbTriplet(brandAqua)} / 0.5), transparent 30%), linear-gradient(180deg, ${pageStart} 0%, ${pageEnd} 100%)`;
+  const spectralGradient = `linear-gradient(120deg, rgb(${rgbTriplet(brandAqua)} / 0.95) 0%, rgb(${rgbTriplet(brandAqua)} / 0.72) 25%, rgb(${rgbTriplet(brandLemon)} / 0.88) 55%, rgb(${rgbTriplet(brandBlush)} / 0.72) 82%, rgb(${rgbTriplet(brandLavender)} / 0.84) 100%)`;
+
+  return {
+    brandAqua: rgbTriplet(brandAqua),
+    brandLavender: rgbTriplet(brandLavender),
+    brandLemon: rgbTriplet(brandLemon),
+    brandBlush: rgbTriplet(brandBlush),
+    pageGradient,
+    spectralGradient,
+  };
+}
+
+export function applyBrandTokens(tokens: DerivedBrandTokens) {
+  const root = document.documentElement;
+
+  root.style.setProperty('--color-brand-aqua', tokens.brandAqua);
+  root.style.setProperty('--color-brand-lavender', tokens.brandLavender);
+  root.style.setProperty('--color-brand-lemon', tokens.brandLemon);
+  root.style.setProperty('--color-brand-blush', tokens.brandBlush);
+  root.style.setProperty('--page-gradient', tokens.pageGradient);
+  root.style.setProperty('--spectral-gradient', tokens.spectralGradient);
+}
+
+export function clearBrandTokens() {
+  const root = document.documentElement;
+  const vars = [
+    '--color-brand-aqua',
+    '--color-brand-lavender',
+    '--color-brand-lemon',
+    '--color-brand-blush',
+    '--page-gradient',
+    '--spectral-gradient',
+  ];
+
+  vars.forEach((cssVar) => root.style.removeProperty(cssVar));
 }

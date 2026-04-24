@@ -3,7 +3,8 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { search as apiSearch } from '../api/search';
 import type { AnySearchResult } from '../types';
 import { formatNumber, truncateHash } from '../utils';
-import { AddressLink, BlockLink, TxHashLink, Loading } from '../components';
+import type { ReactNode } from 'react';
+import { AddressLink, BlockLink, TxHashLink, EntityHeroVisual, Loading, EmptyState, PageHero, SectionPanel } from '../components';
 
 export default function SearchResultsPage() {
   const [params] = useSearchParams();
@@ -47,24 +48,26 @@ export default function SearchResultsPage() {
 
   if (!q) {
     return (
-      <div className="card p-4">
-        <p className="text-gray-200">Enter a query to search blocks, transactions, addresses, and NFTs.</p>
-      </div>
+      <EmptyState
+        title="Search the explorer"
+        description="Enter a block number, transaction hash, address, token contract, or NFT contract to query Atlas."
+      />
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-fg">Search</h1>
-        <p className="text-gray-400 text-sm">Results for “{q}”</p>
-      </div>
+    <div className="space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title="Search"
+        visual={<EntityHeroVisual kind="search" />}
+      />
       {loading ? (
         <div className="py-10"><Loading size="sm" /></div>
       ) : error ? (
-        <div className="card p-4"><p className="text-red-400 text-sm">{error}</p></div>
+        <EmptyState title="Search failed" description={error} />
       ) : results.length === 0 ? (
-        <div className="card p-4"><p className="text-gray-400 text-sm">No results found.</p></div>
+        <EmptyState title="No results found" description="Atlas did not find blocks, transactions, addresses, or NFTs matching this query." />
       ) : (
         <>
           <Section title={`Blocks (${formatNumber(groups.blocks.length)})`}>
@@ -143,11 +146,8 @@ export default function SearchResultsPage() {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="card p-3">
-      <h2 className="text-base font-semibold text-fg mb-3">{title}</h2>
-      {children}
-    </section>
+    <SectionPanel title={title}>{children}</SectionPanel>
   );
 }

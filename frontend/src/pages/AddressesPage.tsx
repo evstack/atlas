@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAddresses } from '../hooks';
-import { CopyButton, Loading, ContractTypeBadge } from '../components';
+import { CopyButton, EntityHeroVisual, Loading, ContractTypeBadge, PageHero } from '../components';
 import { formatNumber, truncateHash } from '../utils';
 
 export default function AddressesPage() {
@@ -96,30 +96,24 @@ export default function AddressesPage() {
   }, [addresses, sort]);
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-fg">Addresses</h1>
-        <div className="flex items-center gap-3">
+    <div className="space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title="Addresses"
+        actions={
           <button
             onClick={() => setAutoRefresh((v) => !v)}
             className={`btn ${autoRefresh ? 'btn-primary' : 'btn-secondary'} flex items-center justify-center`}
             aria-pressed={autoRefresh}
             title={autoRefresh ? 'Pause live updates' : 'Start live updates'}
           >
-            {autoRefresh ? (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6M14 9v6" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7-11-7z" />
-              </svg>
-            )}
+            {autoRefresh ? 'Live On' : 'Live Off'}
           </button>
-        </div>
-      </div>
+        }
+        visual={<EntityHeroVisual kind="addresses" />}
+      />
 
-      <div className="card overflow-hidden">
+      <div className="table-shell">
         {loading && !hasLoaded ? (
           <div className="py-10"><Loading size="sm" /></div>
         ) : (
@@ -219,7 +213,7 @@ export default function AddressesPage() {
       </div>
 
       <div className="mt-4">
-        <div className="flex items-center justify-center gap-2">
+        <div className="flex items-center justify-center gap-2 rounded-full border border-border/80 bg-surface-800/90 px-2 py-2 w-fit mx-auto">
           <button
             className="btn btn-secondary text-xs"
             onClick={() => setPage(1)}

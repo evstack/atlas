@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { TxHashLink, Loading, Error } from "../components";
+import { TxHashLink, EntityHeroVisual, Loading, Error, PageHero, StatCard } from "../components";
 import { formatEtherExact, formatNumber, toApiError } from "../utils";
 import type { ApiError } from "../types";
 import { requestFaucet } from "../api/faucet";
@@ -181,26 +181,15 @@ export default function FaucetPage() {
     ) : null;
 
   return (
-    <div className="relative">
-      <div className="absolute -top-20 right-0 h-64 w-64 rounded-full bg-accent-primary/10 blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-24 left-0 h-72 w-72 rounded-full bg-red-500/10 blur-3xl pointer-events-none" />
+    <div className="relative space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title="Request test ETH"
+        visual={<EntityHeroVisual kind="faucet" />}
+      />
 
-      <div className="relative max-w-2xl mx-auto space-y-6">
+      <div className="relative mx-auto max-w-2xl space-y-6">
         <div className="card p-6 md:p-8">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.28em] text-gray-500">
-                Faucet
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-fg">
-                Request test ETH
-              </h1>
-              <p className="mt-3 text-sm leading-6 text-gray-400">
-                Drips are rate-limited per address and per IP. Use this faucet
-                for test networks only.
-              </p>
-            </div>
-          </div>
 
           <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
             <label className="block">
@@ -214,7 +203,7 @@ export default function FaucetPage() {
                 placeholder="0x0000000000000000000000000000000000000000"
                 autoComplete="off"
                 spellCheck={false}
-                className="mt-2 w-full rounded-xl border border-dark-600 bg-dark-900/70 px-4 py-3 text-fg placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-accent-primary/50 focus:border-accent-primary/40 transition-colors"
+                className="mt-2 w-full rounded-[1.25rem] border border-border/80 bg-surface-700/70 px-4 py-3 text-fg placeholder:text-fg-faint focus:outline-none focus:ring-2 focus:ring-brand-lavender/40 focus:border-black/20 transition-colors"
               />
             </label>
 
@@ -240,18 +229,7 @@ export default function FaucetPage() {
 
         <div className="grid gap-4 sm:grid-cols-3">
           {infoCards.map((card) => (
-            <div key={card.label} className="card p-4">
-              <p className="text-xs uppercase tracking-[0.24em] text-gray-500">
-                {card.label}
-              </p>
-              <p
-                className="mt-2 text-lg font-semibold text-fg truncate"
-                title={card.value}
-              >
-                {card.value}
-              </p>
-              <p className="mt-1 text-xs text-gray-500">{card.hint}</p>
-            </div>
+            <StatCard key={card.label} label={card.label} value={card.value} hint={card.hint} />
           ))}
         </div>
 
@@ -259,10 +237,8 @@ export default function FaucetPage() {
 
         {txHash && (
           <div className="card p-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-gray-500">
-              Transaction sent
-            </p>
-            <p className="mt-2 text-sm text-gray-300">
+            <p className="kicker">Transaction sent</p>
+            <p className="mt-2 text-sm text-fg-subtle">
               Faucet transfer broadcast successfully. Track it here:
             </p>
             <div className="mt-3">

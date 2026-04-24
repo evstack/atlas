@@ -16,9 +16,6 @@ services:
       retries: 5
 
   atlas-server:
-    # Contract verification downloads Solidity's official linux-amd64 binary.
-    # Keep atlas-server on amd64 locally so verification works on Apple Silicon.
-    platform: linux/amd64
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -40,6 +37,8 @@ services:
       FAUCET_ENABLED: ${FAUCET_ENABLED:-false}
       CHAIN_NAME: ${CHAIN_NAME:-Unknown}
       CHAIN_LOGO_URL: ${CHAIN_LOGO_URL:-}
+      CHAIN_LOGO_URL_LIGHT: ${CHAIN_LOGO_URL_LIGHT:-}
+      CHAIN_LOGO_URL_DARK: ${CHAIN_LOGO_URL_DARK:-}
       ACCENT_COLOR: ${ACCENT_COLOR:-}
       BACKGROUND_COLOR_DARK: ${BACKGROUND_COLOR_DARK:-}
       BACKGROUND_COLOR_LIGHT: ${BACKGROUND_COLOR_LIGHT:-}

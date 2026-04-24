@@ -13,7 +13,7 @@ export default function NFTTokenPage() {
   const [txPage, setTxPage] = useState(1);
   const { transfers, pagination, loading } = useNftTokenTransfers(contractAddress, tokenId, { page: txPage, limit: 20 });
 
-  const imageUrl = token?.image_url || token?.token_uri || null;
+  const imageUrl = token?.image_url || null;
   const displayName = token?.name || `${contract?.name || contract?.symbol || 'NFT'} #${token?.token_id || tokenId || ''}`;
 
   return (

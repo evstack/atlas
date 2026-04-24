@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useBlockTransactions } from '../hooks';
-import { Pagination, AddressLink, TxHashLink, StatusBadge } from '../components';
+import { EntityHeroVisual, Pagination, AddressLink, TxHashLink, StatusBadge, PageHero } from '../components';
 import { formatNumber, formatTimeAgo, formatEther } from '../utils';
 
 export default function BlockTransactionsPage() {
@@ -12,21 +12,25 @@ export default function BlockTransactionsPage() {
   const { transactions, pagination } = useBlockTransactions(blockNumber, { page, limit: 20 });
 
   return (
-    <div>
-      <div className="flex items-center space-x-4 mb-6">
-        <Link to={`/blocks/${blockNumber}`} className="text-accent-primary hover:underline">
-          Block #{formatNumber(blockNumber || 0)}
-        </Link>
-        <span className="text-gray-400">/</span>
-        <h1 className="text-2xl font-bold text-fg">Transactions</h1>
-        {pagination && pagination.total > 0 && (
-          <span className="text-gray-400 text-sm">
-            ({formatNumber(pagination.total)} total)
-          </span>
-        )}
-      </div>
+    <div className="space-y-6 fade-in-up">
+      <PageHero
+        compact
+        title={
+          <>
+            Block #{formatNumber(blockNumber || 0)}
+            <br />
+            Transactions
+          </>
+        }
+        actions={
+          <Link to={`/blocks/${blockNumber}`} className="btn btn-secondary">
+            View block
+          </Link>
+        }
+        visual={<EntityHeroVisual kind="block" />}
+      />
 
-      <div className="card overflow-hidden">
+      <div className="table-shell">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
