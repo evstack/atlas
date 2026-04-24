@@ -378,6 +378,7 @@ async fn run(args: cli::RunArgs) -> Result<()> {
     });
 
     let da_pool = indexer_pool.clone();
+    let gap_fill_events_tx = block_events_tx.clone();
     let indexer = indexer::Indexer::new(
         indexer_pool.clone(),
         config.clone(),
@@ -388,6 +389,20 @@ async fn run(args: cli::RunArgs) -> Result<()> {
     tokio::spawn(async move {
         if let Err(e) = run_with_retry(|| indexer.run()).await {
             tracing::error!("Indexer terminated with error: {}", e);
+        }
+    });
+
+    let gap_fill_worker = indexer::GapFillWorker::new(
+        indexer_pool.clone(),
+        &config.database_url,
+        &config.rpc_url,
+        config.rpc_requests_per_second,
+        gap_fill_events_tx,
+        metrics.clone(),
+    )?;
+    tokio::spawn(async move {
+        if let Err(e) = run_with_retry(|| gap_fill_worker.run()).await {
+            tracing::error!("Gap-fill worker terminated with error: {}", e);
         }
     });
 
