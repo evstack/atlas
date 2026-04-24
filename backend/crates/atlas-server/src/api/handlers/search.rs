@@ -14,6 +14,14 @@ pub struct SearchQuery {
     pub q: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct NftTokenResult {
+    pub contract_address: String,
+    pub token_id: String,
+    pub name: Option<String>,
+    pub image_url: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type")]
 pub enum SearchResult {
@@ -25,6 +33,8 @@ pub enum SearchResult {
     Address(Address),
     #[serde(rename = "nft_collection")]
     NftCollection(NftContract),
+    #[serde(rename = "nft")]
+    Nft(NftTokenResult),
     #[serde(rename = "erc20_token")]
     Erc20Token(Erc20Contract),
 }
@@ -93,14 +103,18 @@ pub async fn search(
 
     // Text search for tokens/collections if no hex/number results and query is meaningful
     if results.is_empty() && query.len() >= 2 {
-        // Run NFT and ERC-20 searches in parallel
-        let (nft_results, erc20_results) = tokio::join!(
+        // Run NFT collection, NFT token, and ERC-20 searches in parallel
+        let (nft_collection_results, nft_token_results, erc20_results) = tokio::join!(
             search_nft_collections(&state, query),
+            search_nft_tokens(&state, query),
             search_erc20_tokens(&state, query)
         );
 
-        for nft in nft_results? {
+        for nft in nft_collection_results? {
             results.push(SearchResult::NftCollection(nft));
+        }
+        for token in nft_token_results? {
+            results.push(SearchResult::Nft(token));
         }
         for token in erc20_results? {
             results.push(SearchResult::Erc20Token(token));
@@ -186,6 +200,24 @@ async fn search_nft_collections(
          WHERE name ILIKE $1 OR symbol ILIKE $1
          ORDER BY total_supply DESC NULLS LAST
          LIMIT 10",
+    )
+    .bind(&pattern)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(Into::into)
+}
+
+async fn search_nft_tokens(
+    state: &AppState,
+    query: &str,
+) -> Result<Vec<NftTokenResult>, atlas_common::AtlasError> {
+    let pattern = format!("%{}%", query);
+    sqlx::query_as(
+        "SELECT contract_address, token_id::text AS token_id, name, image_url
+         FROM nft_tokens
+         WHERE name ILIKE $1
+         ORDER BY last_transfer_block DESC NULLS LAST
+         LIMIT 5",
     )
     .bind(&pattern)
     .fetch_all(&state.pool)
