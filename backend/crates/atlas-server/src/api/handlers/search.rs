@@ -191,7 +191,10 @@ async fn search_block_by_number(
 }
 
 fn like_escape(input: &str) -> String {
-    input.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    input
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 async fn search_nft_collections(
