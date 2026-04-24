@@ -531,9 +531,9 @@ export default function BlocksPage() {
                     return (
                       <td className="table-cell text-center">
                         {included ? (
-                          <span className={`w-2 h-2 rounded-full bg-green-400 inline-block${flash ? ' animate-da-pulse' : ''}`} title={includedTitle} />
+                          <span className={`w-2 h-2 rounded-full bg-green-400 inline-block${flash ? ' live-dot' : ''}`} title={includedTitle} />
                         ) : (
-                          <span className={`w-2 h-2 rounded-full bg-yellow-400 inline-block${flash ? ' animate-da-pulse' : ''}`} title="Pending DA inclusion" />
+                          <span className={`w-2 h-2 rounded-full bg-yellow-400 inline-block${flash ? ' live-dot' : ''}`} title="Pending DA inclusion" />
                         )}
                       </td>
                     );
