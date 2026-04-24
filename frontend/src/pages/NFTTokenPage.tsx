@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useNftToken, useNftContract, useNftTokenTransfers } from '../hooks';
-import { AddressLink, CopyButton, Pagination } from '../components';
+import { AddressLink, CopyButton, Pagination, EmptyState } from '../components';
 import ImageIpfs from '../components/ImageIpfs';
 import { truncateHash, formatNumber, formatTimeAgo } from '../utils';
 
@@ -9,9 +9,18 @@ export default function NFTTokenPage() {
   const { contract: contractAddress, tokenId } = useParams<{ contract: string; tokenId: string }>();
 
   const { contract } = useNftContract(contractAddress);
-  const { token } = useNftToken(contractAddress, tokenId);
+  const { token, loading: tokenLoading, error: tokenError } = useNftToken(contractAddress, tokenId);
   const [txPage, setTxPage] = useState(1);
   const { transfers, pagination, loading } = useNftTokenTransfers(contractAddress, tokenId, { page: txPage, limit: 20 });
+
+  if (!tokenLoading && !token) {
+    return (
+      <EmptyState
+        title="NFT not found"
+        description={tokenError?.error ?? 'This token does not exist or has not been indexed.'}
+      />
+    );
+  }
 
   const imageUrl = token?.image_url || null;
   const displayName = token?.name || `${contract?.name || contract?.symbol || 'NFT'} #${token?.token_id || tokenId || ''}`;
