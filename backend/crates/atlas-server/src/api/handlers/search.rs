@@ -101,8 +101,9 @@ pub async fn search(
         }
     }
 
-    // Text search for tokens/collections if no hex/number results and query is meaningful
-    if results.is_empty() && query.len() >= 2 {
+    // Text search for tokens/collections if no hex/number results and query is long
+    // enough to benefit from the pg_trgm GIN indexes (trigrams require >= 3 chars).
+    if results.is_empty() && query.len() >= 3 {
         // Run NFT collection, NFT token, and ERC-20 searches in parallel
         let (nft_collection_results, nft_token_results, erc20_results) = tokio::join!(
             search_nft_collections(&state, query),
@@ -189,11 +190,15 @@ async fn search_block_by_number(
     .map_err(Into::into)
 }
 
+fn like_escape(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+}
+
 async fn search_nft_collections(
     state: &AppState,
     query: &str,
 ) -> Result<Vec<NftContract>, atlas_common::AtlasError> {
-    let pattern = format!("%{}%", query);
+    let pattern = format!("%{}%", like_escape(query));
     sqlx::query_as(
         "SELECT address, name, symbol, total_supply, first_seen_block
          FROM nft_contracts
@@ -211,7 +216,7 @@ async fn search_nft_tokens(
     state: &AppState,
     query: &str,
 ) -> Result<Vec<NftTokenResult>, atlas_common::AtlasError> {
-    let pattern = format!("%{}%", query);
+    let pattern = format!("%{}%", like_escape(query));
     sqlx::query_as(
         "SELECT contract_address, token_id::text AS token_id, name, image_url
          FROM nft_tokens
@@ -229,7 +234,7 @@ async fn search_erc20_tokens(
     state: &AppState,
     query: &str,
 ) -> Result<Vec<Erc20Contract>, atlas_common::AtlasError> {
-    let pattern = format!("%{}%", query);
+    let pattern = format!("%{}%", like_escape(query));
     sqlx::query_as(
         "SELECT address, name, symbol, decimals, total_supply, first_seen_block
          FROM erc20_contracts
