@@ -5,4 +5,5 @@ pub mod faucet;
 pub mod head;
 pub mod indexer;
 pub mod metrics;
+pub mod nft_metadata;
 pub mod state_keys;

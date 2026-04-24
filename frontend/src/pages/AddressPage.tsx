@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useAddress, useAddressTransactions, useEthBalance, useAddressTokens, useAddressNfts, useAddressTransfers, useContract, useContractProxy } from '../hooks';
 import { Pagination, TxHashLink, BlockLink, StatusBadge, AddressLink, CopyButton, ContractTypeBadge, ContractTab } from '../components';
 import ImageIpfs from '../components/ImageIpfs';
-import { formatNumber, formatTimeAgo, formatEtherExact, formatTokenAmount, formatUsd, formatTokenAmountExact } from '../utils';
+import { formatNumber, formatTimeAgo, formatEtherExact, formatTokenAmount, formatUsd, formatTokenAmountExact, getNftImageUrl } from '../utils';
 import { useEthPrice } from '../hooks';
 import { getToken } from '../api/tokens';
 
@@ -332,7 +332,7 @@ export default function AddressPage() {
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {nfts.map((t) => {
-                  const imageUrl = t.image_url || null;
+                  const imageUrl = getNftImageUrl(t);
                   const displayName = t.name || `#${t.token_id}`;
                   return (
                     <Link key={`${t.contract_address}-${t.token_id}`} to={`/nfts/${t.contract_address}/${t.token_id}`} className="block group">

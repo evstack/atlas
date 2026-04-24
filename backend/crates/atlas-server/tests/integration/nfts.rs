@@ -48,14 +48,23 @@ async fn seed_nft_data(pool: &sqlx::PgPool) {
 
     for token_id in 1..=3i64 {
         sqlx::query(
-            "INSERT INTO nft_tokens (contract_address, token_id, owner, metadata_fetched, last_transfer_block)
-             VALUES ($1, $2, $3, $4, $5)
+            "INSERT INTO nft_tokens (
+                contract_address,
+                token_id,
+                owner,
+                metadata_status,
+                metadata_retry_count,
+                next_retry_at,
+                last_transfer_block
+             )
+             VALUES ($1, $2, $3, $4, $5, NOW(), $6)
              ON CONFLICT (contract_address, token_id) DO NOTHING",
         )
         .bind(NFT_A)
         .bind(bigdecimal::BigDecimal::from(token_id))
         .bind(OWNER)
-        .bind(false)
+        .bind("pending")
+        .bind(0i32)
         .bind(7000i64)
         .execute(pool)
         .await
@@ -160,5 +169,56 @@ fn get_collection_transfers() {
         let data = body["data"].as_array().unwrap();
         assert_eq!(data.len(), 3);
         assert_eq!(body["total"].as_i64().unwrap(), 3);
+    });
+}
+
+#[test]
+fn get_token_returns_metadata_state_and_raw_metadata() {
+    common::run(async {
+        let pool = common::pool();
+        seed_nft_data(&pool).await;
+
+        sqlx::query(
+            "UPDATE nft_tokens
+             SET metadata_status = $3,
+                 metadata_retry_count = $4,
+                 last_metadata_error = $5,
+                 metadata = $6,
+                 image_url = $7,
+                 name = $8
+             WHERE contract_address = $1 AND token_id = $2::numeric",
+        )
+        .bind(NFT_A)
+        .bind(bigdecimal::BigDecimal::from(1))
+        .bind("fetched")
+        .bind(0i32)
+        .bind(Option::<String>::None)
+        .bind(serde_json::json!({
+            "description": "Example NFT",
+            "image": "https://cdn.example.com/example.png"
+        }))
+        .bind("https://cdn.example.com/example.png")
+        .bind("Example NFT")
+        .execute(&pool)
+        .await
+        .expect("update nft token metadata");
+
+        let app = common::test_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/nfts/collections/{}/tokens/1", NFT_A))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = common::json_body(response).await;
+        assert_eq!(body["metadata_status"], "fetched");
+        assert_eq!(body["metadata_retry_count"], 0);
+        assert_eq!(body["image_url"], "https://cdn.example.com/example.png");
+        assert_eq!(body["metadata"]["description"], "Example NFT");
     });
 }

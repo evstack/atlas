@@ -3,22 +3,11 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
-use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::api::error::ApiResult;
 use crate::api::AppState;
 use atlas_common::{AtlasError, NftContract, NftToken, NftTransfer, PaginatedResponse, Pagination};
-
-/// NFT metadata JSON structure (ERC-721 standard)
-#[derive(Debug, Deserialize, serde::Serialize)]
-struct NftMetadata {
-    name: Option<String>,
-    description: Option<String>,
-    image: Option<String>,
-    #[serde(default)]
-    attributes: Vec<serde_json::Value>,
-}
 
 pub async fn list_collections(
     State(state): State<Arc<AppState>>,
@@ -140,7 +129,9 @@ pub async fn list_collection_tokens(
             .await?;
 
     let tokens: Vec<NftToken> = sqlx::query_as(
-        "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
+        "SELECT contract_address, token_id, owner, token_uri, metadata_status, metadata_retry_count,
+                next_retry_at, last_metadata_error, last_metadata_attempted_at, metadata_updated_at,
+                metadata, image_url, name, last_transfer_block
          FROM nft_tokens
          WHERE contract_address = $1
          ORDER BY token_id ASC
@@ -166,8 +157,10 @@ pub async fn get_token(
 ) -> ApiResult<Json<NftToken>> {
     let address = normalize_address(&address);
 
-    let mut token: NftToken = sqlx::query_as(
-        "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
+    let token: NftToken = sqlx::query_as(
+        "SELECT contract_address, token_id, owner, token_uri, metadata_status, metadata_retry_count,
+                next_retry_at, last_metadata_error, last_metadata_attempted_at, metadata_updated_at,
+                metadata, image_url, name, last_transfer_block
          FROM nft_tokens
          WHERE contract_address = $1 AND token_id = $2::numeric"
     )
@@ -177,103 +170,7 @@ pub async fn get_token(
     .await?
     .ok_or_else(|| AtlasError::NotFound(format!("Token {}:{} not found", address, token_id)))?;
 
-    // Fetch metadata on-demand if not already fetched
-    if !token.metadata_fetched {
-        if let Ok(updated_token) = fetch_and_store_metadata(&state, &address, &token_id).await {
-            token = updated_token;
-        }
-    }
-
     Ok(Json(token))
-}
-
-/// Fetch NFT metadata on-demand and store it in the database
-async fn fetch_and_store_metadata(
-    state: &AppState,
-    contract_address: &str,
-    token_id: &str,
-) -> Result<NftToken, AtlasError> {
-    // Parse contract address and token ID
-    let contract_addr: Address = contract_address
-        .parse()
-        .map_err(|_| AtlasError::InvalidInput("Invalid contract address".to_string()))?;
-    let token_id_u256 = U256::from_str_radix(token_id, 10)
-        .map_err(|_| AtlasError::InvalidInput("Invalid token ID".to_string()))?;
-
-    // Call tokenURI(uint256) on the contract
-    let token_uri = fetch_token_uri(&state.rpc_url, contract_addr, token_id_u256).await;
-
-    // If we got a token URI, fetch the metadata
-    let (metadata_json, image_url, name) = if let Some(ref uri) = token_uri {
-        match fetch_metadata_from_uri(uri).await {
-            Ok(metadata) => {
-                let image = metadata.image.as_ref().map(|img| resolve_ipfs_url(img));
-                let name = metadata.name.clone();
-                (
-                    Some(serde_json::to_value(&metadata).unwrap_or_default()),
-                    image,
-                    name,
-                )
-            }
-            Err(_) => (None, None, None),
-        }
-    } else {
-        (None, None, None)
-    };
-
-    // Update the database
-    sqlx::query(
-        "UPDATE nft_tokens SET
-            token_uri = $1,
-            metadata_fetched = true,
-            metadata = $2,
-            image_url = $3,
-            name = $4
-         WHERE contract_address = $5 AND token_id = $6::numeric",
-    )
-    .bind(&token_uri)
-    .bind(&metadata_json)
-    .bind(&image_url)
-    .bind(&name)
-    .bind(contract_address)
-    .bind(token_id)
-    .execute(&state.pool)
-    .await?;
-
-    // Fetch and return the updated token
-    let token: NftToken = sqlx::query_as(
-        "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
-         FROM nft_tokens
-         WHERE contract_address = $1 AND token_id = $2::numeric"
-    )
-    .bind(contract_address)
-    .bind(token_id)
-    .fetch_one(&state.pool)
-    .await?;
-
-    Ok(token)
-}
-
-/// Call tokenURI(uint256) on an NFT contract
-async fn fetch_token_uri(rpc_url: &str, contract: Address, token_id: U256) -> Option<String> {
-    use alloy::providers::{Provider, ProviderBuilder};
-    use alloy::rpc::types::TransactionRequest;
-
-    let url: reqwest::Url = rpc_url.parse().ok()?;
-    let provider = ProviderBuilder::new().connect_http(url);
-
-    // tokenURI(uint256) selector = 0xc87b56dd
-    let mut calldata = vec![0xc8, 0x7b, 0x56, 0xdd];
-    calldata.extend_from_slice(&token_id.to_be_bytes::<32>());
-
-    let tx = TransactionRequest::default()
-        .to(contract)
-        .input(alloy::primitives::Bytes::from(calldata).into());
-
-    let result = provider.call(tx).await.ok()?;
-
-    // Decode string from ABI encoding
-    decode_abi_string(&result)
 }
 
 /// Decode an ABI-encoded string
@@ -297,116 +194,6 @@ fn decode_abi_string(data: &[u8]) -> Option<String> {
     // String data follows
     let string_data = &data[offset + 32..offset + 32 + length];
     String::from_utf8(string_data.to_vec()).ok()
-}
-
-/// Validate that a resolved metadata URL uses an allowed scheme.
-///
-/// Only `http` and `https` are permitted after IPFS/Arweave resolution.
-/// `file://`, `ftp://`, `gopher://`, and other schemes are blocked to prevent
-/// SSRF via non-HTTP channels.
-fn validate_metadata_url_scheme(url: &str) -> Result<(), AtlasError> {
-    let scheme_end = url
-        .find("://")
-        .ok_or_else(|| AtlasError::Validation(format!("Metadata URL has no scheme: {}", url)))?;
-    let scheme = &url[..scheme_end];
-    match scheme {
-        "http" | "https" => Ok(()),
-        other => Err(AtlasError::Validation(format!(
-            "Disallowed URL scheme '{}' in metadata URL",
-            other
-        ))),
-    }
-}
-
-/// Returns true if the IP address is in a private, loopback, link-local, or
-/// other non-public range that should not be reachable from metadata fetches.
-fn is_non_public_ip(ip: &std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            v4.is_loopback()          // 127.0.0.0/8
-                || v4.is_private()    // 10/8, 172.16/12, 192.168/16
-                || v4.is_link_local() // 169.254/16
-                || v4.is_broadcast()
-                || v4.is_unspecified()
-                || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64/10 (CGNAT)
-        }
-        std::net::IpAddr::V6(v6) => {
-            v6.is_loopback()       // ::1
-                || v6.is_unspecified()
-                || (v6.segments()[0] & 0xFFC0) == 0xFE80 // fe80::/10 link-local
-                || (v6.segments()[0] & 0xFE00) == 0xFC00 // fc00::/7 ULA
-        }
-    }
-}
-
-/// Resolve the host from a URL and reject non-public IP addresses to prevent SSRF.
-async fn validate_resolved_host(url: &str) -> Result<(), AtlasError> {
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|e| AtlasError::Validation(format!("Invalid metadata URL: {}", e)))?;
-
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| AtlasError::Validation("Metadata URL has no host".to_string()))?;
-
-    let port = parsed.port_or_known_default().unwrap_or(80);
-    let addr_str = format!("{}:{}", host, port);
-
-    let addrs = tokio::net::lookup_host(&addr_str).await.map_err(|e| {
-        AtlasError::MetadataFetch(format!("DNS resolution failed for {}: {}", host, e))
-    })?;
-
-    for addr in addrs {
-        if is_non_public_ip(&addr.ip()) {
-            return Err(AtlasError::Validation(format!(
-                "Metadata URL host {} resolves to non-public IP {}",
-                host,
-                addr.ip()
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-/// Fetch metadata JSON from a URI (handles IPFS)
-async fn fetch_metadata_from_uri(uri: &str) -> Result<NftMetadata, AtlasError> {
-    let url = resolve_ipfs_url(uri);
-
-    validate_metadata_url_scheme(&url)?;
-    validate_resolved_host(&url).await?;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| AtlasError::MetadataFetch(e.to_string()))?;
-
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| AtlasError::MetadataFetch(format!("Failed to fetch metadata: {}", e)))?;
-
-    let metadata: NftMetadata = response
-        .json()
-        .await
-        .map_err(|e| AtlasError::MetadataFetch(format!("Failed to parse metadata: {}", e)))?;
-
-    Ok(metadata)
-}
-
-/// Convert IPFS URLs to HTTP gateway URLs
-fn resolve_ipfs_url(uri: &str) -> String {
-    if let Some(stripped) = uri.strip_prefix("ipfs://") {
-        let stripped = stripped.strip_prefix("ipfs/").unwrap_or(stripped);
-        // Convert ipfs://QmXxx... to https://ipfs.io/ipfs/QmXxx...
-        format!("https://ipfs.io/ipfs/{}", stripped)
-    } else if let Some(stripped) = uri.strip_prefix("ar://") {
-        // Arweave URLs
-        format!("https://arweave.net/{}", stripped)
-    } else {
-        uri.to_string()
-    }
 }
 
 /// GET /api/nfts/collections/{address}/transfers - Get all transfers for a collection

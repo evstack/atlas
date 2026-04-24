@@ -397,7 +397,9 @@ pub async fn get_address_nfts(
         .await?;
 
     let tokens: Vec<NftToken> = sqlx::query_as(
-        "SELECT contract_address, token_id, owner, token_uri, metadata_fetched, metadata, image_url, name, last_transfer_block
+        "SELECT contract_address, token_id, owner, token_uri, metadata_status, metadata_retry_count,
+                next_retry_at, last_metadata_error, last_metadata_attempted_at, metadata_updated_at,
+                metadata, image_url, name, last_transfer_block
          FROM nft_tokens
          WHERE owner = $1
          ORDER BY last_transfer_block DESC

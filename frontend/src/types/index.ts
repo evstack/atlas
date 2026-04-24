@@ -69,7 +69,12 @@ export interface NftToken {
   token_id: string;
   owner: string;
   token_uri: string | null;
-  metadata_fetched: boolean;
+  metadata_status: string;
+  metadata_retry_count: number;
+  next_retry_at: string | null;
+  last_metadata_error: string | null;
+  last_metadata_attempted_at: string | null;
+  metadata_updated_at: string | null;
   metadata: NftMetadata | null;
   image_url: string | null;
   name: string | null;
@@ -80,7 +85,10 @@ export interface NftMetadata {
   name?: string;
   description?: string;
   image?: string;
-  attributes?: NftAttribute[];
+  image_url?: string;
+  imageUrl?: string;
+  image_data?: string;
+  attributes?: unknown[];
   [key: string]: unknown;
 }
 

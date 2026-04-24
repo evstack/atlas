@@ -831,8 +831,16 @@ impl Indexer {
             let params: [&(dyn ToSql + Sync); 4] =
                 [&tok_contracts, &tok_ids, &tok_owners, &tok_last_blocks];
             pg_tx.execute(
-                "INSERT INTO nft_tokens (contract_address, token_id, owner, metadata_fetched, last_transfer_block)
-                 SELECT contract_address, token_id::numeric, owner, false, last_transfer_block
+                "INSERT INTO nft_tokens (
+                    contract_address,
+                    token_id,
+                    owner,
+                    metadata_status,
+                    metadata_retry_count,
+                    next_retry_at,
+                    last_transfer_block
+                 )
+                 SELECT contract_address, token_id::numeric, owner, 'pending', 0, NOW(), last_transfer_block
                  FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[])
                     AS t(contract_address, token_id, owner, last_transfer_block)
                  ON CONFLICT (contract_address, token_id) DO UPDATE SET
