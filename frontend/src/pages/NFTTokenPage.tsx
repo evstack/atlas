@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useNftToken, useNftContract, useNftTokenTransfers } from '../hooks';
 import { AddressLink, CopyButton, Pagination, EmptyState } from '../components';
@@ -14,12 +15,35 @@ import {
   truncateHash,
 } from '../utils';
 
+const SKIP_METADATA_KEYS = new Set(['image', 'image_url', 'imageUrl', 'image_data', 'description', 'attributes', 'name']);
+
+function renderMetadataValue(value: unknown): ReactNode {
+  if (typeof value === 'string') {
+    if (/^https?:\/\//.test(value)) {
+      return <a href={value} target="_blank" rel="noopener noreferrer" className="text-accent-primary hover:underline break-all text-sm">{value}</a>;
+    }
+    return <span className="text-fg text-sm">{value}</span>;
+  }
+  if (typeof value === 'number') {
+    return <span className="font-mono text-fg text-sm">{value}</span>;
+  }
+  if (typeof value === 'boolean') {
+    return <span className="font-mono text-fg text-sm">{value ? 'true' : 'false'}</span>;
+  }
+  return (
+    <pre className="text-xs font-mono text-fg bg-dark-800 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
+      {JSON.stringify(value, null, 2)}
+    </pre>
+  );
+}
+
 export default function NFTTokenPage() {
   const { contract: contractAddress, tokenId } = useParams<{ contract: string; tokenId: string }>();
 
   const { contract } = useNftContract(contractAddress);
   const { token, loading: tokenLoading, error: tokenError, refetch } = useNftToken(contractAddress, tokenId);
   const [txPage, setTxPage] = useState(1);
+  const [metadataView, setMetadataView] = useState<'formatted' | 'raw'>('formatted');
   const { transfers, pagination, loading } = useNftTokenTransfers(contractAddress, tokenId, { page: txPage, limit: 20 });
 
   const metadataPending = isNftMetadataPending(token);
@@ -48,6 +72,11 @@ export default function NFTTokenPage() {
   const description = getNftDescription(token);
   const attributes = getNftAttributes(token);
   const displayName = token?.name || `${contract?.name || contract?.symbol || 'NFT'} #${token?.token_id || tokenId || ''}`;
+
+  const extraMetadataEntries = token?.metadata_status === 'fetched' && token.metadata
+    ? Object.entries(token.metadata).filter(([k]) => !SKIP_METADATA_KEYS.has(k))
+    : [];
+  const hasExtraMetadata = token?.metadata_status === 'fetched' && token.metadata !== null;
 
   return (
     <div>
@@ -206,6 +235,56 @@ export default function NFTTokenPage() {
           </div>
         </div>
       </div>
+
+      {/* Metadata */}
+      {hasExtraMetadata && (
+        <div className="card mt-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-fg">Metadata</h3>
+            <div className="flex">
+              <button
+                type="button"
+                onClick={() => setMetadataView('formatted')}
+                className={`px-3 py-1 text-sm border rounded-l-lg ${
+                  metadataView === 'formatted'
+                    ? 'border-accent-primary text-accent-primary bg-accent-primary/10'
+                    : 'border-dark-500 text-gray-400 hover:border-gray-400'
+                }`}
+              >
+                Formatted
+              </button>
+              <button
+                type="button"
+                onClick={() => setMetadataView('raw')}
+                className={`px-3 py-1 text-sm border rounded-r-lg ${
+                  metadataView === 'raw'
+                    ? 'border-accent-primary text-accent-primary bg-accent-primary/10'
+                    : 'border-dark-500 text-gray-400 hover:border-gray-400'
+                }`}
+              >
+                Raw
+              </button>
+            </div>
+          </div>
+
+          {metadataView === 'raw' ? (
+            <pre className="text-xs font-mono text-fg bg-dark-800 rounded p-3 overflow-auto max-h-96 whitespace-pre-wrap break-all">
+              {JSON.stringify(token!.metadata, null, 2)}
+            </pre>
+          ) : extraMetadataEntries.length > 0 ? (
+            <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-3">
+              {extraMetadataEntries.map(([key, value]) => (
+                <div key={key} className="flex flex-col gap-0.5">
+                  <dt className="text-fg-subtle text-xs uppercase tracking-wider">{key.replace(/_/g, ' ')}</dt>
+                  <dd>{renderMetadataValue(value)}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="text-fg-subtle text-sm">No additional fields.</p>
+          )}
+        </div>
+      )}
 
       {/* Transfers */}
       <div className="card mt-6 overflow-hidden">
