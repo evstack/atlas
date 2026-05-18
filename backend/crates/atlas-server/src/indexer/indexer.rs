@@ -470,7 +470,7 @@ impl Indexer {
             let progress = (end_block as f64 / head as f64) * 100.0;
 
             tracing::info!(
-                start_block = end_block - batch_size as u64 + 1,
+                start_block = end_block + 1 - batch_size as u64,
                 end_block,
                 blocks = batch_size,
                 elapsed_secs = format_args!("{:.2}", elapsed.as_secs_f64()),
