@@ -3,6 +3,7 @@ mod common;
 mod addresses;
 mod blocks;
 mod gap_fill;
+mod logs;
 mod nfts;
 mod schema;
 mod search;

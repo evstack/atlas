@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::api::error::ApiResult;
 use crate::api::AppState;
+use crate::event_log_decode::EventLogApiResponse;
 use atlas_common::{EventLog, PaginatedResponse, Pagination};
 
 /// Pagination for transaction log endpoints.
@@ -61,7 +62,7 @@ pub async fn get_transaction_logs(
     State(state): State<Arc<AppState>>,
     Path(hash): Path<String>,
     Query(query): Query<TransactionLogsQuery>,
-) -> ApiResult<Json<PaginatedResponse<EventLog>>> {
+) -> ApiResult<Json<PaginatedResponse<EventLogApiResponse>>> {
     let hash = normalize_hash(&hash);
 
     let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM event_logs WHERE tx_hash = $1")
@@ -70,7 +71,8 @@ pub async fn get_transaction_logs(
         .await?;
 
     let logs: Vec<EventLog> = sqlx::query_as(
-        "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
+        "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number,
+                decoded, decode_status, decoded_at, decode_attempted_at, decode_source
          FROM event_logs
          WHERE tx_hash = $1
          ORDER BY log_index ASC
@@ -83,7 +85,7 @@ pub async fn get_transaction_logs(
     .await?;
 
     Ok(Json(PaginatedResponse::new(
-        logs,
+        logs.iter().map(EventLogApiResponse::from).collect(),
         query.page,
         query.clamped_limit(),
         total.0,
@@ -95,7 +97,7 @@ pub async fn get_address_logs(
     State(state): State<Arc<AppState>>,
     Path(address): Path<String>,
     Query(query): Query<LogsQuery>,
-) -> ApiResult<Json<PaginatedResponse<EventLog>>> {
+) -> ApiResult<Json<PaginatedResponse<EventLogApiResponse>>> {
     let address = normalize_address(&address);
 
     let (total, logs) = if let Some(topic0) = &query.topic0 {
@@ -109,7 +111,8 @@ pub async fn get_address_logs(
                 .await?;
 
         let logs: Vec<EventLog> = sqlx::query_as(
-            "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
+            "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number,
+                    decoded, decode_status, decoded_at, decode_attempted_at, decode_source
              FROM event_logs
              WHERE address = $1 AND topic0 = $2
              ORDER BY block_number DESC, log_index DESC
@@ -130,7 +133,8 @@ pub async fn get_address_logs(
             .await?;
 
         let logs: Vec<EventLog> = sqlx::query_as(
-            "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
+            "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number,
+                    decoded, decode_status, decoded_at, decode_attempted_at, decode_source
              FROM event_logs
              WHERE address = $1
              ORDER BY block_number DESC, log_index DESC
@@ -146,20 +150,11 @@ pub async fn get_address_logs(
     };
 
     Ok(Json(PaginatedResponse::new(
-        logs,
+        logs.iter().map(EventLogApiResponse::from).collect(),
         query.pagination.page,
         query.clamped_limit(),
         total,
     )))
-}
-
-/// Enriched log with event name
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct EnrichedEventLog {
-    #[serde(flatten)]
-    pub log: EventLog,
-    pub event_name: Option<String>,
-    pub event_signature: Option<String>,
 }
 
 /// GET /api/transactions/:hash/logs/decoded - Get decoded logs for a transaction
@@ -167,64 +162,8 @@ pub async fn get_transaction_logs_decoded(
     State(state): State<Arc<AppState>>,
     Path(hash): Path<String>,
     Query(query): Query<TransactionLogsQuery>,
-) -> ApiResult<Json<PaginatedResponse<EnrichedEventLog>>> {
-    let hash = normalize_hash(&hash);
-
-    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM event_logs WHERE tx_hash = $1")
-        .bind(&hash)
-        .fetch_one(&state.pool)
-        .await?;
-
-    let logs: Vec<EventLog> = sqlx::query_as(
-        "SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, decoded
-         FROM event_logs
-         WHERE tx_hash = $1
-         ORDER BY log_index ASC
-         LIMIT $2 OFFSET $3",
-    )
-    .bind(&hash)
-    .bind(query.limit())
-    .bind(query.offset())
-    .fetch_all(&state.pool)
-    .await?;
-
-    // Collect unique topic0 values for signature lookup
-    let topic0s: Vec<String> = logs.iter().map(|l| l.topic0.clone()).collect();
-
-    // Fetch known event signatures
-    let signatures: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT signature, name, full_signature FROM event_signatures WHERE signature = ANY($1)",
-    )
-    .bind(&topic0s)
-    .fetch_all(&state.pool)
-    .await?;
-
-    let sig_map: std::collections::HashMap<String, (String, String)> = signatures
-        .into_iter()
-        .map(|(sig, name, full)| (sig.to_lowercase(), (name, full)))
-        .collect();
-
-    let enriched: Vec<EnrichedEventLog> = logs
-        .into_iter()
-        .map(|log| {
-            let (event_name, event_signature) = sig_map
-                .get(&log.topic0.to_lowercase())
-                .map(|(n, s)| (Some(n.clone()), Some(s.clone())))
-                .unwrap_or((None, None));
-            EnrichedEventLog {
-                log,
-                event_name,
-                event_signature,
-            }
-        })
-        .collect();
-
-    Ok(Json(PaginatedResponse::new(
-        enriched,
-        query.page,
-        query.clamped_limit(),
-        total.0,
-    )))
+) -> ApiResult<Json<PaginatedResponse<EventLogApiResponse>>> {
+    get_transaction_logs(State(state), Path(hash), Query(query)).await
 }
 
 fn default_page() -> u32 {

@@ -286,14 +286,21 @@ export interface EventLog {
   topic3: string | null;
   data: string;
   block_number: number;
-  timestamp: number;
-}
-
-export interface DecodedEventLog extends EventLog {
+  decode_status:
+    | "pending"
+    | "decoded"
+    | "no_abi"
+    | "no_matching_event"
+    | "decode_failed";
+  decoded_at: string | null;
+  decode_attempted_at: string | null;
+  decode_source: "direct_abi" | "proxy_combined_abi" | null;
   event_name: string | null;
   event_signature: string | null;
   decoded_params: DecodedParam[] | null;
 }
+
+export type DecodedEventLog = EventLog;
 
 export interface DecodedParam {
   name: string;

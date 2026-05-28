@@ -170,6 +170,10 @@ pub struct EventLog {
     pub data: Vec<u8>,
     pub block_number: i64,
     pub decoded: Option<serde_json::Value>,
+    pub decode_status: String,
+    pub decoded_at: Option<DateTime<Utc>>,
+    pub decode_attempted_at: Option<DateTime<Utc>>,
+    pub decode_source: Option<String>,
 }
 
 /// Known event signature for decoding

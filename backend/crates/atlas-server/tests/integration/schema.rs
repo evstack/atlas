@@ -37,6 +37,7 @@ fn all_expected_tables_exist() {
             "erc20_balances",
             "erc20_contracts",
             "erc20_transfers",
+            "event_log_decode_jobs",
             "event_logs",
             "event_signatures",
             "failed_blocks",
@@ -112,6 +113,8 @@ fn key_indexes_exist() {
             "idx_transactions_to",
             // event_logs
             "idx_event_logs_address",
+            "idx_event_logs_address_cursor",
+            "idx_event_logs_decode_pending",
             "idx_event_logs_topic0",
             // addresses
             "idx_addresses_contract",

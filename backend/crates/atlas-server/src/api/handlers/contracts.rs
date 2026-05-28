@@ -20,6 +20,7 @@ use tokio::fs;
 
 use crate::api::error::ApiResult;
 use crate::api::AppState;
+use crate::event_log_decode::enqueue_jobs_for_verified_contract;
 use atlas_common::{AtlasError, FullContractAbi};
 
 // ── Request / Response types ──────────────────────────────────────────────────
@@ -281,6 +282,8 @@ pub async fn verify_contract(
     if insert_result.rows_affected() == 0 {
         return Err(AtlasError::Verification(format!("{address} is already verified")).into());
     }
+
+    enqueue_jobs_for_verified_contract(&state.pool, &address).await?;
 
     Ok((
         StatusCode::OK,

@@ -153,6 +153,7 @@ impl GapFillWorker {
                     }
 
                     if let Err(e) = Indexer::write_batch_and_clear_failed_block(
+                        &self.pool,
                         &mut copy_client,
                         batch,
                         block_number,
