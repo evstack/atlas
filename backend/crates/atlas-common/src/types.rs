@@ -1,6 +1,6 @@
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use sqlx::FromRow;
 
 /// Block data as stored in the database
@@ -40,10 +40,18 @@ pub struct Transaction {
     pub value: BigDecimal,
     pub gas_price: BigDecimal,
     pub gas_used: i64,
+    #[serde(serialize_with = "serialize_bytes_as_hex")]
     pub input_data: Vec<u8>,
     pub status: bool,
     pub contract_created: Option<String>,
     pub timestamp: i64,
+}
+
+fn serialize_bytes_as_hex<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&format!("0x{}", hex::encode(bytes)))
 }
 
 /// Address data as stored in the database
