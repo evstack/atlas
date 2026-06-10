@@ -4,12 +4,12 @@ use std::str::FromStr;
 use alloy::dyn_abi::EventExt;
 use alloy::json_abi::{Event, JsonAbi};
 use alloy::primitives::B256;
-use atlas_common::{AtlasError, EventLog};
+use atlas_common::{AtlasError, EventLog, ProxyContract};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
-use crate::contract_abi::{load_combined_abi, proxies_using_implementation, ResolvedContractAbi};
+use crate::contract_abi::{load_combined_abi, ResolvedContractAbi};
 
 pub const EVENT_LOG_DECODE_PENDING: &str = "pending";
 pub const EVENT_LOG_DECODE_DECODED: &str = "decoded";
@@ -330,15 +330,42 @@ pub async fn enqueue_decode_jobs(
     Ok(())
 }
 
-pub async fn enqueue_jobs_for_verified_contract(
-    pool: &PgPool,
+pub async fn enqueue_jobs_for_verified_contract_tx(
+    tx: &mut Transaction<'_, Postgres>,
     address: &str,
 ) -> Result<(), AtlasError> {
     let mut addresses = vec![address.to_string()];
-    for proxy in proxies_using_implementation(pool, address).await? {
+    let proxies: Vec<ProxyContract> = sqlx::query_as(
+        "SELECT proxy_address, implementation_address, proxy_type, admin_address,
+                detected_at_block, last_checked_block, updated_at
+         FROM proxy_contracts
+         WHERE implementation_address = $1",
+    )
+    .bind(address)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    for proxy in proxies {
         addresses.push(proxy.proxy_address);
     }
-    enqueue_decode_jobs(pool, &addresses, true).await
+
+    let deduped = dedupe_addresses(&addresses);
+    sqlx::query(
+        "INSERT INTO event_log_decode_jobs
+            (address, full_rescan, requested_at, updated_at, error_message)
+         SELECT address, TRUE, NOW(), NOW(), NULL
+         FROM unnest($1::text[]) AS t(address)
+         ON CONFLICT (address) DO UPDATE SET
+            full_rescan = TRUE,
+            requested_at = EXCLUDED.requested_at,
+            updated_at = EXCLUDED.updated_at,
+            error_message = NULL",
+    )
+    .bind(&deduped)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
 }
 
 fn dedupe_addresses(addresses: &[String]) -> Vec<String> {

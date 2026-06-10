@@ -20,7 +20,7 @@ use tokio::fs;
 
 use crate::api::error::ApiResult;
 use crate::api::AppState;
-use crate::event_log_decode::enqueue_jobs_for_verified_contract;
+use crate::event_log_decode::enqueue_jobs_for_verified_contract_tx;
 use atlas_common::{AtlasError, FullContractAbi};
 
 // ── Request / Response types ──────────────────────────────────────────────────
@@ -257,6 +257,7 @@ pub async fn verify_contract(
         Some(constructor_bytes)
     };
 
+    let mut tx = state.pool.begin().await?;
     let insert_result = sqlx::query(
         "INSERT INTO contract_abis
             (address, abi, source_code, compiler_version, optimization_used, runs,
@@ -277,14 +278,15 @@ pub async fn verify_contract(
     .bind(&req.license_type)
     .bind(stored_sources.is_multi_file)
     .bind(&stored_sources.source_files)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
 
     if insert_result.rows_affected() == 0 {
         return Err(AtlasError::Verification(format!("{address} is already verified")).into());
     }
 
-    enqueue_jobs_for_verified_contract(&state.pool, &address).await?;
+    enqueue_jobs_for_verified_contract_tx(&mut tx, &address).await?;
+    tx.commit().await?;
 
     Ok((
         StatusCode::OK,
