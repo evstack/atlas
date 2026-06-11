@@ -524,6 +524,6 @@ mod tests {
         assert_eq!(stored.event_name, "Transfer");
         assert_eq!(stored.decoded_params.len(), 2);
         assert_eq!(stored.decoded_params[0].name, "from");
-        assert_eq!(stored.decoded_params[0].indexed, true);
+        assert!(stored.decoded_params[0].indexed);
     }
 }
