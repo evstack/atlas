@@ -11,6 +11,8 @@ use alloy::signers::local::PrivateKeySigner;
 mod api;
 mod cli;
 mod config;
+mod contract_abi;
+mod event_log_decode;
 mod faucet;
 mod head;
 mod indexer;
@@ -403,6 +405,14 @@ async fn run(args: cli::RunArgs) -> Result<()> {
     tokio::spawn(async move {
         if let Err(e) = run_with_retry(|| gap_fill_worker.run()).await {
             tracing::error!("Gap-fill worker terminated with error: {}", e);
+        }
+    });
+
+    let event_log_decode_worker =
+        indexer::EventLogDecodeWorker::new(indexer_pool.clone(), &config.rpc_url);
+    tokio::spawn(async move {
+        if let Err(e) = run_with_retry(|| event_log_decode_worker.run()).await {
+            tracing::error!("Event log decode worker terminated with error: {}", e);
         }
     });
 

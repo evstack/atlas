@@ -189,6 +189,7 @@ fn get_address_transactions() {
         let body = common::json_body(response).await;
         let data = body["data"].as_array().unwrap();
         assert_eq!(data.len(), 2);
+        assert_eq!(data[0]["input_data"].as_str().unwrap(), "0x");
     });
 }
 

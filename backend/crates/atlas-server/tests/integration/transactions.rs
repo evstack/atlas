@@ -76,6 +76,7 @@ fn list_transactions() {
         let body = common::json_body(response).await;
         let data = body["data"].as_array().unwrap();
         assert!(data.len() >= 3);
+        assert_eq!(data[0]["input_data"].as_str().unwrap(), "0x");
     });
 }
 
@@ -100,6 +101,7 @@ fn get_transaction_by_hash() {
         let body = common::json_body(response).await;
         assert_eq!(body["hash"].as_str().unwrap(), TX_HASH_1);
         assert_eq!(body["block_number"].as_i64().unwrap(), 2000);
+        assert_eq!(body["input_data"].as_str().unwrap(), "0x");
         assert!(body["status"].as_bool().unwrap());
     });
 }
@@ -143,6 +145,7 @@ fn get_block_transactions() {
         let body = common::json_body(response).await;
         let data = body["data"].as_array().unwrap();
         assert_eq!(data.len(), 3);
+        assert_eq!(data[0]["input_data"].as_str().unwrap(), "0x");
 
         // Should be ordered by block_index ASC
         let idx0 = data[0]["block_index"].as_i64().unwrap();

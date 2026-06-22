@@ -16,7 +16,7 @@ export interface DecodedCall {
  * Returns null if the input is empty, too short, or no matching function is found.
  */
 export function decodeInputData(input: string | undefined | null, abi?: AbiItem[]): DecodedCall | null {
-  if (!input || !abi || input === '0x' || input.length < 10) return null;
+  if (typeof input !== 'string' || !abi || input === '0x' || input.length < 10) return null;
 
   const selectorHex = input.slice(2, 10).toLowerCase();
 

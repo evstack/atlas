@@ -1,6 +1,8 @@
 pub mod api;
 pub mod cli;
 pub mod config;
+pub mod contract_abi;
+pub mod event_log_decode;
 pub mod faucet;
 pub mod head;
 pub mod indexer;

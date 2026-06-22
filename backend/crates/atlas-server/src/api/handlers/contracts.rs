@@ -20,6 +20,7 @@ use tokio::fs;
 
 use crate::api::error::ApiResult;
 use crate::api::AppState;
+use crate::event_log_decode::enqueue_jobs_for_verified_contract_tx;
 use atlas_common::{AtlasError, FullContractAbi};
 
 // ── Request / Response types ──────────────────────────────────────────────────
@@ -220,18 +221,19 @@ pub async fn verify_contract(
     // Compile the submitted source
     let compiled_contract = compile_source(&solc_path, &req).await?;
 
-    // Strip CBOR metadata from both sides before comparing
+    // Solc reports immutable offsets against the full deployed bytecode, so
+    // zero those ranges before stripping the trailing CBOR metadata blob.
     let deployed_bytes = decode_hex_bytecode(&deployed_hex)?;
-    let deployed_stripped = strip_metadata(&deployed_bytes);
-    let compiled_stripped = strip_metadata(&compiled_contract.bytecode);
-    let deployed_cmp = normalize_bytecode_for_comparison(
-        deployed_stripped,
+    let deployed_normalized = normalize_bytecode_for_comparison(
+        &deployed_bytes,
         &compiled_contract.immutable_references,
     )?;
-    let compiled_cmp = normalize_bytecode_for_comparison(
-        compiled_stripped,
+    let compiled_normalized = normalize_bytecode_for_comparison(
+        &compiled_contract.bytecode,
         &compiled_contract.immutable_references,
     )?;
+    let deployed_cmp = strip_metadata(&deployed_normalized).to_vec();
+    let compiled_cmp = strip_metadata(&compiled_normalized).to_vec();
 
     // eth_getCode returns deployed runtime bytecode, so constructor args are not
     // part of the bytecode comparison. We still parse and persist them as metadata.
@@ -255,6 +257,7 @@ pub async fn verify_contract(
         Some(constructor_bytes)
     };
 
+    let mut tx = state.pool.begin().await?;
     let insert_result = sqlx::query(
         "INSERT INTO contract_abis
             (address, abi, source_code, compiler_version, optimization_used, runs,
@@ -275,12 +278,15 @@ pub async fn verify_contract(
     .bind(&req.license_type)
     .bind(stored_sources.is_multi_file)
     .bind(&stored_sources.source_files)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
 
     if insert_result.rows_affected() == 0 {
         return Err(AtlasError::Verification(format!("{address} is already verified")).into());
     }
+
+    enqueue_jobs_for_verified_contract_tx(&mut tx, &address).await?;
+    tx.commit().await?;
 
     Ok((
         StatusCode::OK,
@@ -1091,6 +1097,24 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, AtlasError::Compilation(_)));
+    }
+
+    #[test]
+    fn normalize_then_strip_metadata_preserves_immutable_offsets() {
+        let bytecode = vec![
+            0xaa, 0xbb, 0x11, 0x22, 0xcc, 0xdd, 0x01, 0x02, 0x03, 0x00, 0x03,
+        ];
+        let normalized = normalize_bytecode_for_comparison(
+            &bytecode,
+            &[ImmutableReference {
+                start: 2,
+                length: 2,
+            }],
+        )
+        .unwrap();
+        let stripped = strip_metadata(&normalized);
+
+        assert_eq!(stripped, &[0xaa, 0xbb, 0x00, 0x00, 0xcc, 0xdd]);
     }
 
     #[test]

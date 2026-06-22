@@ -24,6 +24,7 @@ use super::fetcher::{
     WorkItem,
 };
 use crate::config::Config;
+use crate::event_log_decode::enqueue_decode_jobs;
 use crate::head::HeadTracker;
 use crate::metrics::Metrics;
 use crate::state_keys::ERC20_SUPPLY_HISTORY_COMPLETE_KEY;
@@ -333,7 +334,7 @@ impl Indexer {
 
             // One DB transaction for the entire batch
             let db_write_start = std::time::Instant::now();
-            Self::write_batch(&mut copy_client, batch, true).await?;
+            Self::write_batch(&self.pool, &mut copy_client, batch, true).await?;
             self.metrics
                 .record_db_write_duration(db_write_start.elapsed().as_secs_f64());
             self.metrics
@@ -398,7 +399,8 @@ impl Indexer {
                                 // Don't update the watermark — the main batch already wrote
                                 // a higher last_indexed_block; overwriting it with this
                                 // block's lower number would cause a regression on restart.
-                                Self::write_batch(&mut copy_client, mini_batch, false).await?;
+                                Self::write_batch(&self.pool, &mut copy_client, mini_batch, false)
+                                    .await?;
                                 known_erc20.extend(new_erc20);
                                 known_nft.extend(new_nft);
                                 tracing::info!(block = block_num, "block retry succeeded");
@@ -731,22 +733,25 @@ impl Indexer {
     // -----------------------------------------------------------------------
 
     pub(crate) async fn write_batch(
+        pool: &PgPool,
         copy_client: &mut Client,
         batch: BlockBatch,
         update_watermark: bool,
     ) -> Result<()> {
-        Self::write_batch_internal(copy_client, batch, update_watermark, None).await
+        Self::write_batch_internal(pool, copy_client, batch, update_watermark, None).await
     }
 
     pub(crate) async fn write_batch_and_clear_failed_block(
+        pool: &PgPool,
         copy_client: &mut Client,
         batch: BlockBatch,
         failed_block_number: i64,
     ) -> Result<()> {
-        Self::write_batch_internal(copy_client, batch, false, Some(failed_block_number)).await
+        Self::write_batch_internal(pool, copy_client, batch, false, Some(failed_block_number)).await
     }
 
     async fn write_batch_internal(
+        pool: &PgPool,
         copy_client: &mut Client,
         batch: BlockBatch,
         update_watermark: bool,
@@ -764,6 +769,8 @@ impl Indexer {
         copy_event_logs(&mut pg_tx, &batch).await?;
         copy_nft_transfers(&mut pg_tx, &batch).await?;
         copy_erc20_transfers(&mut pg_tx, &batch).await?;
+
+        let event_log_addresses = batch.el_addresses.clone();
 
         let BlockBatch {
             tl_hashes,
@@ -957,6 +964,8 @@ impl Indexer {
         }
 
         pg_tx.commit().await?;
+
+        enqueue_decode_jobs(pool, &event_log_addresses, false).await?;
 
         Ok(())
     }
