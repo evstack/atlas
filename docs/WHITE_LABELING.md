@@ -1,47 +1,86 @@
 # White Labeling
 
-Atlas supports white-labeling so each L2 chain can customize the explorer's appearance — name, logo, and color scheme — without rebuilding the frontend.
+Atlas branding is configured at runtime through `atlas-server` environment variables and served to the frontend by `GET /api/config`. A frontend rebuild is not required for normal branding changes.
 
-All branding is configured through environment variables. When none are set, the explorer uses the default ev-node branding (red accent, dark/warm-beige backgrounds). `CHAIN_NAME` defaults to "Unknown" — deployers should always set it.
+## Runtime Config
 
-## Configuration
+| Variable | Description | Default |
+| --- | --- | --- |
+| `CHAIN_NAME` | Displayed in page title, navbar, welcome page, and `/api/status` | `Unknown` |
+| `CHAIN_LOGO_URL` | Default logo URL or path | bundled logo |
+| `CHAIN_LOGO_URL_LIGHT` | Logo used in light theme | falls back to `CHAIN_LOGO_URL` |
+| `CHAIN_LOGO_URL_DARK` | Logo used in dark theme | falls back to `CHAIN_LOGO_URL` |
+| `ACCENT_COLOR` | Primary interactive color | `#dc2626` |
+| `BACKGROUND_COLOR_DARK` | Dark theme base background | `#050505` |
+| `BACKGROUND_COLOR_LIGHT` | Light theme base background | `#f4ede6` |
+| `SUCCESS_COLOR` | Success state color | `#22c55e` |
+| `ERROR_COLOR` | Error state color | `#dc2626` |
 
-Add these variables to your `.env` file alongside `RPC_URL`:
+Example:
 
-| Variable | Description | Default (ev-node) |
-|----------|-------------|--------------------|
-| `CHAIN_NAME` | Displayed in the navbar, page title, and welcome page | `Unknown` |
-| `CHAIN_LOGO_URL` | URL or path to your logo (e.g. `/branding/logo.svg`) | Bundled ev-node logo |
-| `ACCENT_COLOR` | Primary accent hex for links, buttons, active states | `#dc2626` |
-| `BACKGROUND_COLOR_DARK` | Dark mode base background hex | `#050505` |
-| `BACKGROUND_COLOR_LIGHT` | Light mode base background hex | `#f4ede6` |
-| `SUCCESS_COLOR` | Success indicator hex (e.g. confirmed badges) | `#22c55e` |
-| `ERROR_COLOR` | Error indicator hex (e.g. failed badges) | `#dc2626` |
+```env
+CHAIN_NAME=My Chain
+CHAIN_LOGO_URL=/branding/logo.svg
+CHAIN_LOGO_URL_LIGHT=/branding/logo-light.svg
+CHAIN_LOGO_URL_DARK=/branding/logo-dark.svg
+ACCENT_COLOR=#3b82f6
+BACKGROUND_COLOR_DARK=#070a12
+BACKGROUND_COLOR_LIGHT=#f5f7fb
+SUCCESS_COLOR=#22c55e
+ERROR_COLOR=#ef4444
+```
 
-All variables are optional. Unset variables use the ev-node defaults shown above.
+## `/api/config`
 
-## Custom Logo
+The backend returns branding, feature flags, and faucet display metadata:
 
-To use a custom logo, place your image file in a `branding/` directory at the project root and set `CHAIN_LOGO_URL` to its path:
+```json
+{
+  "chain_name": "My Chain",
+  "logo_url": "/branding/logo.svg",
+  "logo_url_light": "/branding/logo-light.svg",
+  "logo_url_dark": "/branding/logo-dark.svg",
+  "accent_color": "#3b82f6",
+  "background_color_dark": "#070a12",
+  "background_color_light": "#f5f7fb",
+  "success_color": "#22c55e",
+  "error_color": "#ef4444",
+  "features": {
+    "da_tracking": false
+  },
+  "faucet": {
+    "enabled": false
+  }
+}
+```
+
+Unset optional fields are omitted. The frontend normalizes this response, applies CSS custom properties, updates the favicon/title, and gates optional UI such as DA indicators and faucet navigation.
+
+## Branding Assets
+
+Place assets in the repository-level `branding/` directory:
 
 ```text
 atlas/
-├── branding/
-│   └── logo.svg      # Your custom logo
-├── .env
-├── docker-compose.yml
-└── ...
++-- branding/
+|   +-- logo.svg
+|   +-- logo-light.svg
+|   +-- logo-dark.svg
++-- docker-compose.yml
++-- .env
 ```
+
+Set URLs relative to the frontend origin:
 
 ```env
 CHAIN_LOGO_URL=/branding/logo.svg
+CHAIN_LOGO_URL_LIGHT=/branding/logo-light.svg
+CHAIN_LOGO_URL_DARK=/branding/logo-dark.svg
 ```
 
-The logo appears in the navbar, the welcome page, and as the browser favicon.
+## Docker
 
-### Docker
-
-In Docker, the `branding/` directory is mounted into the frontend container as a read-only volume. This is configured automatically in `docker-compose.yml`:
+Docker Compose mounts branding assets into the frontend container:
 
 ```yaml
 atlas-frontend:
@@ -49,79 +88,48 @@ atlas-frontend:
     - ${BRANDING_DIR:-./branding}:/usr/share/nginx/html/branding:ro
 ```
 
-To use a different directory, set `BRANDING_DIR` in your `.env`:
+To use another host directory:
 
 ```env
-BRANDING_DIR=/path/to/my/assets
+BRANDING_DIR=/path/to/branding-assets
 ```
 
-### Local Development
+Restart the frontend container after changing mounted files if nginx or browser cache prevents immediate refresh.
 
-For `bun run dev`, create a symlink so Vite's dev server can serve the branding files:
+## Local Vite Development
+
+Expose repository branding assets through Vite's public directory:
 
 ```bash
+mkdir -p branding
 cd frontend/public
 ln -s ../../branding branding
 ```
 
-## Color System
+Run the backend with the branding env vars set, then start Vite:
 
-### Accent Color
+```bash
+cd backend
+cargo run --bin atlas-server -- run
 
-`ACCENT_COLOR` sets the primary interactive color used for links, buttons, focus rings, and active indicators throughout the UI.
-
-### Background Colors
-
-Each theme (dark and light) takes a single base color. The frontend automatically derives a full surface palette from it:
-
-- **5 surface shades** (from darkest to lightest for dark mode, reversed for light mode)
-- **Border color**
-- **Text hierarchy** (primary, secondary, muted, subtle, faint)
-
-This means you only need to set one color per theme to get a cohesive palette.
-
-### Success and Error Colors
-
-`SUCCESS_COLOR` and `ERROR_COLOR` control status badges and indicators. For example, "Success" transaction badges use the success color, and "Failed" badges use the error color.
-
-## Examples
-
-### Blue theme
-
-```env
-CHAIN_NAME=MegaChain
-CHAIN_LOGO_URL=/branding/logo.png
-ACCENT_COLOR=#3b82f6
-BACKGROUND_COLOR_DARK=#0a0a1a
-BACKGROUND_COLOR_LIGHT=#e6f0f4
+cd ../frontend
+bun run dev
 ```
 
-### Green theme (Eden)
+## Color Behavior
 
-```env
-CHAIN_NAME=Eden
-CHAIN_LOGO_URL=/branding/logo.svg
-ACCENT_COLOR=#4ade80
-BACKGROUND_COLOR_DARK=#0a1f0a
-BACKGROUND_COLOR_LIGHT=#e8f5e8
-SUCCESS_COLOR=#22c55e
-ERROR_COLOR=#dc2626
-```
+- `ACCENT_COLOR` drives links, active states, focus rings, and primary buttons.
+- `BACKGROUND_COLOR_DARK` and `BACKGROUND_COLOR_LIGHT` are base colors; the frontend derives related surface, border, and text colors.
+- `SUCCESS_COLOR` and `ERROR_COLOR` drive status badges and indicators.
+- Theme-specific logos let deployers use different marks for light and dark backgrounds.
 
-### Minimal — just rename
+Use valid CSS hex colors. Invalid or empty values are ignored by the frontend normalization layer.
 
-```env
-CHAIN_NAME=MyChain
-```
+## Deployment Checklist
 
-Everything else stays default ev-node branding.
-
-## How It Works
-
-1. The backend reads branding env vars at startup and serves them via `GET /api/config`
-2. The frontend fetches this config once on page load
-3. CSS custom properties are set on the document root, overriding the defaults
-4. Background surface shades are derived automatically using HSL color manipulation
-5. The page title, navbar logo, and favicon are updated dynamically
-
-No frontend rebuild is needed — just change the env vars and restart the API.
+- Set `CHAIN_NAME`.
+- Add logo assets to `branding/` or use absolute hosted image URLs.
+- Set `CHAIN_LOGO_URL_LIGHT` and `CHAIN_LOGO_URL_DARK` when one logo does not work in both themes.
+- Set accent/background colors and verify both light and dark mode.
+- Confirm `GET /api/config` returns expected values.
+- Open the frontend and verify navbar, welcome page, favicon, charts, buttons, badges, and optional feature-gated nav items.

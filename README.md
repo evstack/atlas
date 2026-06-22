@@ -1,81 +1,121 @@
 # Atlas
 
-A lightweight Ethereum L2 blockchain explorer.
+Atlas is an EVM blockchain explorer for ev-node based chains. It runs a Rust indexer, REST API, background workers, PostgreSQL database, and Vite frontend as one deployable stack.
+
+## Current Architecture
+
+- `atlas-server`: one Rust binary that runs the indexer, API, live SSE stream, metrics endpoint, optional faucet, optional Data Availability tracking, NFT metadata worker, missed-block gap-fill worker, and optional snapshot scheduler.
+- `postgres`: stores indexed blocks, transactions, addresses, ERC-20 data, NFT data, logs, contract verification data, proxy metadata, and indexer state.
+- `atlas-frontend`: Vite app served by unprivileged nginx on port 8080 inside the container, exposed as host port 80 by Docker Compose.
 
 ## Quick Start
 
-### Prerequisites
+Requirements:
 
-- `just` 1.0+
 - Docker and Docker Compose
-- Bun 1.0+
-- Rust 1.75+
-
-### Running with Docker
+- An EVM JSON-RPC endpoint
 
 ```bash
 cp .env.example .env
-docker-compose up -d
+# Edit RPC_URL and CHAIN_NAME in .env
+docker compose up -d
 ```
 
-Access the explorer at http://localhost:3000
+Default service URLs:
 
-### Local Development
+| Service | URL |
+| --- | --- |
+| Explorer UI | `http://localhost` |
+| API through frontend nginx | `http://localhost/api` |
+| Backend API when running `atlas-server` locally | `http://localhost:3000/api` |
+| Prometheus metrics when backend port is reachable | `http://localhost:3000/metrics` |
+| Liveness probe when backend port is reachable | `http://localhost:3000/health/live` |
+| Readiness probe when backend port is reachable | `http://localhost:3000/health/ready` |
+
+The `postgres` service binds to `127.0.0.1:5432` for local development access. Docker Compose does not publish `atlas-server:3000` to the host by default; the frontend proxies browser API traffic through `http://localhost/api`.
+
+## Local Development
+
+Start only PostgreSQL:
 
 ```bash
-cp .env.example .env
-docker-compose up -d postgres
-just frontend-install
+docker compose up -d postgres
 ```
 
-Start the backend:
+Run the backend:
 
 ```bash
-just backend-run
+cd backend
+export DATABASE_URL=postgres://atlas:atlas@localhost:5432/atlas
+export RPC_URL=http://localhost:8545
+cargo run --bin atlas-server -- run
 ```
 
-Start frontend:
+Run the frontend:
 
 ```bash
-just frontend-dev
+cd frontend
+bun install
+bun run dev
 ```
 
-### Useful Commands
+The Vite dev server runs on `http://localhost:5173` and proxies `/api` to `http://localhost:3000`.
+
+## Operator Commands
+
+Run these from `backend/` unless noted otherwise:
 
 ```bash
-just --list
-just frontend-lint
-just frontend-build
-just backend-fmt
-just backend-clippy
-just backend-test
-just ci
+cargo run --bin atlas-server -- check
+cargo run --bin atlas-server -- migrate
+cargo run --bin atlas-server -- run
+cargo run --bin atlas-server -- db dump /tmp/atlas.dump
+cargo run --bin atlas-server -- db restore /tmp/atlas.dump
+cargo run --bin atlas-server -- db reset --confirm
+```
+
+Useful validation commands:
+
+```bash
+cd backend && cargo test --workspace
+cd frontend && bun run build
+cd frontend && bun run lint
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set `RPC_URL`. Common options:
+Copy `.env.example` to `.env`. `RPC_URL` is required. When running without Docker, `DATABASE_URL` is also required.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `RPC_URL` | Ethereum JSON-RPC endpoint | Required |
-| `DATABASE_URL` | PostgreSQL connection string | `postgres://atlas:atlas@localhost:5432/atlas` (local dev) |
-| `START_BLOCK` | Block to start indexing from | `0` |
-| `BATCH_SIZE` | Blocks per indexing batch | `100` |
-| `RPC_REQUESTS_PER_SECOND` | RPC rate limit | `100` |
-| `FETCH_WORKERS` | Parallel block fetch workers | `10` |
-| `RPC_BATCH_SIZE` | Blocks per RPC batch request | `20` |
-| `IPFS_GATEWAY` | Gateway for NFT metadata | `https://ipfs.io/ipfs/` |
-| `REINDEX` | Wipe and reindex from start | `false` |
+Common variables:
 
-See [White Labeling](docs/WHITE_LABELING.md) for branding customization (chain name, logo, colors).
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `RPC_URL` | EVM JSON-RPC endpoint | required |
+| `DATABASE_URL` | PostgreSQL connection URL for local backend runs | required outside Docker |
+| `CHAIN_NAME` | Display name served by `/api/config` and `/api/status` | `Unknown` |
+| `START_BLOCK` | First block to index | `0` |
+| `BATCH_SIZE` | Blocks written per DB batch | `100` |
+| `FETCH_WORKERS` | Concurrent block fetch workers | `10` |
+| `RPC_BATCH_SIZE` | Blocks fetched per RPC batch call | `20` |
+| `RPC_REQUESTS_PER_SECOND` | RPC request rate limit | `100` |
+| `DB_MAX_CONNECTIONS` | Indexer pool size | `20` |
+| `API_DB_MAX_CONNECTIONS` | API pool size | `20` |
+| `IPFS_GATEWAY` | Gateway for IPFS NFT metadata | `https://ipfs.io/ipfs/` |
+| `METADATA_FETCH_WORKERS` | NFT metadata worker concurrency | `4` |
+| `METADATA_RETRY_ATTEMPTS` | Retry attempts for retryable metadata failures | `3` |
+| `REINDEX` | Wipe indexed data and restart from `START_BLOCK` | `false` |
+
+Optional features include Data Availability tracking, faucet support, white-label branding, scheduled snapshots, JSON logging, CORS restriction, and a Solidity compiler cache. See [.env.example](.env.example) and [Backend](backend/README.md) for the full operator reference.
 
 ## Documentation
 
-- [API Reference](docs/API.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [API Reference](docs/API.md)
+- [Features](docs/FEATURES.md)
 - [White Labeling](docs/WHITE_LABELING.md)
-- [Product Requirements](docs/PRD.md)
+- [Product and Roadmap](docs/PRD.md)
+- [Backend](backend/README.md)
+- [Frontend](frontend/README.md)
 
 ## License
 
